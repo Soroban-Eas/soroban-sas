@@ -1,9 +1,8 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
-#![allow(unused_variables)]
 
-use soroban_sas_common::{SchemaRecord, UID};
-use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, Env, String};
+use soroban_sas_common::{SASError, SchemaRecord, UID};
+use soroban_sdk::{contract, contractimpl, token, xdr::ToXdr, Address, Bytes, Env, String};
 
 #[contract]
 pub struct SchemaRegistry;
@@ -26,10 +25,27 @@ impl SchemaRegistry {
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
-    pub fn set_fee(env: Env, fee: i128) {
+    /// Configure the registration fee. Setting a fee also enables it.
+    pub fn set_fee(env: Env, fee_asset: Address, fee_amount: i128) {
         let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
         admin.require_auth();
-        env.storage().instance().set(&SCHEMA_FEE, &fee);
+        if fee_amount <= 0 {
+            soroban_sdk::panic_with_error!(&env, SASError::InvalidFeeAmount);
+        }
+        env.storage().instance().set(&FEE_ASSET, &fee_asset);
+        env.storage().instance().set(&SCHEMA_FEE, &fee_amount);
+        env.storage().instance().set(&FEE_ENABLED, &true);
+    }
+
+    /// Toggle fee collection without discarding the configured asset/amount.
+    /// Enabling requires a fee to have been configured via `set_fee`.
+    pub fn set_fee_enabled(env: Env, enabled: bool) {
+        let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
+        admin.require_auth();
+        if enabled && !env.storage().instance().has(&SCHEMA_FEE) {
+            soroban_sdk::panic_with_error!(&env, SASError::FeeNotConfigured);
+        }
+        env.storage().instance().set(&FEE_ENABLED, &enabled);
     }
 
     pub fn set_treasury(env: Env, treasury: soroban_sdk::Address) {
@@ -38,10 +54,23 @@ impl SchemaRegistry {
         env.storage().instance().set(&TREASURY, &treasury);
     }
 
-    pub fn withdraw_fees(env: Env, amount: i128) {
-        let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
-        admin.require_auth();
-        // Native token transfer logic goes here
+    /// Returns the active fee as (asset, amount), or None when fees are disabled.
+    pub fn get_fee(env: Env) -> Option<(Address, i128)> {
+        let enabled: bool = env
+            .storage()
+            .instance()
+            .get(&FEE_ENABLED)
+            .unwrap_or(false);
+        if !enabled {
+            return None;
+        }
+        let asset: Address = env.storage().instance().get(&FEE_ASSET)?;
+        let amount: i128 = env.storage().instance().get(&SCHEMA_FEE)?;
+        Some((asset, amount))
+    }
+
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        env.storage().instance().get(&TREASURY)
     }
 
     pub fn deprecate(env: Env, uid: UID) {
@@ -49,7 +78,9 @@ impl SchemaRegistry {
         env.storage().persistent().set(&(DEPRECATED, uid), &true);
     }
 
-    pub fn register(env: Env, schema: String, resolver: Address, revocable: bool) -> UID {
+    pub fn register(env: Env, caller: Address, schema: String, resolver: Address, revocable: bool) -> UID {
+        caller.require_auth();
+
         let mut payload = Bytes::new(&env);
         payload.append(&schema.clone().to_xdr(&env));
 
@@ -57,7 +88,23 @@ impl SchemaRegistry {
         let uid = UID(hash);
 
         if env.storage().persistent().has(&uid) {
-            soroban_sdk::panic_with_error!(&env, soroban_sas_common::SASError::SchemaAlreadyExists);
+            soroban_sdk::panic_with_error!(&env, SASError::SchemaAlreadyExists);
+        }
+
+        // Collect the protocol fee before mutating registry state. The token
+        // transfer is atomic with the registration: if it fails (insufficient
+        // balance or missing authorization), the whole invocation aborts.
+        // Routing funds straight to the treasury means the contract never
+        // custodies fees, and Soroban's host forbids reentrant invocations.
+        if let Some((fee_asset, fee_amount)) = Self::get_fee(env.clone()) {
+            let treasury: Address = env
+                .storage()
+                .instance()
+                .get(&TREASURY)
+                .unwrap_or_else(|| {
+                    soroban_sdk::panic_with_error!(&env, SASError::TreasuryNotSet)
+                });
+            token::Client::new(&env, &fee_asset).transfer(&caller, &treasury, &fee_amount);
         }
 
         let record = SchemaRecord {

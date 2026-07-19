@@ -22,4 +22,9 @@ pub enum SASError {
     /// Input validation errors
     InvalidTTL = 401,
     InvalidRecipient = 402,
+
+    /// Protocol fee errors
+    FeeNotConfigured = 501,
+    TreasuryNotSet = 502,
+    InvalidFeeAmount = 503,
 }
