@@ -1,17 +1,41 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
-use soroban_sas_common::UID;
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sas_common::{SASError, UID};
+use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Symbol};
 
 // v1.0.0 Indexer logic frozen
 
 #[contract]
 pub struct Indexer;
 
+/// Address allowed to administer this indexer instance.
+pub const INDEXER_ADMIN: Symbol = symbol_short!("ADMIN");
+/// Address of the SAS contract whose attestations this indexer mirrors.
+pub const SAS_CONTRACT: Symbol = symbol_short!("SAS");
+
 #[contractimpl]
 impl Indexer {
-    pub fn init(_env: Env) {
-        // Initialize reverse lookup
+    /// Binds this indexer to an `admin` and to the `sas` contract whose
+    /// attestations it indexes. Callable exactly once; a second call panics
+    /// with `SASError::AlreadyInitialized`.
+    pub fn init(env: Env, admin: Address, sas: Address) {
+        if env.storage().instance().has(&INDEXER_ADMIN) {
+            panic_with_error!(&env, SASError::AlreadyInitialized);
+        }
+        env.storage().instance().set(&INDEXER_ADMIN, &admin);
+        env.storage().instance().set(&SAS_CONTRACT, &sas);
+    }
+
+    /// Returns the admin address recorded by `init`, if the indexer has been
+    /// initialized.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&INDEXER_ADMIN)
+    }
+
+    /// Returns the SAS contract address this indexer is bound to, if the
+    /// indexer has been initialized.
+    pub fn get_sas(env: Env) -> Option<Address> {
+        env.storage().instance().get(&SAS_CONTRACT)
     }
 
     pub fn index_attestation(

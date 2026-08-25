@@ -3,7 +3,7 @@
 
 use soroban_sas_common::{Attestation, SASError, UID};
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, symbol_short, Address, Env, IntoVal, Symbol,
+    contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
 };
 
 mod events;
@@ -22,7 +22,7 @@ pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
 impl SAS {
     pub fn init(env: Env, admin: Address, registry: Address) {
         if env.storage().instance().has(&SAS_ADMIN) {
-            panic!("Already initialized");
+            panic_with_error!(&env, SASError::AlreadyInitialized);
         }
         env.storage().instance().set(&SAS_ADMIN, &admin);
         env.storage().instance().set(&SCHEMA_REGISTRY, &registry);
@@ -61,7 +61,7 @@ impl SAS {
         if attestation.expiration_time != 0
             && attestation.expiration_time <= env.ledger().timestamp()
         {
-            panic!("Attestation already expired");
+            panic_with_error!(&env, SASError::AlreadyExpired);
         }
 
         let registry: Address = env.storage().instance().get(&SCHEMA_REGISTRY).unwrap();
@@ -70,7 +70,9 @@ impl SAS {
             &Symbol::new(&env, "get_schema"),
             soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
         );
-        let schema = schema_opt.expect("Invalid schema");
+        let Some(schema) = schema_opt else {
+            panic_with_error!(&env, SASError::InvalidSchema);
+        };
 
         // Optional resolver callback support
         let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
@@ -90,11 +92,9 @@ impl SAS {
     }
 
     pub fn revoke(env: Env, uid: UID) {
-        let attestation: Attestation = env
-            .storage()
-            .persistent()
-            .get(&uid)
-            .expect("Attestation not found");
+        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            panic_with_error!(&env, SASError::AttestationNotFound);
+        };
         attestation.attester.require_auth();
         Self::revoke_internal(env, uid)
     }
@@ -106,11 +106,9 @@ impl SAS {
         signature: soroban_sdk::BytesN<64>,
         public_key: soroban_sdk::BytesN<32>,
     ) {
-        let attestation: Attestation = env
-            .storage()
-            .persistent()
-            .get(&uid)
-            .expect("Attestation not found");
+        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            panic_with_error!(&env, SASError::AttestationNotFound);
+        };
         Self::require_attester_key(&env, &attestation.attester, &public_key);
         let domain = soroban_sas_common::AttestationDomain {
             network_id: env.ledger().network_id(),
@@ -130,14 +128,12 @@ impl SAS {
     }
 
     fn revoke_internal(env: Env, uid: UID) {
-        let mut attestation: Attestation = env
-            .storage()
-            .persistent()
-            .get(&uid)
-            .expect("Attestation not found");
+        let Some(mut attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            panic_with_error!(&env, SASError::AttestationNotFound);
+        };
 
         if !attestation.revocable {
-            panic!("Attestation is not revocable");
+            panic_with_error!(&env, SASError::NotRevocable);
         }
 
         let timestamp = env.ledger().timestamp();
@@ -196,15 +192,35 @@ impl SAS {
         uids
     }
 
+    /// Issues an attestation and collects `value` units of the SEP-41
+    /// `token` from the attester into this contract's balance.
+    ///
+    /// The transfer happens before the attestation is recorded, so a failed
+    /// payment aborts the whole invocation and no attestation is issued.
+    /// `value` must be non-negative (`SASError::InvalidValue`); a `value` of
+    /// zero performs no transfer, which keeps the entrypoint usable for
+    /// fee-free schemas without paying for a no-op token call.
     pub fn attest_with_value(
         env: Env,
         attestation: Attestation,
-        _token: Address,
-        _value: i128,
+        token: Address,
+        value: i128,
     ) -> UID {
-        // In a full implementation, we'd use token::Client to transfer funds
-        // e.g., token::Client::new(&env, &token).transfer(&attestation.attester, &env.current_contract_address(), &value);
-        Self::attest(env, attestation)
+        if value < 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        attestation.attester.require_auth();
+
+        if value > 0 {
+            token::Client::new(&env, &token).transfer(
+                &attestation.attester,
+                &env.current_contract_address(),
+                &value,
+            );
+        }
+
+        Self::attest_internal(env, attestation)
     }
 
     pub fn multi_revoke(env: Env, uids: soroban_sdk::Vec<UID>) {

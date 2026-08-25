@@ -4,6 +4,10 @@ use soroban_sdk::contracterror;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum SASError {
+    /// Lifecycle errors
+    /// A contract's `init` was called on an already-initialized instance.
+    AlreadyInitialized = 1,
+
     /// Schema validation errors
     InvalidSchema = 101,
     SchemaAlreadyExists = 102,
@@ -23,4 +27,6 @@ pub enum SASError {
     /// Input validation errors
     InvalidTTL = 401,
     InvalidRecipient = 402,
+    /// A fee/value amount was negative.
+    InvalidValue = 403,
 }

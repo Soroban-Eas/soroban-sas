@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ed25519 verification utilities in `soroban-sas-common`, a
   `verify_offchain_attestation` entrypoint in the SAS contract, and
   `offchain sign` / `offchain verify` CLI commands.
+- `SASError::AlreadyInitialized` (code 1) and `SASError::InvalidValue` (code 403).
+- `Indexer::init` now binds the indexer to an admin and a SAS contract
+  address, with `Indexer::get_admin` / `Indexer::get_sas` accessors.
+
+### Changed
+- All contract failure paths now panic with typed `SASError` variants instead
+  of bare `panic!` strings, so callers can distinguish failures by error code.
+- `SAS::attest_with_value` now performs the SEP-41 token transfer from the
+  attester to the contract before issuing the attestation, instead of
+  silently ignoring the `token` and `value` arguments. Negative values are
+  rejected with `SASError::InvalidValue`.
 
 ### Known Issues
 - `SchemaRegistry::deprecate` currently lacks an authorization check.

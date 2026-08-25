@@ -153,7 +153,6 @@ fn test_deprecate_by_admin() {
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized schema deprecation")]
 fn test_deprecate_rejects_unrelated_authorizer() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SchemaRegistry);
@@ -168,7 +167,12 @@ fn test_deprecate_rejects_unrelated_authorizer() {
     env.mock_all_auths();
     client.init(&admin);
     let uid = client.register(&owner, &schema_str, &resolver, &true);
-    client.deprecate(&uid, &unrelated);
+
+    let res = client.try_deprecate(&uid, &unrelated);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
+    );
 }
 
 #[test]
@@ -190,4 +194,20 @@ fn test_validate_schema() {
 
     client.deprecate(&uid, &owner);
     assert!(!client.validate_schema(&uid));
+}
+
+#[test]
+fn test_init_twice_is_rejected() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.init(&admin);
+
+    let res = client.try_init(&admin);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::AlreadyInitialized.into()))
+    );
 }

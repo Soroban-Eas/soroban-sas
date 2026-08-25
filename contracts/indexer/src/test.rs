@@ -3,6 +3,39 @@ use soroban_sas_common::UID;
 use soroban_sdk::{testutils::Address as _, Env};
 
 #[test]
+fn test_init_records_admin_and_sas_binding() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let admin = Address::generate(&env);
+    let sas = Address::generate(&env);
+
+    assert_eq!(client.get_admin(), None);
+    client.init(&admin, &sas);
+
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    assert_eq!(client.get_sas(), Some(sas.clone()));
+}
+
+#[test]
+fn test_init_twice_is_rejected() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let admin = Address::generate(&env);
+    let sas = Address::generate(&env);
+    client.init(&admin, &sas);
+
+    let res = client.try_init(&admin, &sas);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::AlreadyInitialized.into()))
+    );
+}
+
+#[test]
 fn test_index_single_attestation() {
     let env = Env::default();
     let indexer_id = env.register_contract(None, Indexer);

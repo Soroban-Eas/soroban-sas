@@ -2,8 +2,10 @@
 #![no_std]
 #![allow(unused_variables)]
 
-use soroban_sas_common::{SchemaRecord, UID};
-use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, Env, String};
+use soroban_sas_common::{SASError, SchemaRecord, UID};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, xdr::ToXdr, Address, Bytes, Env, String,
+};
 
 #[contract]
 pub struct SchemaRegistry;
@@ -15,7 +17,7 @@ use storage::*;
 impl SchemaRegistry {
     pub fn init(env: Env, admin: soroban_sdk::Address) {
         if env.storage().instance().has(&REGISTRY_ADMIN) {
-            panic!("Already initialized");
+            panic_with_error!(&env, SASError::AlreadyInitialized);
         }
         env.storage().instance().set(&REGISTRY_ADMIN, &admin);
     }
@@ -58,7 +60,7 @@ impl SchemaRegistry {
         // mapping. The registry admin remains able to deprecate those legacy
         // records; new records also permit their creator.
         if authorizer != admin && creator.as_ref() != Some(&authorizer) {
-            panic!("Unauthorized schema deprecation");
+            panic_with_error!(&env, SASError::Unauthorized);
         }
 
         env.storage().persistent().set(&(DEPRECATED, uid), &true);
@@ -82,7 +84,7 @@ impl SchemaRegistry {
         let uid = UID(hash);
 
         if env.storage().persistent().has(&uid) {
-            soroban_sdk::panic_with_error!(&env, soroban_sas_common::SASError::SchemaAlreadyExists);
+            panic_with_error!(&env, SASError::SchemaAlreadyExists);
         }
 
         let record = SchemaRecord {
