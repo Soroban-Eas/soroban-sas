@@ -2,3 +2,5 @@ dist
 /target
 cargo_err.log
 .DS_Store
+.env
+*.env.bak
