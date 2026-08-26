@@ -2,7 +2,7 @@
 mod tests {
     use clap::Parser;
 
-    use crate::{parse_uid, AttestCommands, Cli, Commands};
+    use crate::{decode_hex_or_base64, parse_uid, AttestCommands, Cli, Commands};
 
     #[test]
     fn test_cli_snapshot_formatting() {
@@ -44,12 +44,82 @@ mod tests {
     fn rejects_uid_that_is_not_32_bytes() {
         assert!(parse_uid("deadbeef").is_err());
     }
+
+    /// Issue #25 acceptance criterion: `attest attest` parses the flags the
+    /// issue specifies, including the `--output json` variant.
+    #[test]
+    fn parses_attest_attest_flags() {
+        let schema_uid = hex::encode([2u8; 32]);
+        let recipient = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBAAA6XKZW3";
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "attest",
+            "attest",
+            "--schema-uid",
+            &schema_uid,
+            "--recipient",
+            recipient,
+            "--data",
+            "deadbeef",
+            "--expiration",
+            "0",
+            "--revocable",
+            "--secret-key",
+            "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF7U",
+            "--network-passphrase",
+            "Test SDF Network ; September 2015",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+            "--output",
+            "json",
+        ])
+        .unwrap();
+
+        let Some(Commands::Attest {
+            action:
+                AttestCommands::Attest {
+                    schema_uid: parsed_schema_uid,
+                    recipient: parsed_recipient,
+                    data,
+                    expiration,
+                    revocable: true,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected attest attest command");
+        };
+        assert_eq!(parsed_schema_uid, schema_uid);
+        assert_eq!(parsed_recipient, recipient);
+        assert_eq!(data, "deadbeef");
+        assert_eq!(expiration, 0);
+    }
+
+    #[test]
+    fn decodes_data_as_hex_or_base64() {
+        assert_eq!(
+            decode_hex_or_base64("deadbeef").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
+        assert_eq!(
+            decode_hex_or_base64("0xdeadbeef").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
+        // Not valid hex (odd length / non-hex chars), so falls back to base64.
+        assert_eq!(
+            decode_hex_or_base64("3q2+7w==").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
+        assert!(decode_hex_or_base64("not valid at all!!").is_err());
+    }
 }
 
 #[cfg(test)]
 mod offchain_tests {
     use crate::offchain::{
-        compute_payload_hash, parse_secret_seed, sign_offchain_attestation,
+        compute_payload_hash, generate_uid, parse_secret_seed, sign_offchain_attestation,
         verify_offchain_attestation, AttestationInput,
     };
     use ed25519_dalek::SigningKey;
@@ -152,5 +222,23 @@ mod offchain_tests {
         let strkey = stellar_strkey::ed25519::PrivateKey(seed).to_string();
         assert_eq!(parse_secret_seed(&strkey).unwrap(), seed);
         assert!(parse_secret_seed("not a key").is_err());
+    }
+
+    #[test]
+    fn test_generate_uid_is_deterministic_for_the_same_inputs() {
+        let env = soroban_sdk::Env::default();
+        let schema_uid = [2u8; 32];
+        let recipient = stellar_strkey::ed25519::PublicKey([5u8; 32]).to_string();
+        let attester = stellar_strkey::ed25519::PublicKey([6u8; 32]).to_string();
+
+        let uid1 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef", 7);
+        let uid2 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef", 7);
+        assert_eq!(uid1, uid2);
+
+        // Different entropy or content yields a different uid.
+        let uid3 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef", 8);
+        assert_ne!(uid1, uid3);
+        let uid4 = generate_uid(&env, &schema_uid, &recipient, &attester, b"cafebabe", 7);
+        assert_ne!(uid1, uid4);
     }
 }

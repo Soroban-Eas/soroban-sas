@@ -199,9 +199,9 @@ impl RpcClient {
         self.agent
             .post(&self.network_url)
             .send_json(request)
-            .map_err(|err| SdkError::RpcError(err.to_string()))?
+            .map_err(|err| SdkError::TransportError(err.to_string()))?
             .into_string()
-            .map_err(|err| SdkError::RpcError(err.to_string()))
+            .map_err(|err| SdkError::TransportError(err.to_string()))
     }
 }
 
@@ -570,8 +570,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(
-            matches!(err, SdkError::RpcError(_)),
-            "expected SdkError::RpcError, got {err:?}"
+            matches!(err, SdkError::TransportError(_)),
+            "expected SdkError::TransportError, got {err:?}"
         );
         assert!(
             elapsed < Duration::from_secs(2),
@@ -605,8 +605,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(
-            matches!(err, SdkError::RpcError(_)),
-            "expected SdkError::RpcError, got {err:?}"
+            matches!(err, SdkError::TransportError(_)),
+            "expected SdkError::TransportError, got {err:?}"
         );
         assert!(
             elapsed >= Duration::from_millis(400),
@@ -631,19 +631,11 @@ mod tests {
 
         match result {
             Ok(response) => assert!(response.latest_ledger > 0),
-            Err(SdkError::RpcError(message)) => {
-                // The server may reject our request body outright; what
-                // matters here is that the request round-tripped through
-                // the timeout-wired agent instead of failing at transport.
-                let lowered = message.to_lowercase();
-                assert!(
-                    !lowered.contains("timedout")
-                        && !lowered.contains("timed out")
-                        && !lowered.contains("connection refused")
-                        && !lowered.contains("dns"),
-                    "transport-level failure talking to live testnet: {message}"
-                );
-            }
+            // The server may reject our request body outright; what matters
+            // here is that the request round-tripped through the
+            // timeout-wired agent instead of failing at transport (which
+            // would surface as `SdkError::TransportError`, not this).
+            Err(SdkError::RpcError(_)) => {}
             Err(err) => panic!("unexpected error kind from live testnet: {err:?}"),
         }
     }

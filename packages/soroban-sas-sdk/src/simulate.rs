@@ -50,8 +50,9 @@ pub fn build_invoke_transaction(
     function_name: &str,
     args: Vec<ScVal>,
 ) -> Result<Transaction, SdkError> {
-    let contract = stellar_strkey::Contract::from_string(contract_id)
-        .map_err(|e| SdkError::RpcError(format!("invalid contract id {contract_id}: {e:?}")))?;
+    let contract = stellar_strkey::Contract::from_string(contract_id).map_err(|e| {
+        SdkError::DecodingError(format!("invalid contract id {contract_id}: {e:?}"))
+    })?;
 
     let function_name = ScSymbol(
         StringM::try_from(function_name.as_bytes().to_vec())
@@ -123,7 +124,7 @@ pub(crate) fn unsigned_envelope_xdr(tx: Transaction) -> Result<String, SdkError>
     });
     envelope
         .to_xdr_base64(Limits::none())
-        .map_err(|e| SdkError::RpcError(format!("failed to encode transaction xdr: {e:?}")))
+        .map_err(|e| SdkError::DecodingError(format!("failed to encode transaction xdr: {e:?}")))
 }
 
 /// Signs `tx` for `network_id` with the ed25519 key derived from
@@ -145,9 +146,9 @@ pub fn sign_transaction(
         network_id: Hash(*network_id),
         tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(tx.clone()),
     };
-    let payload_bytes = payload
-        .to_xdr(Limits::none())
-        .map_err(|e| SdkError::RpcError(format!("failed to encode signature payload: {e:?}")))?;
+    let payload_bytes = payload.to_xdr(Limits::none()).map_err(|e| {
+        SdkError::DecodingError(format!("failed to encode signature payload: {e:?}"))
+    })?;
     let hash: [u8; 32] = env
         .crypto()
         .sha256(&Bytes::from_slice(env, &payload_bytes))
@@ -167,7 +168,7 @@ pub fn sign_transaction(
             signature_bytes
                 .to_vec()
                 .try_into()
-                .map_err(|e| SdkError::RpcError(format!("invalid signature bytes: {e:?}")))?,
+                .map_err(|e| SdkError::DecodingError(format!("invalid signature bytes: {e:?}")))?,
         ),
     };
 
@@ -179,7 +180,7 @@ pub fn sign_transaction(
     });
     envelope
         .to_xdr_base64(Limits::none())
-        .map_err(|e| SdkError::RpcError(format!("failed to encode signed transaction: {e:?}")))
+        .map_err(|e| SdkError::DecodingError(format!("failed to encode signed transaction: {e:?}")))
 }
 
 /// Converts a Rust value into an `ScVal` contract-call argument, via the
@@ -190,9 +191,9 @@ where
 {
     let val: Val = value
         .try_into_val(env)
-        .map_err(|_| SdkError::RpcError("failed to convert value to host Val".to_string()))?;
+        .map_err(|_| SdkError::DecodingError("failed to convert value to host Val".to_string()))?;
     ScVal::try_from_val(env, &val)
-        .map_err(|_| SdkError::RpcError("failed to convert Val to ScVal".to_string()))
+        .map_err(|_| SdkError::DecodingError("failed to convert Val to ScVal".to_string()))
 }
 
 /// Decodes the base64 `ScVal` XDR returned in a successful simulation's
@@ -207,11 +208,11 @@ where
     T: TryFromVal<Env, Val>,
 {
     let sc_val = ScVal::from_xdr_base64(result_xdr_base64, Limits::none())
-        .map_err(|e| SdkError::RpcError(format!("failed to decode result xdr: {e:?}")))?;
+        .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))?;
     let val: Val = Val::try_from_val(env, &sc_val)
-        .map_err(|_| SdkError::RpcError("failed to convert ScVal to host Val".to_string()))?;
+        .map_err(|_| SdkError::DecodingError("failed to convert ScVal to host Val".to_string()))?;
     T::try_from_val(env, &val)
-        .map_err(|_| SdkError::RpcError("failed to convert Val to target type".to_string()))
+        .map_err(|_| SdkError::DecodingError("failed to convert Val to target type".to_string()))
 }
 
 #[cfg(test)]
@@ -247,7 +248,7 @@ mod tests {
     #[test]
     fn rejects_an_invalid_contract_id() {
         let err = build_simulate_transaction_xdr("not-a-contract-id", "get_schema", vec![]);
-        assert!(matches!(err, Err(SdkError::RpcError(_))));
+        assert!(matches!(err, Err(SdkError::DecodingError(_))));
     }
 
     #[test]

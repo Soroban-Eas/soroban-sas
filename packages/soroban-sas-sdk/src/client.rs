@@ -2,12 +2,15 @@
 
 use crate::account;
 use crate::errors::SdkError;
-use crate::rpc::{GetTransactionResult, RpcClient};
+use crate::rpc::{GetTransactionResult, LedgerEntryResult, RpcClient};
 use crate::signature;
 use crate::simulate;
 use crate::transaction::TransactionSubmitter;
 use soroban_sas_common::{Attestation, SchemaRecord, UID};
-use soroban_sdk::xdr::{Limits, ReadXdr, ScVal, SorobanTransactionData, TransactionExt, VecM};
+use soroban_sdk::xdr::{
+    ContractDataDurability, Hash, LedgerEntryData, LedgerKey, LedgerKeyContractData, Limits,
+    ReadXdr, ScAddress, ScVal, SorobanTransactionData, TransactionExt, VecM, WriteXdr,
+};
 use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
 use std::time::Duration;
 
@@ -58,6 +61,34 @@ impl SASClient {
         let uid = UID(BytesN::from_array(env, uid));
         let arg = simulate::encode_arg(env, &uid)?;
         invoke_read_only(env, rpc, registry_contract_id, "get_schema", vec![arg])
+    }
+
+    /// Fetches the full `Attestation` record for `uid` directly from ledger
+    /// storage via `getLedgerEntries`, rather than a contract call — this
+    /// keeps the SAS contract untouched (no new view function to deploy).
+    ///
+    /// Returns `None` if no attestation with that UID has ever been issued.
+    pub fn get_attestation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        uid: &[u8; 32],
+    ) -> Result<Option<Attestation>, SdkError> {
+        let contract = stellar_strkey::Contract::from_string(&self.contract_id).map_err(|e| {
+            SdkError::DecodingError(format!("invalid contract id {}: {e:?}", self.contract_id))
+        })?;
+        let uid_arg = UID(BytesN::from_array(env, uid));
+        let key = simulate::encode_arg(env, &uid_arg)?;
+        let ledger_key = LedgerKey::ContractData(LedgerKeyContractData {
+            contract: ScAddress::Contract(Hash(contract.0)),
+            key,
+            durability: ContractDataDurability::Persistent,
+        });
+        let key_b64 = ledger_key
+            .to_xdr_base64(Limits::none())
+            .map_err(|e| SdkError::DecodingError(format!("failed to encode ledger key: {e:?}")))?;
+        let result = rpc.get_ledger_entries(vec![key_b64])?;
+        attestation_from_ledger_entries(env, &result.entries)
     }
 
     /// Calls `SchemaRegistry::register(owner, schema, resolver, revocable)`
@@ -340,6 +371,53 @@ impl IndexerClient {
             vec![arg],
         )
     }
+
+    /// Calls `Indexer::get_attestations_by_attester(attester)` via
+    /// `simulateTransaction`, same pattern as
+    /// `get_attestations_by_recipient`/`get_attestations_by_schema`.
+    pub fn get_attestations_by_attester(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &str,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let attester = Address::from_string(&SorobanString::from_str(env, attester));
+        let arg = simulate::encode_arg(env, &attester)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_attestations_by_attester",
+            vec![arg],
+        )
+    }
+}
+
+/// Decodes the first entry of a `getLedgerEntries` response as a
+/// `ContractData` entry holding an `Attestation`, returning `None` if the
+/// response had no matching entry (i.e. the UID doesn't exist).
+fn attestation_from_ledger_entries(
+    env: &Env,
+    entries: &[LedgerEntryResult],
+) -> Result<Option<Attestation>, SdkError> {
+    let Some(entry) = entries.first() else {
+        return Ok(None);
+    };
+    let data = LedgerEntryData::from_xdr_base64(&entry.xdr, Limits::none()).map_err(|e| {
+        SdkError::DecodingError(format!("failed to decode ledger entry xdr: {e:?}"))
+    })?;
+    let LedgerEntryData::ContractData(contract_data) = data else {
+        return Err(SdkError::DecodingError(format!(
+            "expected a ContractData ledger entry, got {data:?}"
+        )));
+    };
+    let val_xdr = contract_data
+        .val
+        .to_xdr_base64(Limits::none())
+        .map_err(|e| {
+            SdkError::DecodingError(format!("failed to encode contract data value: {e:?}"))
+        })?;
+    simulate::decode_result(env, &val_xdr).map(Some)
 }
 
 /// Simulates a read-only call to `function_name` on `contract_id` and
@@ -357,7 +435,7 @@ where
     let tx_xdr = simulate::build_simulate_transaction_xdr(contract_id, function_name, args)?;
     let result = rpc.simulate_transaction(&tx_xdr)?;
     if let Some(error) = result.error {
-        return Err(SdkError::RpcError(error));
+        return Err(SdkError::SimulationError(error));
     }
     let xdr = result
         .results
@@ -397,14 +475,15 @@ fn invoke_write(
     let draft_xdr = simulate::unsigned_envelope_xdr(draft_tx)?;
     let sim = rpc.simulate_transaction(&draft_xdr)?;
     if let Some(error) = sim.error {
-        return Err(SdkError::RpcError(error));
+        return Err(SdkError::SimulationError(error));
     }
     let transaction_data_b64 = sim.transaction_data.ok_or_else(|| {
         SdkError::RpcError("simulation succeeded but returned no transactionData".to_string())
     })?;
     let soroban_data =
-        SorobanTransactionData::from_xdr_base64(transaction_data_b64, Limits::none())
-            .map_err(|e| SdkError::RpcError(format!("failed to decode transactionData: {e:?}")))?;
+        SorobanTransactionData::from_xdr_base64(transaction_data_b64, Limits::none()).map_err(
+            |e| SdkError::DecodingError(format!("failed to decode transactionData: {e:?}")),
+        )?;
     let resource_fee: i64 = sim
         .min_resource_fee
         .as_deref()
@@ -443,7 +522,32 @@ fn invoke_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::xdr::{ContractDataEntry, ExtensionPoint};
     use soroban_sdk::{testutils::Address as _, BytesN};
+    use std::io::{Read, Write};
+
+    /// Spawns a background thread that accepts exactly one HTTP connection,
+    /// discards the request, and replies with `response_body` as a `200 OK`
+    /// JSON response. Returns the URL an `RpcClient` should target — lets
+    /// tests exercise a full RPC round trip without touching a real network.
+    fn spawn_mock_rpc_server(response_body: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 16384];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        url
+    }
 
     fn attestation_fixture(env: &Env, seed: u8) -> Attestation {
         let attester = Address::generate(env);
@@ -473,5 +577,96 @@ mod tests {
             panic!("expected multi_attest argument to be an ScVal vector");
         };
         assert_eq!(values.len(), 2);
+    }
+
+    /// Issue #24 acceptance criterion: fetching an existing UID returns
+    /// `Some(Attestation)` with every field matching what was issued.
+    #[test]
+    fn get_attestation_decodes_a_matching_ledger_entry() {
+        let env = Env::default();
+        let attestation = attestation_fixture(&env, 7);
+        let contract_bytes = [9u8; 32];
+        let contract_id = stellar_strkey::Contract(contract_bytes).to_string();
+
+        let key = simulate::encode_arg(&env, &attestation.uid).unwrap();
+        let val = simulate::encode_arg(&env, &attestation).unwrap();
+        let entry_xdr = LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(Hash(contract_bytes)),
+            key,
+            durability: ContractDataDurability::Persistent,
+            val,
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{entry_xdr}","lastModifiedLedgerSeq":100}}],"latestLedger":100}}}}"#
+        );
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id);
+
+        let fetched = client
+            .get_attestation(&env, &rpc, &[7u8; 32])
+            .unwrap()
+            .expect("expected an attestation to be found");
+
+        assert_eq!(fetched, attestation);
+    }
+
+    /// Issue #24 acceptance criterion: an unknown UID resolves to `None`.
+    #[test]
+    fn get_attestation_returns_none_for_an_unknown_uid() {
+        let env = Env::default();
+        let contract_id = stellar_strkey::Contract([9u8; 32]).to_string();
+        let body =
+            r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#.to_string();
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id);
+
+        let fetched = client.get_attestation(&env, &rpc, &[99u8; 32]).unwrap();
+
+        assert!(fetched.is_none());
+    }
+
+    /// Issue #21 acceptance criterion: the new binding decodes a
+    /// `Vec<UID>` from `Indexer::get_attestations_by_attester`.
+    #[test]
+    fn get_attestations_by_attester_decodes_a_vec_of_uids() {
+        let env = Env::default();
+        let uids = soroban_sdk::vec![
+            &env,
+            UID(BytesN::from_array(&env, &[1u8; 32])),
+            UID(BytesN::from_array(&env, &[2u8; 32])),
+        ];
+        let result_xdr = simulate::encode_arg(&env, &uids)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+        let client = IndexerClient::new(contract_id);
+        let attester = stellar_strkey::ed25519::PublicKey([3u8; 32]).to_string();
+
+        let fetched = client
+            .get_attestations_by_attester(&env, &rpc, &attester)
+            .unwrap();
+
+        assert_eq!(fetched.len(), 2);
+        assert_eq!(
+            fetched.get(0).unwrap(),
+            UID(BytesN::from_array(&env, &[1u8; 32]))
+        );
+        assert_eq!(
+            fetched.get(1).unwrap(),
+            UID(BytesN::from_array(&env, &[2u8; 32]))
+        );
     }
 }

@@ -131,8 +131,55 @@ enum SchemaCommands {
     },
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OutputFormat {
+    Human,
+    Json,
+}
+
 #[derive(Subcommand)]
 enum AttestCommands {
+    /// Issue a new on-chain attestation directly from flags (no JSON data
+    /// file required). Generates the UID and prints it on success.
+    Attest {
+        #[arg(long, help = "32-byte schema UID, hex encoded")]
+        schema_uid: String,
+        #[arg(long, help = "Recipient address (G... or C...)")]
+        recipient: String,
+        #[arg(
+            long,
+            help = "Attestation payload, hex or base64 encoded",
+            default_value = ""
+        )]
+        data: String,
+        #[arg(
+            long,
+            help = "Unix timestamp the attestation expires at (0 = no expiry)",
+            default_value_t = 0
+        )]
+        expiration: u64,
+        #[arg(long, help = "Whether this attestation can be revoked")]
+        revocable: bool,
+        #[arg(
+            long,
+            help = "Attester's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: String,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: String,
+        #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: String,
+        #[arg(long, help = "Output format: human or json", default_value = "human")]
+        output: OutputFormat,
+    },
     /// Create and submit a new on-chain attestation
     Create {
         #[arg(long, help = "JSON file containing attestation data")]
@@ -346,6 +393,75 @@ fn main() {
 fn run_attest(action: AttestCommands) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
+        AttestCommands::Attest {
+            schema_uid,
+            recipient,
+            data,
+            expiration,
+            revocable,
+            secret_key,
+            network_passphrase,
+            contract_id,
+            rpc_url,
+            output,
+        } => {
+            let schema_uid_bytes = parse_uid(&schema_uid)?;
+            let data_bytes = decode_hex_or_base64(&data)?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let attester = stellar_strkey::ed25519::PublicKey(
+                soroban_sas_sdk::signature::derive_public_key(&seed),
+            )
+            .to_string();
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| format!("system clock error: {e}"))?;
+            let uid = offchain::generate_uid(
+                &env,
+                &schema_uid_bytes,
+                &recipient,
+                &attester,
+                &data_bytes,
+                now.as_nanos(),
+            );
+
+            let input = offchain::AttestationInput {
+                uid: hex::encode(uid),
+                schema_uid: schema_uid.clone(),
+                time: now.as_secs(),
+                expiration_time: expiration,
+                ref_uid: hex::encode([0u8; 32]),
+                recipient,
+                attester,
+                revocable,
+                data: hex::encode(&data_bytes),
+            };
+            let attestation = offchain::parse_attestation(&env, &input)?;
+
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let result = client
+                .attest(&env, &rpc, &network_passphrase, &seed, attestation)
+                .map_err(|e| format!("{e:?}"))?;
+
+            if result.status != "SUCCESS" {
+                return Err(format!("attest failed with status {}", result.status));
+            }
+
+            let uid_hex = hex::encode(uid);
+            match output {
+                OutputFormat::Json => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "ok",
+                        "uid": uid_hex,
+                    }))
+                    .map_err(|e| format!("serialization failed: {e}"))?
+                ),
+                OutputFormat::Human => println!("Attestation issued: {uid_hex}"),
+            }
+            Ok(())
+        }
         AttestCommands::Create {
             data_file,
             secret_key,
@@ -457,6 +573,25 @@ fn parse_uid(value: &str) -> Result<[u8; 32], String> {
         .map_err(|e| format!("invalid hex in uid: {e}"))?
         .try_into()
         .map_err(|_| "uid must be exactly 32 bytes".to_string())
+}
+
+/// Decodes an attestation `--data` value that may be either hex (optionally
+/// `0x`-prefixed) or base64 encoded.
+fn decode_hex_or_base64(value: &str) -> Result<Vec<u8>, String> {
+    let trimmed = value.trim();
+    if let Some(hex_str) = trimmed.strip_prefix("0x") {
+        return hex::decode(hex_str).map_err(|e| format!("invalid hex in data: {e}"));
+    }
+    let looks_like_hex = !trimmed.is_empty()
+        && trimmed.len() & 1 == 0
+        && trimmed.chars().all(|c| c.is_ascii_hexdigit());
+    if looks_like_hex {
+        return hex::decode(trimmed).map_err(|e| format!("invalid hex in data: {e}"));
+    }
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|e| format!("data must be hex or base64 encoded: {e}"))
 }
 
 fn print_transaction_result(
