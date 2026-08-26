@@ -1,6 +1,6 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
-use soroban_sas_common::{SASError, UID};
+use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Symbol};
 
 // v1.0.0 Indexer logic frozen
@@ -54,9 +54,15 @@ impl Indexer {
             .get(&(_recipient.clone(), chunk_index))
             .unwrap_or_else(|| soroban_sdk::Vec::new(&_env));
         recipient_uids.push_back(_uid.clone());
+        let recipient_key = (_recipient, chunk_index);
         _env.storage()
             .persistent()
-            .set(&(_recipient, chunk_index), &recipient_uids);
+            .set(&recipient_key, &recipient_uids);
+        _env.storage().persistent().extend_ttl(
+            &recipient_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
 
         // Chunked Schema -> Vec<UID>
         let mut schema_uids: soroban_sdk::Vec<UID> = _env
@@ -65,9 +71,13 @@ impl Indexer {
             .get(&(_schema_uid.clone(), chunk_index))
             .unwrap_or_else(|| soroban_sdk::Vec::new(&_env));
         schema_uids.push_back(_uid.clone());
-        _env.storage()
-            .persistent()
-            .set(&(_schema_uid, chunk_index), &schema_uids);
+        let schema_key = (_schema_uid, chunk_index);
+        _env.storage().persistent().set(&schema_key, &schema_uids);
+        _env.storage().persistent().extend_ttl(
+            &schema_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
 
         // Chunked Attester -> Vec<UID>
         let mut attester_uids: soroban_sdk::Vec<UID> = _env
@@ -76,9 +86,15 @@ impl Indexer {
             .get(&(_attester.clone(), chunk_index))
             .unwrap_or_else(|| soroban_sdk::Vec::new(&_env));
         attester_uids.push_back(_uid.clone());
+        let attester_key = (_attester, chunk_index);
         _env.storage()
             .persistent()
-            .set(&(_attester, chunk_index), &attester_uids);
+            .set(&attester_key, &attester_uids);
+        _env.storage().persistent().extend_ttl(
+            &attester_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
     }
 
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {

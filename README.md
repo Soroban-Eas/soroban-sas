@@ -69,6 +69,8 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
 
 - `packages/soroban-sas-sdk`
   A streamlined Rust Software Development Kit designed to facilitate future integrations with wallets and decentralized applications.
+  It includes builders such as `SchemaBuilder` and client helpers such as
+  `SASClient::multi_attest` for batch attestation submission.
 
 ### CLI and Operations
 

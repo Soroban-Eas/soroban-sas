@@ -19,5 +19,6 @@ pub mod transaction;
 
 pub mod errors;
 pub mod events;
+pub use schema_builder::SchemaBuilder;
 #[cfg(test)]
 mod test;

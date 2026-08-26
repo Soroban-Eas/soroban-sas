@@ -7,7 +7,7 @@ use crate::signature;
 use crate::simulate;
 use crate::transaction::TransactionSubmitter;
 use soroban_sas_common::{Attestation, SchemaRecord, UID};
-use soroban_sdk::xdr::{Limits, ReadXdr, ScVal, SorobanTransactionData, TransactionExt};
+use soroban_sdk::xdr::{Limits, ReadXdr, ScVal, SorobanTransactionData, TransactionExt, VecM};
 use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
 use std::time::Duration;
 
@@ -128,6 +128,28 @@ impl SASClient {
             &self.contract_id,
             "attest",
             vec![arg],
+        )
+    }
+
+    /// Calls `SAS::multi_attest(attestations)`: encodes each attestation into
+    /// one Soroban vector argument, signs the batch invoke with `secret_seed`,
+    /// submits it, and polls until it settles.
+    pub fn multi_attest(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        attestations: Vec<Attestation>,
+    ) -> Result<GetTransactionResult, SdkError> {
+        invoke_write(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "multi_attest",
+            vec![encode_multi_attest_arg(env, &attestations)?],
         )
     }
 
@@ -256,6 +278,17 @@ impl SASClient {
             args,
         )
     }
+}
+
+fn encode_multi_attest_arg(env: &Env, attestations: &[Attestation]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = attestations
+        .iter()
+        .map(|attestation| simulate::encode_arg(env, attestation))
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many attestations: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
 }
 
 /// Client for the Indexer contract's read-only attestation lookups.
@@ -405,4 +438,40 @@ fn invoke_write(
         DEFAULT_MAX_POLL_ATTEMPTS,
         DEFAULT_POLL_INTERVAL,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, BytesN};
+
+    fn attestation_fixture(env: &Env, seed: u8) -> Attestation {
+        let attester = Address::generate(env);
+        let recipient = Address::generate(env);
+        Attestation {
+            uid: UID(BytesN::from_array(env, &[seed; 32])),
+            schema_uid: UID(BytesN::from_array(env, &[2u8; 32])),
+            time: 1000,
+            expiration_time: 0,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(env, &[0u8; 32])),
+            recipient,
+            attester,
+            revocable: true,
+            data: Bytes::new(env),
+        }
+    }
+
+    #[test]
+    fn multi_attest_encodes_attestations_as_one_vector_arg() {
+        let env = Env::default();
+        let attestations = vec![attestation_fixture(&env, 1), attestation_fixture(&env, 2)];
+
+        let arg = encode_multi_attest_arg(&env, &attestations).unwrap();
+
+        let ScVal::Vec(Some(values)) = arg else {
+            panic!("expected multi_attest argument to be an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+    }
 }

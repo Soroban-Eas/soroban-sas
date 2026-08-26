@@ -17,6 +17,9 @@ pub use validation::*;
 
 use soroban_sdk::{contracttype, Address, Bytes, String};
 
+/// Approximate number of ledgers in one year at five seconds per ledger.
+pub const LEDGERS_IN_ONE_YEAR: u32 = 6_307_200;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UID(pub soroban_sdk::BytesN<32>);

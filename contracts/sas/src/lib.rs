@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 
-use soroban_sas_common::{Attestation, SASError, UID};
+use soroban_sas_common::{Attestation, SASError, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
 };
@@ -15,6 +15,7 @@ pub struct SAS;
 
 pub const SAS_ADMIN: Symbol = symbol_short!("ADMIN");
 pub const SCHEMA_REGISTRY: Symbol = symbol_short!("REGISTRY");
+pub const INDEXER: Symbol = symbol_short!("INDEXER");
 pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
 
@@ -26,6 +27,13 @@ impl SAS {
         }
         env.storage().instance().set(&SAS_ADMIN, &admin);
         env.storage().instance().set(&SCHEMA_REGISTRY, &registry);
+    }
+
+    /// Binds an Indexer contract that should mirror newly issued attestations.
+    pub fn set_indexer(env: Env, indexer: Address) {
+        let admin: Address = env.storage().instance().get(&SAS_ADMIN).unwrap();
+        admin.require_auth();
+        env.storage().instance().set(&INDEXER, &indexer);
     }
 
     pub fn attest(env: Env, attestation: Attestation) -> UID {
@@ -85,6 +93,25 @@ impl SAS {
         env.storage()
             .persistent()
             .set(&attestation.uid, &attestation);
+        env.storage().persistent().extend_ttl(
+            &attestation.uid,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
+        if let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) {
+            env.invoke_contract::<()>(
+                &indexer,
+                &Symbol::new(&env, "index_attestation"),
+                soroban_sdk::vec![
+                    &env,
+                    attestation.uid.clone().into_val(&env),
+                    attestation.recipient.clone().into_val(&env),
+                    attestation.schema_uid.clone().into_val(&env),
+                    attestation.attester.clone().into_val(&env),
+                ],
+            );
+        }
 
         events::publish_attested(&env, &attestation);
 
@@ -139,6 +166,9 @@ impl SAS {
         let timestamp = env.ledger().timestamp();
         attestation.revocation_time = timestamp;
         env.storage().persistent().set(&uid, &attestation);
+        env.storage()
+            .persistent()
+            .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 
         events::publish_revoked(&env, &uid, timestamp);
     }
@@ -184,9 +214,14 @@ impl SAS {
         attestations: soroban_sdk::Vec<Attestation>,
     ) -> soroban_sdk::Vec<UID> {
         let mut uids = soroban_sdk::Vec::new(&env);
+        let mut authorized_attesters = soroban_sdk::Vec::new(&env);
         // Gas optimization: process attestations in a single batch layout
         for attestation in attestations.into_iter() {
-            let uid = Self::attest(env.clone(), attestation);
+            if !authorized_attesters.contains(&attestation.attester) {
+                attestation.attester.require_auth();
+                authorized_attesters.push_back(attestation.attester.clone());
+            }
+            let uid = Self::attest_internal(env.clone(), attestation);
             uids.push_back(uid);
         }
         uids
@@ -244,9 +279,11 @@ impl SAS {
     /// bind a key to it.
     pub fn register_attester_key(env: Env, attester: Address, public_key: soroban_sdk::BytesN<32>) {
         attester.require_auth();
+        let key = (ATTESTER_KEY, attester);
+        env.storage().persistent().set(&key, &public_key);
         env.storage()
             .persistent()
-            .set(&(ATTESTER_KEY, attester), &public_key);
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
     }
 
     /// Returns true if `public_key` was explicitly registered for `attester`
@@ -276,6 +313,9 @@ impl SAS {
             panic_with_error!(env, SASError::DelegationReplay);
         }
         env.storage().persistent().set(&key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
     }
 
     /// Verifies an off-chain attestation signed by the attester's ed25519 key.
@@ -319,6 +359,11 @@ impl SAS {
             .persistent()
             .get::<_, Attestation>(&attestation.uid)
         {
+            env.storage().persistent().extend_ttl(
+                &attestation.uid,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
             if stored.revocation_time != 0 {
                 panic_with_error!(&env, SASError::AlreadyRevoked);
             }
@@ -338,6 +383,9 @@ impl SAS {
 
     pub fn verify_attestation(env: Env, uid: UID) -> bool {
         if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
             if attestation.revocation_time != 0 {
                 return false;
             }

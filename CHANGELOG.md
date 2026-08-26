@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SASError::AlreadyInitialized` (code 1) and `SASError::InvalidValue` (code 403).
 - `Indexer::init` now binds the indexer to an admin and a SAS contract
   address, with `Indexer::get_admin` / `Indexer::get_sas` accessors.
+- `SchemaBuilder` for constructing SDK `SchemaRecord` values and
+  `SASClient::multi_attest` for submitting batch attestations.
+- `LEDGERS_IN_ONE_YEAR` common constant for persistent storage TTL bumps.
 
 ### Changed
 - All contract failure paths now panic with typed `SASError` variants instead
@@ -28,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attester to the contract before issuing the attestation, instead of
   silently ignoring the `token` and `value` arguments. Negative values are
   rejected with `SASError::InvalidValue`.
+- Persistent contract storage writes now extend TTL, and attestation reads
+  refresh TTL for active state.
+- `SAS` can bind an `Indexer` and mirror newly issued attestations so
+  replacements are discoverable through indexer lookups.
 
 ### Known Issues
 - `SchemaRegistry::deprecate` currently lacks an authorization check.

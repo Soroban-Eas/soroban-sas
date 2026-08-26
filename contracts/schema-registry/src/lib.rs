@@ -2,7 +2,7 @@
 #![no_std]
 #![allow(unused_variables)]
 
-use soroban_sas_common::{SASError, SchemaRecord, UID};
+use soroban_sas_common::{SASError, SchemaRecord, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, xdr::ToXdr, Address, Bytes, Env, String,
 };
@@ -63,7 +63,13 @@ impl SchemaRegistry {
             panic_with_error!(&env, SASError::Unauthorized);
         }
 
-        env.storage().persistent().set(&(DEPRECATED, uid), &true);
+        let deprecated_key = (DEPRECATED, uid);
+        env.storage().persistent().set(&deprecated_key, &true);
+        env.storage().persistent().extend_ttl(
+            &deprecated_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
     }
 
     pub fn register(
@@ -96,12 +102,27 @@ impl SchemaRegistry {
         env.storage().persistent().set(&uid, &record);
         env.storage()
             .persistent()
-            .set(&(SCHEMA_CREATOR, uid.clone()), &owner);
+            .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        let creator_key = (SCHEMA_CREATOR, uid.clone());
+        env.storage().persistent().set(&creator_key, &owner);
+        env.storage().persistent().extend_ttl(
+            &creator_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
 
         let mut count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
         env.storage().persistent().set(&count, &uid);
+        env.storage()
+            .persistent()
+            .extend_ttl(&count, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
         count += 1;
         env.storage().persistent().set(&SCHEMA_COUNT, &count);
+        env.storage().persistent().extend_ttl(
+            &SCHEMA_COUNT,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
 
         env.events().publish(
             (soroban_sas_common::events::REGISTERED, uid.clone()),

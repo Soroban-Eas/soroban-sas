@@ -82,6 +82,41 @@ pub mod mock3 {
     }
 }
 
+pub mod mock4 {
+    use super::*;
+    #[contract]
+    pub struct MockIndexer;
+
+    #[contractimpl]
+    impl MockIndexer {
+        pub fn index_attestation(
+            env: Env,
+            uid: UID,
+            recipient: Address,
+            _schema_uid: UID,
+            _attester: Address,
+        ) {
+            let mut uids: soroban_sdk::Vec<UID> = env
+                .storage()
+                .persistent()
+                .get(&recipient)
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+            uids.push_back(uid);
+            env.storage().persistent().set(&recipient, &uids);
+        }
+
+        pub fn get_attestations_by_recipient(
+            env: Env,
+            recipient: Address,
+        ) -> soroban_sdk::Vec<UID> {
+            env.storage()
+                .persistent()
+                .get(&recipient)
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
+        }
+    }
+}
+
 #[test]
 fn test_happy_path_attestation() {
     let env = Env::default();
@@ -435,6 +470,58 @@ fn test_revocation_failure() {
 }
 */
 
+#[test]
+fn test_multi_attest_returns_both_uids() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let uid1 = UID(soroban_sdk::BytesN::from_array(&env, &[3u8; 32]));
+    let uid2 = UID(soroban_sdk::BytesN::from_array(&env, &[4u8; 32]));
+
+    let att1 = Attestation {
+        uid: uid1.clone(),
+        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        time: 1000,
+        expiration_time: 0,
+        revocation_time: 0,
+        ref_uid: UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32])),
+        recipient: recipient.clone(),
+        attester: attester.clone(),
+        revocable: true,
+        data: Bytes::new(&env),
+    };
+
+    let att2 = Attestation {
+        uid: uid2.clone(),
+        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        time: 1000,
+        expiration_time: 0,
+        revocation_time: 0,
+        ref_uid: UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32])),
+        recipient,
+        attester: attester.clone(),
+        revocable: true,
+        data: Bytes::new(&env),
+    };
+
+    env.mock_all_auths();
+    let batch = soroban_sdk::vec![&env, att1, att2];
+
+    let result = sas_client.multi_attest(&batch);
+    assert_eq!(result.len(), 2);
+    assert!(result.contains(&uid1));
+    assert!(result.contains(&uid2));
+}
+
 /*
 #[test]
 fn test_batch_operations() {
@@ -484,13 +571,29 @@ fn test_batch_operations() {
 
     let result = sas_client.multi_attest(&batch);
     assert_eq!(result.len(), 2);
-
     let revoke_batch = soroban_sdk::vec![&env, uid1.clone(), uid2.clone()];
     env.ledger().with_mut(|li| li.timestamp = 100);
     env.mock_all_auths();
     sas_client.multi_revoke(&revoke_batch);
 }
 */
+
+#[test]
+fn test_replace_attestation_indexes_new_uid() {
+    let f = replace::setup(true);
+    let indexer_id = f.env.register_contract(None, mock4::MockIndexer);
+    let indexer_client = mock4::MockIndexerClient::new(&f.env, &indexer_id);
+    let new_attestation = f.new_attestation([2u8; 32]);
+
+    f.env.mock_all_auths();
+    f.sas_client.set_indexer(&indexer_id);
+    let new_uid = f
+        .sas_client
+        .replace_attestation(&f.old_uid, &new_attestation);
+
+    let recipient_uids = indexer_client.get_attestations_by_recipient(&f.recipient);
+    assert!(recipient_uids.contains(&new_uid));
+}
 
 #[test]
 fn test_resolver_callback() {
