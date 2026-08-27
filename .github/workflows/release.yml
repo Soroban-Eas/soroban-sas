@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.79.0
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Build contracts (WASM)
+        run: |
+          cargo build \
+            --package sas \
+            --package schema-registry \
+            --package soroban-sas-indexer \
+            --target wasm32-unknown-unknown \
+            --release
+      - name: Install wasm-opt
+        run: |
+          cargo install wasm-opt --locked
+      - name: Optimize WASM binaries
+        run: |
+          wasm-opt -Oz target/wasm32-unknown-unknown/release/sas.wasm -o target/wasm32-unknown-unknown/release/sas.opt.wasm
+          wasm-opt -Oz target/wasm32-unknown-unknown/release/schema_registry.wasm -o target/wasm32-unknown-unknown/release/schema_registry.opt.wasm
+          wasm-opt -Oz target/wasm32-unknown-unknown/release/soroban_sas_indexer.wasm -o target/wasm32-unknown-unknown/release/soroban_sas_indexer.opt.wasm
+      - name: Generate checksums
+        run: |
+          cd target/wasm32-unknown-unknown/release
+          sha256sum sas.opt.wasm schema_registry.opt.wasm soroban_sas_indexer.opt.wasm > checksums.sha256
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            target/wasm32-unknown-unknown/release/sas.opt.wasm
+            target/wasm32-unknown-unknown/release/schema_registry.opt.wasm
+            target/wasm32-unknown-unknown/release/soroban_sas_indexer.opt.wasm
+            target/wasm32-unknown-unknown/release/checksums.sha256
