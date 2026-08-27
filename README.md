@@ -207,6 +207,9 @@ TMPDIR=/tmp cargo test --workspace
 ## Documentation
 
 - Documentation on Schema Syntax and Payloads: `docs/schemas.md`
+- [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
+  `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
+  the Stellar CLI), verify the deployment, and a Mainnet operational checklist.
 
 ## Project Roadmap
 
