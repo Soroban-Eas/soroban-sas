@@ -3,6 +3,9 @@ use soroban_sdk::{Address, Env, String};
 
 const MAX_SCHEMA_LENGTH: u32 = 1024;
 
+/// Validates the syntax of a schema string.
+///
+/// See `docs/schemas.md` for the schema syntax specification.
 pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASError> {
     if schema.len() == 0 {
         return Err(SASError::InvalidSchema);

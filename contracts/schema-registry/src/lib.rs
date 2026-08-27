@@ -72,6 +72,9 @@ impl SchemaRegistry {
         );
     }
 
+    /// Registers a new schema in the registry.
+    ///
+    /// See `docs/schemas.md` for the schema syntax specification.
     pub fn register(
         env: Env,
         owner: Address,
