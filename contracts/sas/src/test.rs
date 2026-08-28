@@ -42,6 +42,10 @@ pub mod mock1 {
             true
         }
 
+        pub fn sasreg(_env: Env) -> bool {
+            true
+        }
+
         pub fn get_schema(env: Env, uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             Some(soroban_sas_common::SchemaRecord {
                 uid: uid.clone(),

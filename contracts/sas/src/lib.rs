@@ -18,12 +18,22 @@ pub const SCHEMA_REGISTRY: Symbol = symbol_short!("REGISTRY");
 pub const INDEXER: Symbol = symbol_short!("INDEXER");
 pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
+/// Maximum number of attestations in one multi_attest invocation. This keeps
+/// authorization and storage work within the measured Soroban budget envelope.
+pub const MAX_MULTI_ATTEST: u32 = 100;
+const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
 #[contractimpl]
 impl SAS {
     pub fn init(env: Env, admin: Address, registry: Address) {
         if env.storage().instance().has(&SAS_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
+        }
+        let compatible: bool = env
+            .try_invoke_contract(&registry, &REGISTRY_INTERFACE_VERSION, soroban_sdk::vec![&env])
+            .unwrap_or(false);
+        if !compatible {
+            panic_with_error!(&env, SASError::IncompatibleDependency);
         }
         env.storage().instance().set(&SAS_ADMIN, &admin);
         env.storage().instance().set(&SCHEMA_REGISTRY, &registry);
@@ -220,13 +230,16 @@ impl SAS {
         env: Env,
         attestations: soroban_sdk::Vec<Attestation>,
     ) -> soroban_sdk::Vec<UID> {
+        if attestations.len() > MAX_MULTI_ATTEST {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
         let mut uids = soroban_sdk::Vec::new(&env);
-        let mut authorized_attesters = soroban_sdk::Vec::new(&env);
-        // Gas optimization: process attestations in a single batch layout
+        let mut authorized_attesters = soroban_sdk::Map::new(&env);
+        // Map lookup avoids scanning all previously authorized attesters.
         for attestation in attestations.into_iter() {
-            if !authorized_attesters.contains(&attestation.attester) {
+            if !authorized_attesters.contains_key(attestation.attester.clone()) {
                 attestation.attester.require_auth();
-                authorized_attesters.push_back(attestation.attester.clone());
+                authorized_attesters.set(attestation.attester.clone(), true);
             }
             let uid = Self::attest_internal(env.clone(), attestation);
             uids.push_back(uid);

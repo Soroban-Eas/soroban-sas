@@ -15,6 +15,11 @@ use storage::*;
 
 #[contractimpl]
 impl SchemaRegistry {
+    /// Compatibility probe used by SAS::init before storing this registry.
+    pub fn sasreg(_env: Env) -> bool {
+        true
+    }
+
     pub fn init(env: Env, admin: soroban_sdk::Address) {
         if env.storage().instance().has(&REGISTRY_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);

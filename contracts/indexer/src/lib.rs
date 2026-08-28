@@ -16,6 +16,7 @@ const MAX_CHUNK_SIZE: u32 = 100;
 const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
+const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
 
 fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
     let count_key = (total_key, key.clone());
@@ -79,12 +80,24 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
 
 #[contractimpl]
 impl Indexer {
+    /// Compatibility probe used by Indexer::init to prove the supplied
+    /// address is an SAS v1 contract rather than merely a contract address.
+    pub fn sasv1(_env: Env) -> bool {
+        true
+    }
+
     /// Binds this indexer to an `admin` and to the `sas` contract whose
     /// attestations it indexes. Callable exactly once; a second call panics
     /// with `SASError::AlreadyInitialized`.
     pub fn init(env: Env, admin: Address, sas: Address) {
         if env.storage().instance().has(&INDEXER_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
+        }
+        let compatible: bool = env
+            .try_invoke_contract(&sas, &SAS_INTERFACE_VERSION, soroban_sdk::vec![&env])
+            .unwrap_or(false);
+        if !compatible {
+            panic_with_error!(&env, SASError::IncompatibleDependency);
         }
         env.storage().instance().set(&INDEXER_ADMIN, &admin);
         env.storage().instance().set(&SAS_CONTRACT, &sas);

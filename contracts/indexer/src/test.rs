@@ -1,6 +1,16 @@
 use super::*;
 use soroban_sas_common::UID;
-use soroban_sdk::{testutils::Address as _, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Env};
+
+mod mock {
+    use super::*;
+    #[contract]
+    pub struct MockSas;
+    #[contractimpl]
+    impl MockSas {
+        pub fn sasv1(_env: Env) -> bool { true }
+    }
+}
 
 #[test]
 fn test_init_records_admin_and_sas_binding() {
@@ -9,7 +19,7 @@ fn test_init_records_admin_and_sas_binding() {
     let client = IndexerClient::new(&env, &indexer_id);
 
     let admin = Address::generate(&env);
-    let sas = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
 
     assert_eq!(client.get_admin(), None);
     client.init(&admin, &sas);
@@ -25,7 +35,7 @@ fn test_init_twice_is_rejected() {
     let client = IndexerClient::new(&env, &indexer_id);
 
     let admin = Address::generate(&env);
-    let sas = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
     client.init(&admin, &sas);
 
     let res = client.try_init(&admin, &sas);
