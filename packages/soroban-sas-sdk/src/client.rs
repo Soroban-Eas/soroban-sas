@@ -119,6 +119,7 @@ impl SASClient {
         secret_seed: &[u8; 32],
         attestation: Attestation,
     ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
         let arg = simulate::encode_arg(env, &attestation)?;
         invoke_write(
             env,
@@ -142,6 +143,9 @@ impl SASClient {
         secret_seed: &[u8; 32],
         attestations: Vec<Attestation>,
     ) -> Result<GetTransactionResult, SdkError> {
+        for attestation in &attestations {
+            ensure_attester_matches_secret(env, secret_seed, attestation)?;
+        }
         invoke_write(
             env,
             rpc,
@@ -263,6 +267,7 @@ impl SASClient {
         old_uid: &[u8; 32],
         new_data: Attestation,
     ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &new_data)?;
         let old_uid = UID(BytesN::from_array(env, old_uid));
         let args = vec![
             simulate::encode_arg(env, &old_uid)?,
@@ -289,6 +294,22 @@ fn encode_multi_attest_arg(env: &Env, attestations: &[Attestation]) -> Result<Sc
         .try_into()
         .map_err(|e| SdkError::RpcError(format!("too many attestations: {e:?}")))?;
     Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn ensure_attester_matches_secret(
+    env: &Env,
+    secret_seed: &[u8; 32],
+    attestation: &Attestation,
+) -> Result<(), SdkError> {
+    let public_key = signature::derive_public_key(secret_seed);
+    let attester_strkey = stellar_strkey::ed25519::PublicKey(public_key).to_string();
+    let expected_attester = Address::from_string(&SorobanString::from_str(env, &attester_strkey));
+    if attestation.attester != expected_attester {
+        return Err(SdkError::DecodingError(
+            "attestation attester does not match signing key".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Client for the Indexer contract's read-only attestation lookups.
@@ -443,35 +464,168 @@ fn invoke_write(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, BytesN};
+    use soroban_sdk::xdr::{HostFunction, OperationBody, TransactionEnvelope};
+    use soroban_sdk::BytesN;
+    use soroban_sdk::{testutils::Address as _, TryFromVal, Val};
 
-    fn attestation_fixture(env: &Env, seed: u8) -> Attestation {
+    fn attestation_fixture(
+        env: &Env,
+        seed: u8,
+        data: &[u8],
+        expiration_time: u64,
+        revocable: bool,
+    ) -> Attestation {
         let attester = Address::generate(env);
         let recipient = Address::generate(env);
         Attestation {
             uid: UID(BytesN::from_array(env, &[seed; 32])),
             schema_uid: UID(BytesN::from_array(env, &[2u8; 32])),
             time: 1000,
-            expiration_time: 0,
+            expiration_time,
             revocation_time: 0,
             ref_uid: UID(BytesN::from_array(env, &[0u8; 32])),
             recipient,
             attester,
-            revocable: true,
-            data: Bytes::new(env),
+            revocable,
+            data: Bytes::from_slice(env, data),
         }
     }
 
     #[test]
-    fn multi_attest_encodes_attestations_as_one_vector_arg() {
+    fn multi_attest_round_trips_empty_single_and_multi_batches() {
         let env = Env::default();
-        let attestations = vec![attestation_fixture(&env, 1), attestation_fixture(&env, 2)];
+        let batches = vec![
+            vec![],
+            vec![attestation_fixture(&env, 1, &[0], u64::MAX, false)],
+            vec![
+                attestation_fixture(&env, 2, &[], 0, true),
+                attestation_fixture(&env, 3, &[0, 1, 2, 0xff], u64::MAX, false),
+            ],
+        ];
+
+        for attestations in batches {
+            let arg = encode_multi_attest_arg(&env, &attestations).unwrap();
+            let decoded = decode_multi_attest_arg(&env, &arg);
+
+            assert_eq!(decoded.len(), attestations.len() as u32);
+            for (idx, expected) in attestations.iter().enumerate() {
+                assert_eq!(decoded.get(idx as u32).unwrap(), *expected);
+            }
+        }
+    }
+
+    #[test]
+    fn multi_attest_preserves_contract_spec_field_order() {
+        let env = Env::default();
+        let attestations = vec![attestation_fixture(&env, 4, &[0, 0xff], u64::MAX, false)];
 
         let arg = encode_multi_attest_arg(&env, &attestations).unwrap();
-
         let ScVal::Vec(Some(values)) = arg else {
             panic!("expected multi_attest argument to be an ScVal vector");
         };
-        assert_eq!(values.len(), 2);
+        let ScVal::Map(Some(fields)) = &values[0] else {
+            panic!("expected encoded attestation to be an ScVal map");
+        };
+
+        let names: Vec<String> = fields
+            .iter()
+            .map(|entry| match &entry.key {
+                ScVal::Symbol(symbol) => symbol.0.to_string(),
+                other => panic!("expected symbol field key, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "attester",
+                "data",
+                "expiration_time",
+                "recipient",
+                "ref_uid",
+                "revocable",
+                "revocation_time",
+                "schema_uid",
+                "time",
+                "uid",
+            ]
+        );
+    }
+
+    #[test]
+    fn multi_attest_arg_is_submitted_as_single_contract_client_argument() {
+        let env = Env::default();
+        let contract = stellar_strkey::Contract([9u8; 32]).to_string();
+        let attestations = vec![
+            attestation_fixture(&env, 5, &[], 0, true),
+            attestation_fixture(&env, 6, &[1, 2, 3], u64::MAX, false),
+        ];
+        let arg = encode_multi_attest_arg(&env, &attestations).unwrap();
+        let tx = simulate::build_invoke_transaction(
+            &[1u8; 32],
+            1,
+            BASE_FEE,
+            TransactionExt::V0,
+            &contract,
+            "multi_attest",
+            vec![arg.clone()],
+        )
+        .unwrap();
+        let envelope = simulate::unsigned_envelope_xdr(tx).unwrap();
+        let envelope = TransactionEnvelope::from_xdr_base64(envelope, Limits::none()).unwrap();
+        let TransactionEnvelope::Tx(v1) = envelope else {
+            panic!("expected a V1 transaction envelope");
+        };
+        let OperationBody::InvokeHostFunction(op) = &v1.tx.operations[0].body else {
+            panic!("expected InvokeHostFunction operation");
+        };
+        let HostFunction::InvokeContract(args) = &op.host_function else {
+            panic!("expected InvokeContract host function");
+        };
+
+        assert_eq!(args.function_name.0.to_string(), "multi_attest");
+        assert_eq!(args.args.len(), 1);
+        assert_eq!(args.args[0], arg);
+    }
+
+    #[test]
+    fn register_schema_uses_secret_key_as_authenticated_owner() {
+        let env = Env::default();
+        let seed = [7u8; 32];
+        let public_key = signature::derive_public_key(&seed);
+        let owner_strkey = stellar_strkey::ed25519::PublicKey(public_key).to_string();
+        let owner = Address::from_string(&SorobanString::from_str(&env, &owner_strkey));
+        let encoded_owner = simulate::encode_arg(&env, &owner).unwrap();
+        let decoded_owner = decode_arg::<Address>(&env, &encoded_owner);
+
+        assert_eq!(decoded_owner, owner);
+    }
+
+    #[test]
+    fn attest_rejects_wrong_secret_key_before_state_changes() {
+        let env = Env::default();
+        let seed = [8u8; 32];
+        let wrong_seed = [9u8; 32];
+        let mut attestation = attestation_fixture(&env, 7, &[], 0, true);
+        let public_key = signature::derive_public_key(&seed);
+        let attester_strkey = stellar_strkey::ed25519::PublicKey(public_key).to_string();
+        attestation.attester =
+            Address::from_string(&SorobanString::from_str(&env, &attester_strkey));
+
+        let err = ensure_attester_matches_secret(&env, &wrong_seed, &attestation).unwrap_err();
+        match err {
+            SdkError::DecodingError(msg) => {
+                assert!(msg.contains("attester does not match signing key"));
+            }
+            other => panic!("expected DecodingError, got {other:?}"),
+        }
+    }
+
+    fn decode_multi_attest_arg(env: &Env, sc_val: &ScVal) -> soroban_sdk::Vec<Attestation> {
+        decode_arg(env, sc_val)
+    }
+
+    fn decode_arg<T: TryFromVal<Env, Val>>(env: &Env, sc_val: &ScVal) -> T {
+        let val = Val::try_from_val(env, sc_val).unwrap();
+        T::try_from_val(env, &val).unwrap()
     }
 }

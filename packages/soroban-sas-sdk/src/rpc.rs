@@ -6,6 +6,7 @@
 
 use crate::errors::SdkError;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use soroban_sdk::xdr::{Limits, ReadXdr, TransactionEnvelope};
 
 /// A Soroban RPC endpoint the SDK will submit requests to,
 /// e.g. `https://soroban-testnet.stellar.org`.
@@ -62,7 +63,9 @@ impl RpcClient {
         &self,
         body: &str,
     ) -> Result<GetTransactionResult, SdkError> {
-        parse_response(body)
+        let result = parse_response(body)?;
+        validate_supported_transaction_envelope(&result)?;
+        Ok(result)
     }
 
     /// Builds the JSON-RPC request body for Soroban's `simulateTransaction`,
@@ -170,6 +173,21 @@ fn parse_response<T: DeserializeOwned>(body: &str) -> Result<T, SdkError> {
         JsonRpcResponse::Error { error, .. } => Err(SdkError::RpcError(format!(
             "{}: {}",
             error.code, error.message
+        ))),
+    }
+}
+
+fn validate_supported_transaction_envelope(result: &GetTransactionResult) -> Result<(), SdkError> {
+    let Some(envelope_xdr) = &result.envelope_xdr else {
+        return Ok(());
+    };
+    let envelope = TransactionEnvelope::from_xdr_base64(envelope_xdr, Limits::none())
+        .map_err(|err| SdkError::DecodingError(format!("failed to decode envelopeXdr: {err:?}")))?;
+    match envelope {
+        TransactionEnvelope::Tx(_) => Ok(()),
+        other => Err(SdkError::DecodingError(format!(
+            "unsupported transaction envelope variant: {}",
+            other.name()
         ))),
     }
 }
@@ -319,6 +337,72 @@ pub struct LedgerEntryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::xdr::{
+        DecoratedSignature, FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
+        FeeBumpTransactionInnerTx, Memo, MuxedAccount, Operation, Preconditions, SequenceNumber,
+        Signature, SignatureHint, Transaction, TransactionExt, TransactionV0,
+        TransactionV0Envelope, TransactionV0Ext, TransactionV1Envelope, Uint256, VecM, WriteXdr,
+    };
+
+    fn v1_envelope_xdr() -> String {
+        TransactionEnvelope::Tx(TransactionV1Envelope {
+            tx: transaction_v1(),
+            signatures: VecM::default(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
+
+    fn v0_envelope_xdr() -> String {
+        TransactionEnvelope::TxV0(TransactionV0Envelope {
+            tx: TransactionV0 {
+                source_account_ed25519: Uint256([1u8; 32]),
+                fee: 100,
+                seq_num: SequenceNumber(1),
+                time_bounds: None,
+                memo: Memo::None,
+                operations: VecM::default(),
+                ext: TransactionV0Ext::V0,
+            },
+            signatures: VecM::default(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
+
+    fn fee_bump_envelope_xdr() -> String {
+        TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope {
+            tx: FeeBumpTransaction {
+                fee_source: MuxedAccount::Ed25519(Uint256([2u8; 32])),
+                fee: 200,
+                inner_tx: FeeBumpTransactionInnerTx::Tx(TransactionV1Envelope {
+                    tx: transaction_v1(),
+                    signatures: VecM::default(),
+                }),
+                ext: FeeBumpTransactionExt::V0,
+            },
+            signatures: vec![DecoratedSignature {
+                hint: SignatureHint([0; 4]),
+                signature: Signature(vec![0u8; 64].try_into().unwrap()),
+            }]
+            .try_into()
+            .unwrap(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
+
+    fn transaction_v1() -> Transaction {
+        Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256([3u8; 32])),
+            fee: 100,
+            seq_num: SequenceNumber(1),
+            cond: Preconditions::None,
+            memo: Memo::None,
+            operations: VecM::<Operation, 100>::default(),
+            ext: TransactionExt::V0,
+        }
+    }
 
     #[test]
     fn builds_send_transaction_request() {
@@ -365,20 +449,74 @@ mod tests {
     #[test]
     fn parses_successful_get_transaction_response() {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
-        let body = r#"{
+        let envelope_xdr = v1_envelope_xdr();
+        let body = format!(
+            r#"{{
             "jsonrpc": "2.0",
             "id": 1,
-            "result": {
+            "result": {{
                 "status": "SUCCESS",
                 "latestLedger": 12345,
-                "envelopeXdr": "AAAAAgAAAAA=",
+                "envelopeXdr": {envelope_xdr},
                 "resultXdr": "AAAAAQAAAAA="
-            }
-        }"#;
+            }}
+        }}"#,
+            envelope_xdr = serde_json::to_string(&envelope_xdr).unwrap()
+        );
 
-        let result = client.parse_get_transaction_response(body).unwrap();
+        let result = client.parse_get_transaction_response(&body).unwrap();
         assert_eq!(result.status, "SUCCESS");
-        assert_eq!(result.envelope_xdr.as_deref(), Some("AAAAAgAAAAA="));
+        assert_eq!(result.envelope_xdr.as_deref(), Some(envelope_xdr.as_str()));
+    }
+
+    #[test]
+    fn rejects_v0_get_transaction_envelope_without_panic() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = format!(
+            r#"{{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {{
+                "status": "SUCCESS",
+                "latestLedger": 12345,
+                "envelopeXdr": {v0_envelope_xdr}
+            }}
+        }}"#,
+            v0_envelope_xdr = serde_json::to_string(&v0_envelope_xdr()).unwrap()
+        );
+
+        let err = client.parse_get_transaction_response(&body).unwrap_err();
+        match err {
+            SdkError::DecodingError(msg) => {
+                assert!(msg.contains("unsupported transaction envelope variant: TxV0"));
+            }
+            other => panic!("expected DecodingError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_fee_bump_get_transaction_envelope_without_panic() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = format!(
+            r#"{{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {{
+                "status": "SUCCESS",
+                "latestLedger": 12345,
+                "envelopeXdr": {fee_bump_envelope_xdr}
+            }}
+        }}"#,
+            fee_bump_envelope_xdr = serde_json::to_string(&fee_bump_envelope_xdr()).unwrap()
+        );
+
+        let err = client.parse_get_transaction_response(&body).unwrap_err();
+        match err {
+            SdkError::DecodingError(msg) => {
+                assert!(msg.contains("unsupported transaction envelope variant: TxFeeBump"));
+            }
+            other => panic!("expected DecodingError, got {other:?}"),
+        }
     }
 
     #[test]
