@@ -19,4 +19,8 @@ pub enum SdkError {
     /// A JSON-RPC-level error (or any other RPC failure that doesn't fit
     /// one of the more specific variants above).
     RpcError(String),
+    /// A validation error where the simulated transaction's structure,
+    /// contents, or ledger data did not match expected values before signing
+    /// or key exposure.
+    ValidationError(String),
 }

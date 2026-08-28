@@ -127,6 +127,74 @@ pub(crate) fn unsigned_envelope_xdr(tx: Transaction) -> Result<String, SdkError>
         .map_err(|e| SdkError::DecodingError(format!("failed to encode transaction xdr: {e:?}")))
 }
 
+/// Validates that a simulated transaction matches the original invocation request,
+/// ensuring operation count, type, and invoke arguments are unchanged. Returns
+/// `Err` if the simulation response was malformed or contained substitutions
+/// that would cross a trust boundary before signing.
+pub(crate) fn validate_simulated_transaction(
+    tx: &Transaction,
+    contract_id: &str,
+    function_name: &str,
+    args: &[ScVal],
+) -> Result<(), SdkError> {
+    if tx.operations.len() != 1 {
+        return Err(SdkError::ValidationError(format!(
+            "expected exactly 1 operation, got {}",
+            tx.operations.len()
+        )));
+    }
+
+    let operation = &tx.operations[0];
+    let OperationBody::InvokeHostFunction(op) = &operation.body else {
+        return Err(SdkError::ValidationError(format!(
+            "expected InvokeHostFunction operation, got {:?}",
+            operation.body
+        )));
+    };
+
+    let HostFunction::InvokeContract(invoke_args) = &op.host_function else {
+        return Err(SdkError::ValidationError(
+            "expected InvokeContract host function".to_string(),
+        ));
+    };
+
+    let contract = stellar_strkey::Contract::from_string(contract_id).map_err(|e| {
+        SdkError::ValidationError(format!("invalid contract id {contract_id}: {e:?}"))
+    })?;
+
+    if invoke_args.contract_address != ScAddress::Contract(Hash(contract.0)) {
+        return Err(SdkError::ValidationError(format!(
+            "contract address mismatch: expected {contract_id}"
+        )));
+    }
+
+    if invoke_args.function_name.0.to_string() != function_name {
+        return Err(SdkError::ValidationError(format!(
+            "function name mismatch: expected {function_name}, got {}",
+            invoke_args.function_name.0.to_string()
+        )));
+    }
+
+    if invoke_args.args.len() != args.len() {
+        return Err(SdkError::ValidationError(format!(
+            "argument count mismatch: expected {}, got {}",
+            args.len(),
+            invoke_args.args.len()
+        )));
+    }
+
+    for (i, (expected, actual)) in args.iter().zip(invoke_args.args.iter()).enumerate() {
+        if expected != actual {
+            return Err(SdkError::ValidationError(format!(
+                "argument {} mismatch: invocation was modified by server",
+                i
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Signs `tx` for `network_id` with the ed25519 key derived from
 /// `secret_seed` (via `crate::signature::generate_delegated_signature`),
 /// and returns the base64-encoded, submission-ready `TransactionEnvelope`.
@@ -333,5 +401,170 @@ mod tests {
     fn decode_result_from_scval<T: TryFromVal<Env, Val>>(env: &Env, sc_val: &ScVal) -> T {
         let val: Val = Val::try_from_val(env, sc_val).unwrap();
         T::try_from_val(env, &val).unwrap()
+    }
+
+    // Negative test cases for Issue #91: malformed simulation XDR construction
+    #[test]
+    fn rejects_invalid_contract_id_format() {
+        let err = build_simulate_transaction_xdr("invalid-strkey-format", "get_schema", vec![]);
+        assert!(matches!(err, Err(SdkError::DecodingError(_))));
+    }
+
+    #[test]
+    fn rejects_contract_id_with_wrong_prefix() {
+        // "G" prefix is for public keys, not contracts (which start with "C")
+        let err = build_simulate_transaction_xdr(
+            "GBBD47UZQ22JPUPU4DSFH2HXV6IA7D5VSCCLETT4QSN3ZI33UJEKMFDX",
+            "get_schema",
+            vec![],
+        );
+        assert!(matches!(err, Err(SdkError::DecodingError(_))));
+    }
+
+    #[test]
+    fn validates_simulated_transaction_contract_mismatch() {
+        let contract1 = stellar_strkey::Contract([1u8; 32]).to_string();
+        let contract2 = stellar_strkey::Contract([2u8; 32]).to_string();
+        let public_key = [3u8; 32];
+
+        let tx = build_invoke_transaction(
+            &public_key,
+            0,
+            100,
+            TransactionExt::V0,
+            &contract1,
+            "test_func",
+            vec![ScVal::Void],
+        )
+        .unwrap();
+
+        let result = validate_simulated_transaction(&tx, &contract2, "test_func", &[ScVal::Void]);
+        assert!(matches!(result, Err(SdkError::ValidationError(_))));
+    }
+
+    #[test]
+    fn validates_simulated_transaction_function_name_mismatch() {
+        let contract = stellar_strkey::Contract([1u8; 32]).to_string();
+        let public_key = [3u8; 32];
+
+        let tx = build_invoke_transaction(
+            &public_key,
+            0,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "func_a",
+            vec![ScVal::Void],
+        )
+        .unwrap();
+
+        let result = validate_simulated_transaction(&tx, &contract, "func_b", &[ScVal::Void]);
+        assert!(matches!(result, Err(SdkError::ValidationError(_))));
+    }
+
+    #[test]
+    fn validates_simulated_transaction_argument_count_mismatch() {
+        let contract = stellar_strkey::Contract([1u8; 32]).to_string();
+        let public_key = [3u8; 32];
+
+        let tx = build_invoke_transaction(
+            &public_key,
+            0,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "test_func",
+            vec![ScVal::Void, ScVal::Bool(true)],
+        )
+        .unwrap();
+
+        let result = validate_simulated_transaction(&tx, &contract, "test_func", &[ScVal::Void]);
+        assert!(matches!(result, Err(SdkError::ValidationError(_))));
+    }
+
+    #[test]
+    fn validates_simulated_transaction_argument_value_mismatch() {
+        let contract = stellar_strkey::Contract([1u8; 32]).to_string();
+        let public_key = [3u8; 32];
+
+        let tx = build_invoke_transaction(
+            &public_key,
+            0,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "test_func",
+            vec![ScVal::Bool(true)],
+        )
+        .unwrap();
+
+        let result =
+            validate_simulated_transaction(&tx, &contract, "test_func", &[ScVal::Bool(false)]);
+        assert!(matches!(result, Err(SdkError::ValidationError(_))));
+    }
+
+    #[test]
+    fn validates_simulated_transaction_succeeds_for_matching_transaction() {
+        let contract = stellar_strkey::Contract([1u8; 32]).to_string();
+        let public_key = [3u8; 32];
+        let args = vec![ScVal::Void];
+
+        let tx = build_invoke_transaction(
+            &public_key,
+            0,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "test_func",
+            args.clone(),
+        )
+        .unwrap();
+
+        let result = validate_simulated_transaction(&tx, &contract, "test_func", &args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validates_operation_count() {
+        let contract = stellar_strkey::Contract([1u8; 32]).to_string();
+        let public_key = [3u8; 32];
+
+        // Build a transaction with 2 operations to test validation
+        let op1 = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(Hash([1u8; 32])),
+                    function_name: ScSymbol(StringM::try_from(b"test_func".to_vec()).unwrap()),
+                    args: vec![ScVal::Void].try_into().unwrap(),
+                }),
+                auth: VecM::default(),
+            }),
+        };
+
+        let op2 = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(Hash([0u8; 32])),
+                    function_name: ScSymbol(StringM::try_from(b"extra".to_vec()).unwrap()),
+                    args: VecM::default(),
+                }),
+                auth: VecM::default(),
+            }),
+        };
+
+        let tx = Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256(public_key)),
+            fee: 100,
+            seq_num: SequenceNumber(0),
+            cond: Preconditions::None,
+            memo: Memo::None,
+            operations: vec![op1, op2].try_into().unwrap(),
+            ext: TransactionExt::V0,
+        };
+
+        let result = validate_simulated_transaction(&tx, &contract, "test_func", &[ScVal::Void]);
+        assert!(matches!(result, Err(SdkError::ValidationError(_))));
     }
 }
