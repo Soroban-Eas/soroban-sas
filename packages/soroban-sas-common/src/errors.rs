@@ -18,6 +18,7 @@ pub enum SASError {
     AlreadyRevoked = 202,
     NotRevocable = 203,
     AlreadyExpired = 204,
+    DuplicateAttestation = 205,
 
     /// Authorization errors
     Unauthorized = 301,

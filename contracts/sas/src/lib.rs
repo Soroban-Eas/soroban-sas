@@ -30,8 +30,8 @@ impl SAS {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
         let compatible: bool = env
-            .try_invoke_contract(&registry, &REGISTRY_INTERFACE_VERSION, soroban_sdk::vec![&env])
-            .unwrap_or(false);
+            .try_invoke_contract::<bool, soroban_sdk::Error>(&registry, &REGISTRY_INTERFACE_VERSION, soroban_sdk::vec![&env])
+            .unwrap_or(Ok(false)).unwrap_or(false);
         if !compatible {
             panic_with_error!(&env, SASError::IncompatibleDependency);
         }
@@ -76,6 +76,10 @@ impl SAS {
     }
 
     fn attest_internal(env: Env, attestation: Attestation) -> UID {
+        if env.storage().persistent().has(&attestation.uid) {
+            panic_with_error!(&env, SASError::DuplicateAttestation);
+        }
+
         if attestation.expiration_time != 0
             && attestation.expiration_time <= env.ledger().timestamp()
         {

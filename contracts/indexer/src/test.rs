@@ -8,7 +8,7 @@ mod mock {
     pub struct MockSas;
     #[contractimpl]
     impl MockSas {
-        pub fn sasv1(_env: Env) -> bool { true }
+        pub fn SASV1(_env: Env) -> bool { true }
     }
 }
 

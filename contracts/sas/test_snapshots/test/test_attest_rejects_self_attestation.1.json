@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 4,
     "nonce": 0
   },
   "auth": [
@@ -272,7 +272,7 @@
                     "symbol": "recipient"
                   },
                   "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                   }
                 },
                 {
@@ -330,7 +330,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+                        "bytes": "1010101010101010101010101010101010101010101010101010101010101010"
                       }
                     ]
                   }
@@ -351,62 +351,11 @@
           "v0": {
             "topics": [
               {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
-              },
-              {
-                "symbol": "get_schema"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "get_schema"
-              }
-            ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
                 "symbol": "error"
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 402
                 }
               }
             ],
@@ -416,7 +365,7 @@
                   "string": "failing with contract error"
                 },
                 {
-                  "u32": 101
+                  "u32": 402
                 }
               ]
             }
@@ -438,7 +387,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 402
                 }
               }
             ],
@@ -463,7 +412,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 402
                 }
               }
             ],
@@ -488,7 +437,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 402
                 }
               }
             ],
@@ -533,7 +482,7 @@
                             "symbol": "recipient"
                           },
                           "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                           }
                         },
                         {
@@ -591,7 +540,7 @@
                           "val": {
                             "vec": [
                               {
-                                "bytes": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+                                "bytes": "1010101010101010101010101010101010101010101010101010101010101010"
                               }
                             ]
                           }

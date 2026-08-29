@@ -3,7 +3,7 @@ use soroban_sdk::{Address, Bytes, Env, String};
 
 const MAX_SCHEMA_LENGTH: u32 = 1024;
 const ZERO_ACCOUNT_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
-const ZERO_CONTRACT_STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+const ZERO_CONTRACT_STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
 
 fn is_ascii_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\n' | b'\r' | b'\t' | 0x0b | 0x0c)
@@ -81,15 +81,14 @@ fn is_valid_type(bytes: &Bytes, start: u32, end: u32) -> bool {
     has_alpha
 }
 
-#[cfg(test)]
-mod validation_impl {
-    use super::*;
-
-    pub fn validate_schema_syntax_impl(env: &Env, schema: &String) -> Result<(), SASError> {
-        let schema_bytes = Bytes::from_slice(env, &schema.to_vec(env));
-        if schema_bytes.is_empty() || schema_bytes.len() > MAX_SCHEMA_LENGTH {
+pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError> {
+        let schema_len = schema.len() as usize;
+        if schema_len == 0 || schema_len > MAX_SCHEMA_LENGTH as usize {
             return Err(SASError::InvalidSchema);
         }
+        let mut buf = [0u8; 1024]; // Hardcoded to MAX_SCHEMA_LENGTH
+        schema.copy_into_slice(&mut buf[..schema_len]);
+        let schema_bytes = Bytes::from_slice(env, &buf[..schema_len]);
 
         let Some((mut start, end)) = trim_bounds(&schema_bytes, 0, schema_bytes.len()) else {
             return Err(SASError::InvalidSchema);
@@ -171,20 +170,6 @@ mod validation_impl {
 
         Ok(())
     }
-}
-
-pub fn validate_schema_syntax(_env: &Env, _schema: &String) -> Result<(), SASError> {
-    #[cfg(test)]
-    {
-        validation_impl::validate_schema_syntax_impl(_env, _schema)
-    }
-    #[cfg(not(test))]
-    {
-        // In non-test mode, schema validation is handled at contract deploy time
-        // via the schema registry contract's validation rules
-        Ok(())
-    }
-}
 
 pub fn validate_ttl(_env: &Env, current_time: u64, expiration_time: u64) -> Result<(), SASError> {
     if expiration_time > 0 && current_time >= expiration_time {

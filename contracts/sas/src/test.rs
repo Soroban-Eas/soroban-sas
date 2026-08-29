@@ -38,18 +38,21 @@ pub mod mock1 {
 
     #[contractimpl]
     impl MockRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
             true
         }
 
-        pub fn sasreg(_env: Env) -> bool {
+        pub fn SASREG(_env: Env) -> bool {
             true
         }
 
         pub fn get_schema(env: Env, uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             Some(soroban_sas_common::SchemaRecord {
                 uid: uid.clone(),
-                resolver: Address::generate(&env),
+                resolver: env.current_contract_address(),
                 revocable: true,
                 schema: soroban_sdk::String::from_str(&env, "bool like"),
             })
@@ -64,8 +67,14 @@ pub mod mock2 {
 
     #[contractimpl]
     impl MockRejectRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
             false
+        }
+        pub fn SASREG(_env: Env) -> bool {
+            true
         }
         pub fn get_schema(_env: Env, _uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             None
@@ -81,6 +90,9 @@ pub mod mock3 {
     #[contractimpl]
     impl MockResolver {
         pub fn on_attest(_env: Env, _attestation: Attestation) {
+            // Mock execution
+        }
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {
             // Mock execution
         }
     }
@@ -806,7 +818,7 @@ fn test_attest_rejects_zero_recipient() {
     let attester = Address::generate(&env);
     let recipient = Address::from_string(&soroban_sdk::String::from_str(
         &env,
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
     ));
     let attestation = attestation_fixture(&env, &attester, &recipient, [15u8; 32]);
 

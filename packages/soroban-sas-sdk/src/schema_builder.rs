@@ -37,13 +37,10 @@ impl SchemaBuilder {
 
     /// Builds a `SchemaRecord`, deriving its UID from the schema definition.
     pub fn build(self, env: &Env) -> Result<SchemaRecord, SdkError> {
-        if self.schema.is_empty() {
-            return Err(SdkError::RpcError(
-                "schema definition cannot be empty".to_string(),
-            ));
-        }
-
         let schema = SorobanString::from_str(env, &self.schema);
+        if let Err(e) = soroban_sas_common::validate_schema_syntax(env, &schema) {
+            return Err(SdkError::RpcError(format!("Invalid schema syntax: {:?}", e)));
+        }
         let resolver = self
             .resolver
             .ok_or_else(|| SdkError::RpcError("resolver address is required".to_string()))?;

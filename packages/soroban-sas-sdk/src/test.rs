@@ -225,7 +225,7 @@ fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &
         "simulateTransaction" => serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "result": {
                 "latestLedger": 1,
-                "results": [],
+                "results": [{"xdr": "AAAAAA=="}],
                 "transactionData": transaction_data_xdr,
                 "minResourceFee": "0"
             }

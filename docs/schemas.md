@@ -24,3 +24,16 @@ field declaration.
 
 ## Verification
 When verifying an attestation off-chain or on-chain, the client decodes the raw `data` field using the associated schema definition. The schema enforces that every issued attestation strictly conforms to the expected layout.
+
+## Resolver Callbacks
+Schemas can optionally specify a `resolver` contract address. If specified, the SAS contract will invoke callbacks on the resolver to enforce schema-specific rules or synchronize dependent state.
+
+### `on_attest`
+Invoked exactly once when a new attestation is issued using the schema.
+- **Payload:** The full `Attestation` record (including the assigned UID).
+
+### `on_revoke`
+Invoked exactly once when an existing attestation using the schema is revoked.
+- **Payload:** The updated `Attestation` record, carrying the revocation timestamp.
+
+In both cases, failure of the resolver callback will silently be ignored if it traps, matching the resolver policy where optional resolvers cannot permanently brick issuances or revocations if they fail unexpectedly, though they can enforce requirements if successful. (Note: `try_invoke_contract` is used).

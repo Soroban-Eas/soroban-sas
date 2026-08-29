@@ -94,8 +94,8 @@ impl Indexer {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
         let compatible: bool = env
-            .try_invoke_contract(&sas, &SAS_INTERFACE_VERSION, soroban_sdk::vec![&env])
-            .unwrap_or(false);
+            .try_invoke_contract::<bool, soroban_sdk::Error>(&sas, &SAS_INTERFACE_VERSION, soroban_sdk::vec![&env])
+            .unwrap_or(Ok(false)).unwrap_or(false);
         if !compatible {
             panic_with_error!(&env, SASError::IncompatibleDependency);
         }

@@ -52,7 +52,7 @@ fn test_validate_recipient_rejects_zero_addresses() {
     let zero_account = account_address(&env, &[0u8; 32]);
     let zero_contract = Address::from_string(&SorobanString::from_str(
         &env,
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
     ));
 
     assert_eq!(

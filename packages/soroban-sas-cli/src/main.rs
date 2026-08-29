@@ -322,11 +322,6 @@ enum SchemaCommands {
     },
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum OutputFormat {
-    Human,
-    Json,
-}
 
 #[derive(Subcommand)]
 enum AttestCommands {
