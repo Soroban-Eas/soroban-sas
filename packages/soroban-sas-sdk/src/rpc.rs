@@ -318,6 +318,11 @@ pub struct SimulateTransactionParams {
 /// to a nonexistent contract instance returns
 /// `{"error": "HostError: Error(Storage, MissingValue)...", "latestLedger": ...}`
 /// with no `results` field at all, which `#[serde(default)]` handles.
+///
+/// When an entry is **archived** the host returns an error containing
+/// `"archived"` and, when the node can estimate it, a `restorePreamble`
+/// with the rent fee and transaction data needed for a `restoreFootprint`
+/// operation. The SDK surfaces this as `SdkError::RestorationRequired`.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SimulateTransactionResult {
     #[serde(rename = "latestLedger")]
@@ -334,6 +339,21 @@ pub struct SimulateTransactionResult {
     /// fee to get a real submission's total `fee`.
     #[serde(rename = "minResourceFee")]
     pub min_resource_fee: Option<String>,
+    /// Present when the simulation failed because a footprint entry is
+    /// archived. Carries the fee and footprint needed to restore it.
+    #[serde(rename = "restorePreamble")]
+    pub restore_preamble: Option<RestorePreamble>,
+}
+
+/// Preamble returned when simulation touches an archived entry. The
+/// transaction must be preceded by a `restoreFootprint` operation built
+/// from `transactionData` and funded by `minResourceFee`.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct RestorePreamble {
+    #[serde(rename = "transactionData")]
+    pub transaction_data: String,
+    #[serde(rename = "minResourceFee")]
+    pub min_resource_fee: String,
 }
 
 /// One entry of a successful simulation's `results` array — the return
@@ -365,6 +385,11 @@ pub struct LedgerEntryResult {
     pub xdr: String,
     #[serde(rename = "lastModifiedLedgerSeq")]
     pub last_modified_ledger_seq: u32,
+    /// Ledger until which the entry is live. Present on Soroban entries;
+    /// absent for classic entries. When `latestLedger >= liveUntilLedgerSeq`
+    /// the entry is expiring / archived and needs TTL bump or restoration.
+    #[serde(rename = "liveUntilLedgerSeq")]
+    pub live_until_ledger_seq: Option<u32>,
 }
 
 #[cfg(test)]

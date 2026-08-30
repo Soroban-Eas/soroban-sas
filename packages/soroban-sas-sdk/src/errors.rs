@@ -23,4 +23,19 @@ pub enum SdkError {
     /// contents, or ledger data did not match expected values before signing
     /// or key exposure.
     ValidationError(String),
+    /// The requested ledger entry is archived and must be restored via
+    /// `restoreFootprint` before it can be read. The inner string is the
+    /// host's diagnostic (contains "archived") and should be surfaced to
+    /// operators. When available, `min_resource_fee` / `transaction_data`
+    /// from the simulation's `restorePreamble` are included.
+    Archived(String),
+    /// Structured restoration requirement surfaced from `simulateTransaction`'s
+    /// `restorePreamble`. Contains the host error plus the estimated rent
+    /// fee and the base64 transaction data needed to build a restore
+    /// transaction.
+    RestorationRequired {
+        message: String,
+        min_resource_fee: Option<String>,
+        transaction_data: Option<String>,
+    },
 }

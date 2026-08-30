@@ -1,7 +1,9 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
-use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol,
+};
 
 // v1.0.0 Indexer logic frozen
 
@@ -17,6 +19,22 @@ const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
 const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
+
+/// Index status model driven by SAS callbacks / events. Historical UIDs
+/// are never deleted — a revoked or replaced entry remains auditable but
+/// can be filtered out via `include_revoked=false` queries.
+const STATUS_KEY: Symbol = symbol_short!("STATUS");
+const REPLACED_BY_KEY: Symbol = symbol_short!("REPLBY");
+const REPLACES_KEY: Symbol = symbol_short!("REPLACES");
+
+/// On-chain status for a single indexed attestation.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum IndexStatus {
+    Active = 0,
+    Revoked = 1,
+    Replaced = 2,
+}
 
 fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
     let count_key = (total_key, key.clone());
@@ -78,6 +96,59 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
     env.storage().instance().set(&count_key, &total);
 }
 
+fn set_index_status(env: &Env, uid: &UID, status: IndexStatus) {
+    let key = (STATUS_KEY, uid.clone());
+    env.storage().persistent().set(&key, &status);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
+fn is_active(env: &Env, uid: &UID) -> bool {
+    // No status entry means legacy `Active` (issued before status tracking).
+    match env
+        .storage()
+        .persistent()
+        .get::<_, IndexStatus>(&(STATUS_KEY, uid.clone()))
+    {
+        Some(IndexStatus::Active) | None => true,
+        _ => false,
+    }
+}
+
+fn collect_filtered(
+    env: &Env,
+    total: u32,
+    mut get_chunk: impl FnMut(u32) -> Option<soroban_sdk::Vec<UID>>,
+    include_revoked: bool,
+) -> soroban_sdk::Vec<UID> {
+    let mut out = soroban_sdk::Vec::new(env);
+    let mut index = 0u32;
+    while index < total {
+        let chunk_index = index / MAX_CHUNK_SIZE;
+        let chunk_offset = index % MAX_CHUNK_SIZE;
+        let Some(chunk) = get_chunk(chunk_index) else {
+            break;
+        };
+        if chunk_offset >= chunk.len() {
+            index = (chunk_index + 1) * MAX_CHUNK_SIZE;
+            continue;
+        }
+        let available = chunk.len() - chunk_offset;
+        let remaining = total - index;
+        let take = core::cmp::min(available, remaining);
+        for offset in 0..take {
+            if let Some(uid) = chunk.get(chunk_offset + offset) {
+                if include_revoked || is_active(env, &uid) {
+                    out.push_back(uid);
+                }
+            }
+        }
+        index += take;
+    }
+    out
+}
+
 #[contractimpl]
 impl Indexer {
     /// Compatibility probe used by Indexer::init to prove the supplied
@@ -125,6 +196,60 @@ impl Indexer {
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
+        set_index_status(&env, &uid, IndexStatus::Active);
+    }
+
+    /// Callback invoked by the bound SAS contract when `uid` is revoked.
+    /// Retains the UID in history but marks it `Revoked` so
+    /// `include_revoked=false` queries filter it out. Anyone may call this
+    /// entry point, but in production only the SAS contract does; off-chain
+    /// indexers additionally verify the matching `REVOKED` event.
+    pub fn handle_revoke(env: Env, uid: UID) {
+        set_index_status(&env, &uid, IndexStatus::Revoked);
+    }
+
+    /// Callback invoked by SAS when `old_uid` is replaced by `new_uid`.
+    /// The old entry becomes `Replaced` and stores a forward link to the
+    /// new UID; the new UID's reverse link (`replaces`) points back. Both
+    /// UIDs remain in the historical index; active-only queries return
+    /// only the new UID.
+    pub fn handle_replace(env: Env, old_uid: UID, new_uid: UID) {
+        set_index_status(&env, &old_uid, IndexStatus::Replaced);
+        let fwd = (REPLACED_BY_KEY, old_uid.clone());
+        env.storage().persistent().set(&fwd, &new_uid);
+        env.storage()
+            .persistent()
+            .extend_ttl(&fwd, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        let rev = (REPLACES_KEY, new_uid.clone());
+        env.storage().persistent().set(&rev, &old_uid);
+        env.storage()
+            .persistent()
+            .extend_ttl(&rev, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        // New UID is already marked Active via `index_attestation`; ensure it.
+        set_index_status(&env, &new_uid, IndexStatus::Active);
+    }
+
+    /// Returns the indexed status of `uid`, or `None` if the UID was never
+    /// indexed (legacy entry without a status marker reads as `Active` via
+    /// `is_active`).
+    pub fn get_attestation_status(env: Env, uid: UID) -> Option<IndexStatus> {
+        env.storage()
+            .persistent()
+            .get(&(STATUS_KEY, uid))
+    }
+
+    /// Forward link for a replaced attestation: `old_uid` -> `Some(new_uid)`.
+    pub fn get_replacement(env: Env, old_uid: UID) -> Option<UID> {
+        env.storage()
+            .persistent()
+            .get(&(REPLACED_BY_KEY, old_uid))
+    }
+
+    /// Reverse link for a replacement: `new_uid` -> `Some(old_uid)`.
+    pub fn get_replaces(env: Env, new_uid: UID) -> Option<UID> {
+        env.storage()
+            .persistent()
+            .get(&(REPLACES_KEY, new_uid))
     }
 
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
@@ -204,6 +329,117 @@ impl Indexer {
         }
 
         uids
+    }
+
+    /// Filtered variants: `include_revoked == true` returns the full
+    /// auditable history (active + revoked + replaced); `false` returns
+    /// only `Active` UIDs. Replacement UIDs remain `Active`; their
+    /// predecessors become `Replaced` and are filtered out in active-only
+    /// mode but still appear in historical mode via the forward/reverse
+    /// links (`get_replacement` / `get_replaces`).
+
+    pub fn get_recipient_filtered(
+        env: Env,
+        recipient: Address,
+        include_revoked: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&(RECIPIENT_TOTAL, recipient.clone()))
+            .unwrap_or(0);
+        collect_filtered(&env, total, |chunk_index| {
+            env.storage()
+                .persistent()
+                .get(&(recipient.clone(), chunk_index))
+        }, include_revoked)
+    }
+
+    pub fn get_schema_filtered(
+        env: Env,
+        schema_uid: UID,
+        include_revoked: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&(SCHEMA_TOTAL, schema_uid.clone()))
+            .unwrap_or(0);
+        collect_filtered(&env, total, |chunk_index| {
+            env.storage()
+                .persistent()
+                .get(&(schema_uid.clone(), chunk_index))
+        }, include_revoked)
+    }
+
+    pub fn get_attester_filtered(
+        env: Env,
+        attester: Address,
+        include_revoked: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&(ATTESTER_TOTAL, attester.clone()))
+            .unwrap_or(0);
+        collect_filtered(&env, total, |chunk_index| {
+            env.storage()
+                .persistent()
+                .get(&(attester.clone(), chunk_index))
+        }, include_revoked)
+    }
+
+    /// Paginated active-only view: walks the underlying chunks and
+    /// skips revoked/replaced UIDs until `limit` active entries are
+    /// collected or the total is exhausted. `cursor` is a raw offset
+    /// into the historical index (so callers can resume with
+    /// `cursor + returned.len()` only when also advancing over skipped
+    /// entries, or use `cursor + limit` for historical pagination).
+    pub fn get_recipient_paginated_filtered(
+        env: Env,
+        recipient: Address,
+        cursor: u32,
+        limit: u32,
+        include_revoked: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        if limit == 0 {
+            return soroban_sdk::Vec::new(&env);
+        }
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&(RECIPIENT_TOTAL, recipient.clone()))
+            .unwrap_or(0);
+        if cursor >= total {
+            return soroban_sdk::Vec::new(&env);
+        }
+        let mut out = soroban_sdk::Vec::new(&env);
+        let mut index = cursor;
+        while index < total && out.len() < limit {
+            let chunk_index = index / MAX_CHUNK_SIZE;
+            let chunk_offset = index % MAX_CHUNK_SIZE;
+            let Some(chunk): Option<soroban_sdk::Vec<UID>> = env
+                .storage()
+                .persistent()
+                .get(&(recipient.clone(), chunk_index))
+            else {
+                break;
+            };
+            if chunk_offset >= chunk.len() {
+                index = (chunk_index + 1) * MAX_CHUNK_SIZE;
+                continue;
+            }
+            if let Some(uid) = chunk.get(chunk_offset) {
+                if include_revoked || is_active(&env, &uid) {
+                    out.push_back(uid);
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
+            }
+            index += 1;
+        }
+        out
     }
 }
 

@@ -7,6 +7,10 @@
     [],
     [],
     [],
+    [],
+    [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -26,12 +30,12 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "REPLACES"
                 },
                 {
                   "vec": [
                     {
-                      "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                     }
                   ]
                 }
@@ -50,12 +54,12 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "REPLACES"
                     },
                     {
                       "vec": [
                         {
-                          "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                          "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                         }
                       ]
                     }
@@ -63,7 +67,68 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "REPLBY"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                    }
+                  ]
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "REPLBY"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
+                    }
+                  ]
                 }
               }
             },
@@ -84,7 +149,7 @@
                 {
                   "vec": [
                     {
-                      "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                      "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
                     }
                   ]
                 }
@@ -108,7 +173,60 @@
                     {
                       "vec": [
                         {
-                          "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                          "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 2
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "STATUS"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
+                    }
+                  ]
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "STATUS"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                         }
                       ]
                     }
@@ -173,14 +291,14 @@
                     {
                       "vec": [
                         {
-                          "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                          "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
                         }
                       ]
                     },
                     {
                       "vec": [
                         {
-                          "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                          "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                         }
                       ]
                     }
@@ -233,14 +351,14 @@
                     {
                       "vec": [
                         {
-                          "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                          "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
                         }
                       ]
                     },
                     {
                       "vec": [
                         {
-                          "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                          "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                         }
                       ]
                     }
@@ -293,14 +411,14 @@
                     {
                       "vec": [
                         {
-                          "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                          "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
                         }
                       ]
                     },
                     {
                       "vec": [
                         {
-                          "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                          "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                         }
                       ]
                     }
@@ -442,7 +560,7 @@
                 {
                   "vec": [
                     {
-                      "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                      "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
                     }
                   ]
                 },
@@ -510,7 +628,7 @@
                 {
                   "vec": [
                     {
-                      "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                     }
                   ]
                 },
@@ -570,11 +688,26 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "get_attestations_by_recipient"
+                "symbol": "handle_replace"
               }
             ],
             "data": {
-              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+              "vec": [
+                {
+                  "vec": [
+                    {
+                      "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                    }
+                  ]
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
+                    }
+                  ]
+                }
+              ]
             }
           }
         }
@@ -593,7 +726,228 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_attestations_by_recipient"
+                "symbol": "handle_replace"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_attestation_status"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_attestation_status"
+              }
+            ],
+            "data": {
+              "u32": 2
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_replacement"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_replacement"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_replaces"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_replaces"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_recipient_filtered"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "bool": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_recipient_filtered"
               }
             ],
             "data": {
@@ -601,14 +955,14 @@
                 {
                   "vec": [
                     {
-                      "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+                      "bytes": "1414141414141414141414141414141414141414141414141414141414141414"
                     }
                   ]
                 },
                 {
                   "vec": [
                     {
-                      "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                     }
                   ]
                 }
@@ -634,13 +988,16 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "get_attestations_by_schema"
+                "symbol": "get_recipient_filtered"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "bool": false
                 }
               ]
             }
@@ -661,7 +1018,7 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_attestations_by_schema"
+                "symbol": "get_recipient_filtered"
               }
             ],
             "data": {
@@ -669,14 +1026,7 @@
                 {
                   "vec": [
                     {
-                      "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
-                    }
-                  ]
-                },
-                {
-                  "vec": [
-                    {
-                      "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                      "bytes": "1515151515151515151515151515151515151515151515151515151515151515"
                     }
                   ]
                 }

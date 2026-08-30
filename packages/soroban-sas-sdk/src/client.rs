@@ -14,6 +14,34 @@ use soroban_sdk::xdr::{
 use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
 use std::time::Duration;
 
+/// Distinguishes live, missing, and archived attestations — the
+/// SDK-supported view that keeps live entries from expiring. Fetching
+/// through `get_attestation` or `fetch_attestation` renews TTL where
+/// appropriate (the contract's `get_attestation` bumps `LEDGERS_IN_ONE_YEAR`);
+/// archived entries surface as `Archived` with restoration metadata rather
+/// than `NotFound`.
+#[derive(Debug)]
+pub enum AttestationResult {
+    /// Live entry, TTL was bumped on read.
+    Live(Attestation),
+    /// UID has never been issued / was garbage-collected.
+    NotFound,
+    /// Entry is archived and needs `restoreFootprint` before it can be
+    /// read. Contains the diagnostic plus the rent fee / footprint from
+    /// `restorePreamble` when the node provided it.
+    Archived(ArchivedInfo),
+}
+
+/// Restoration metadata for an archived attestation, surfaced so callers
+/// can budget and build a `restoreFootprint` transaction.
+#[derive(Debug)]
+pub struct ArchivedInfo {
+    pub uid: [u8; 32],
+    pub message: String,
+    pub min_resource_fee: Option<String>,
+    pub transaction_data: Option<String>,
+}
+
 /// Classic per-operation fee, in stroops, before the Soroban resource fee
 /// simulation reports is added on top.
 const BASE_FEE: u32 = 100;
@@ -63,12 +91,100 @@ impl SASClient {
         invoke_read_only(env, rpc, registry_contract_id, "get_schema", vec![arg])
     }
 
-    /// Fetches the full `Attestation` record for `uid` directly from ledger
-    /// storage via `getLedgerEntries`, rather than a contract call — this
-    /// keeps the SAS contract untouched (no new view function to deploy).
+    /// Fetches the full `Attestation` record for `uid` via the
+    /// contract's `get_attestation` view. Unlike the legacy
+    /// `getLedgerEntries` path, this **renews TTL** on a successful read
+    /// (`LEDGERS_IN_ONE_YEAR`) so live attestations don't go archived
+    /// while they are still being queried.
     ///
-    /// Returns `None` if no attestation with that UID has ever been issued.
+    /// Returns `Ok(None)` when the UID has never been issued. When the
+    /// entry is **archived** the simulation traps with an `archived`
+    /// diagnostic; this surfaces as `Err(SdkError::Archived)` /
+    /// `Err(SdkError::RestorationRequired { min_resource_fee, transaction_data })`
+    /// rather than `Ok(None)`, preserving the distinction the legacy
+    /// `getLedgerEntries` path lost. Callers needing a unified enum can use
+    /// `fetch_attestation` instead.
+    ///
+    /// See `fetch_attestation` for the `Live / NotFound / Archived`
+    /// enum and for the rent-cost in `restorePreamble`.
     pub fn get_attestation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        uid: &[u8; 32],
+    ) -> Result<Option<Attestation>, SdkError> {
+        match self.fetch_attestation(env, rpc, uid)? {
+            AttestationResult::Live(att) => Ok(Some(att)),
+            AttestationResult::NotFound => Ok(None),
+            AttestationResult::Archived(info) => {
+                if let (Some(fee), Some(data)) =
+                    (info.min_resource_fee.clone(), info.transaction_data.clone())
+                {
+                    Err(SdkError::RestorationRequired {
+                        message: info.message,
+                        min_resource_fee: Some(fee),
+                        transaction_data: Some(data),
+                    })
+                } else {
+                    Err(SdkError::Archived(info.message))
+                }
+            }
+        }
+    }
+
+    /// Structured fetch that distinguishes `Live`, `NotFound`, and
+    /// `Archived`. A live read bumps TTL; an archived entry returns
+    /// `Archived` with the `restorePreamble` cost so the caller can
+    /// budget a `restoreFootprint` operation before retrying.
+    pub fn fetch_attestation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        uid: &[u8; 32],
+    ) -> Result<AttestationResult, SdkError> {
+        let uid_val = UID(BytesN::from_array(env, uid));
+        let arg = simulate::encode_arg(env, &uid_val)?;
+        let tx_xdr = simulate::build_simulate_transaction_xdr(&self.contract_id, "get_attestation", vec![arg])?;
+        let sim = rpc.simulate_transaction(&tx_xdr)?;
+
+        if let Some(err) = sim.error {
+            if is_archived_error(&err) {
+                let (fee, data) = sim
+                    .restore_preamble
+                    .as_ref()
+                    .map(|p| (Some(p.min_resource_fee.clone()), Some(p.transaction_data.clone())))
+                    .unwrap_or((None, None));
+                // Prefer the structured `RestorationRequired` shape when preamble is present,
+                // but surface as `Archived` enum here so `get_attestation` can turn it into the matching `SdkError`.
+                let info = ArchivedInfo {
+                    uid: *uid,
+                    message: err.clone(),
+                    min_resource_fee: fee.clone(),
+                    transaction_data: data.clone(),
+                };
+                return Ok(AttestationResult::Archived(info));
+            }
+            return Err(SdkError::SimulationError(err));
+        }
+        // No host error — decode the `Option<Attestation>` return.
+        let xdr = sim
+            .results
+            .first()
+            .ok_or_else(|| SdkError::RpcError("simulateTransaction returned no results".to_string()))?
+            .xdr
+            .clone();
+        let opt: Option<Attestation> = simulate::decode_result(env, &xdr)?;
+        match opt {
+            Some(att) => Ok(AttestationResult::Live(att)),
+            None => Ok(AttestationResult::NotFound),
+        }
+    }
+
+    /// Low-level `getLedgerEntries` helper retained for diagnostics and
+    /// for SDK callers that need raw `liveUntilLedgerSeq` inspection.
+    /// Prefer `get_attestation` / `fetch_attestation` for the
+    /// TTL-renewing, archived-aware path.
+    pub fn get_attestation_ledger(
         &self,
         env: &Env,
         rpc: &RpcClient,
@@ -391,6 +507,115 @@ impl IndexerClient {
             vec![arg],
         )
     }
+
+    /// Filtered variant that mirrors the contract's
+    /// `get_recipient_filtered` — when `include_revoked`
+    /// is `false` only `Active` UIDs are returned, otherwise the full
+    /// auditable history (active + revoked + replaced) is returned.
+    pub fn get_attestations_by_recipient_filtered(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        recipient: &str,
+        include_revoked: bool,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let recipient = Address::from_string(&SorobanString::from_str(env, recipient));
+        let inc = include_revoked;
+        let args = vec![
+            simulate::encode_arg(env, &recipient)?,
+            simulate::encode_arg(env, &inc)?,
+        ];
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_recipient_filtered",
+            args,
+        )
+    }
+
+    /// Filtered schema query, same `include_revoked` semantics as above.
+    pub fn get_attestations_by_schema_filtered(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        schema_uid: &[u8; 32],
+        include_revoked: bool,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let schema_uid = UID(BytesN::from_array(env, schema_uid));
+        let args = vec![
+            simulate::encode_arg(env, &schema_uid)?,
+            simulate::encode_arg(env, &include_revoked)?,
+        ];
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_schema_filtered",
+            args,
+        )
+    }
+
+    /// Filtered attester query, same `include_revoked` semantics.
+    pub fn get_attestations_by_attester_filtered(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &str,
+        include_revoked: bool,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let attester = Address::from_string(&SorobanString::from_str(env, attester));
+        let args = vec![
+            simulate::encode_arg(env, &attester)?,
+            simulate::encode_arg(env, &include_revoked)?,
+        ];
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_attester_filtered",
+            args,
+        )
+    }
+
+    /// Convenience helpers for active-only queries (historical filtering
+    /// off). Retained history is still queryable via `*_filtered(_, true)`.
+    pub fn get_active_attestations_by_recipient(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        recipient: &str,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        self.get_attestations_by_recipient_filtered(env, rpc, recipient, false)
+    }
+
+    /// Returns the indexer's `get_attestation_status` for `uid`, if the
+    /// UID was ever indexed.
+    pub fn get_attestation_status(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        uid: &[u8; 32],
+    ) -> Result<Option<i32>, SdkError> {
+        // `IndexStatus` is an `#[contracttype]` enum encoded as an `i32`
+        // on the wire in soroban-sdk 20. Decode as i32 for SDK consumers
+        // without pulling the contracttype into the SDK crate.
+        let uid = UID(BytesN::from_array(env, uid));
+        let arg = simulate::encode_arg(env, &uid)?;
+        invoke_read_only(env, rpc, &self.contract_id, "get_attestation_status", vec![arg])
+    }
+
+    /// Forward replacement link: `old_uid` -> `Some(new_uid)` if replaced.
+    pub fn get_replacement(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        old_uid: &[u8; 32],
+    ) -> Result<Option<UID>, SdkError> {
+        let uid = UID(BytesN::from_array(env, old_uid));
+        let arg = simulate::encode_arg(env, &uid)?;
+        invoke_read_only(env, rpc, &self.contract_id, "get_replacement", vec![arg])
+    }
 }
 
 /// Decodes the first entry of a `getLedgerEntries` response as a
@@ -419,6 +644,10 @@ fn attestation_from_ledger_entries(
             SdkError::DecodingError(format!("failed to encode contract data value: {e:?}"))
         })?;
     simulate::decode_result(env, &val_xdr).map(Some)
+}
+
+fn is_archived_error(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("archived")
 }
 
 /// Simulates a read-only call to `function_name` on `contract_id` and
@@ -592,29 +821,22 @@ mod tests {
         assert_eq!(values.len(), 2);
     }
 
-    /// Issue #24 acceptance criterion: fetching an existing UID returns
-    /// `Some(Attestation)` with every field matching what was issued.
+    /// Live fixture: contract view `get_attestation` returns
+    /// `Some(Attestation)` and the SDK's TTL-renewing path surfaces it as `Live`.
     #[test]
     fn get_attestation_decodes_a_matching_ledger_entry() {
         let env = Env::default();
         let attestation = attestation_fixture(&env, 7);
-        let contract_bytes = [9u8; 32];
-        let contract_id = stellar_strkey::Contract(contract_bytes).to_string();
-
-        let key = simulate::encode_arg(&env, &attestation.uid).unwrap();
-        let val = simulate::encode_arg(&env, &attestation).unwrap();
-        let entry_xdr = LedgerEntryData::ContractData(ContractDataEntry {
-            ext: ExtensionPoint::V0,
-            contract: ScAddress::Contract(Hash(contract_bytes)),
-            key,
-            durability: ContractDataDurability::Persistent,
-            val,
-        })
-        .to_xdr_base64(Limits::none())
-        .unwrap();
-
+        let contract_id = stellar_strkey::Contract([9u8; 32]).to_string();
+        // New path: simulate `get_attestation` returning Some(...), which the SDK
+        // decodes and which also bumps TTL on-chain.
+        let opt: Option<Attestation> = Some(attestation.clone());
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
         let body = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{entry_xdr}","lastModifiedLedgerSeq":100}}],"latestLedger":100}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
         );
         let url = spawn_mock_rpc_server(body);
         let rpc = RpcClient::new(url);
@@ -624,24 +846,104 @@ mod tests {
             .get_attestation(&env, &rpc, &[7u8; 32])
             .unwrap()
             .expect("expected an attestation to be found");
-
         assert_eq!(fetched, attestation);
+
+        // Also verify the structured `fetch_attestation` reports Live.
+        let url2 = spawn_mock_rpc_server(format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        ));
+        let rpc2 = RpcClient::new(url2);
+        let client2 = SASClient::new(stellar_strkey::Contract([9u8; 32]).to_string());
+        match client2.fetch_attestation(&env, &rpc2, &[7u8; 32]).unwrap() {
+            AttestationResult::Live(a) => assert_eq!(a, attestation),
+            other => panic!("expected Live, got {other:?}"),
+        }
     }
 
-    /// Issue #24 acceptance criterion: an unknown UID resolves to `None`.
+    /// Missing fixture: unknown UID resolves to `None` / `NotFound`,
+    /// distinct from `Archived`.
     #[test]
     fn get_attestation_returns_none_for_an_unknown_uid() {
         let env = Env::default();
         let contract_id = stellar_strkey::Contract([9u8; 32]).to_string();
-        let body =
-            r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#.to_string();
+        let opt: Option<Attestation> = None;
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
         let url = spawn_mock_rpc_server(body);
         let rpc = RpcClient::new(url);
         let client = SASClient::new(contract_id);
 
         let fetched = client.get_attestation(&env, &rpc, &[99u8; 32]).unwrap();
-
         assert!(fetched.is_none());
+
+        let url2 = spawn_mock_rpc_server(format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        ));
+        let rpc2 = RpcClient::new(url2);
+        let client2 = SASClient::new(stellar_strkey::Contract([9u8; 32]).to_string());
+        match client2.fetch_attestation(&env, &rpc2, &[99u8; 32]).unwrap() {
+            AttestationResult::NotFound => {}
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    /// Archived fixture: host reports `archived` with a `restorePreamble`.
+    /// The SDK must surface structured restoration cost rather than `None`.
+    #[test]
+    fn get_attestation_archived_surfaces_restoration_cost() {
+        let env = Env::default();
+        let contract_id = stellar_strkey::Contract([9u8; 32]).to_string();
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"latestLedger":100,"error":"HostError: Error(Storage, Archived)","restorePreamble":{"transactionData":"AAAAAQ==","minResourceFee":"12345"}}}"#.to_string();
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id.clone());
+
+        match client.fetch_attestation(&env, &rpc, &[7u8; 32]).unwrap() {
+            AttestationResult::Archived(info) => {
+                assert_eq!(info.uid, [7u8; 32]);
+                assert!(info.message.to_ascii_lowercase().contains("archived"));
+                assert_eq!(info.min_resource_fee.as_deref(), Some("12345"));
+                assert_eq!(info.transaction_data.as_deref(), Some("AAAAAQ=="));
+            }
+            other => panic!("expected Archived, got {other:?}"),
+        }
+
+        // `get_attestation` surfaces it as a structured error with cost.
+        let body2 = r#"{"jsonrpc":"2.0","id":1,"result":{"latestLedger":100,"error":"HostError: Error(Storage, Archived)","restorePreamble":{"transactionData":"AAAAAQ==","minResourceFee":"12345"}}}"#.to_string();
+        let url2 = spawn_mock_rpc_server(body2);
+        let rpc2 = RpcClient::new(url2);
+        let client2 = SASClient::new(contract_id);
+        match client2.get_attestation(&env, &rpc2, &[7u8; 32]) {
+            Err(SdkError::RestorationRequired { message, min_resource_fee, transaction_data }) => {
+                assert!(message.to_ascii_lowercase().contains("archived"));
+                assert_eq!(min_resource_fee.as_deref(), Some("12345"));
+                assert_eq!(transaction_data.as_deref(), Some("AAAAAQ=="));
+            }
+            other => panic!("expected RestorationRequired, got {other:?}"),
+        }
+    }
+
+    /// Archived without preamble still surfaces as `Archived` (no cost) —
+    /// e.g. older RPC nodes that only return the error string.
+    #[test]
+    fn get_attestation_archived_without_preamble() {
+        let env = Env::default();
+        let contract_id = stellar_strkey::Contract([9u8; 32]).to_string();
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"latestLedger":100,"error":"HostError: entry is archived, needs restore"}}"#.to_string();
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id);
+        match client.fetch_attestation(&env, &rpc, &[7u8; 32]).unwrap() {
+            AttestationResult::Archived(info) => {
+                assert!(info.min_resource_fee.is_none());
+            }
+            other => panic!("expected Archived, got {other:?}"),
+        }
     }
 
     /// Issue #21 acceptance criterion: the new binding decodes a
@@ -726,7 +1028,7 @@ mod tests {
         let rpc = RpcClient::new(url);
         let client = SASClient::new(contract_id);
 
-        let result = client.get_attestation(&env, &rpc, &[7u8; 32]);
+        let result = client.get_attestation_ledger(&env, &rpc, &[7u8; 32]);
         assert!(matches!(result, Err(SdkError::ValidationError(_))));
     }
 
@@ -743,7 +1045,7 @@ mod tests {
         let rpc = RpcClient::new(url);
         let client = SASClient::new(contract_id);
 
-        let result = client.get_attestation(&env, &rpc, &[7u8; 32]);
+        let result = client.get_attestation_ledger(&env, &rpc, &[7u8; 32]);
         assert!(matches!(result, Err(SdkError::DecodingError(_))));
     }
 }

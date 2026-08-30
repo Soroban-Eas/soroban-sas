@@ -160,3 +160,127 @@ fn test_cursor_pagination_large_datasets() {
     let paginated = client.get_atts_by_recipient_paginated(&recipient, &0, &10);
     assert_eq!(paginated.len(), 10);
 }
+
+#[test]
+fn test_revocation_updates_status_and_filtered_query() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[4u8; 32]));
+    let attester = Address::generate(&env);
+
+    let uid1 = UID(soroban_sdk::BytesN::from_array(&env, &[10u8; 32]));
+    let uid2 = UID(soroban_sdk::BytesN::from_array(&env, &[11u8; 32]));
+    client.index_attestation(&uid1, &recipient, &schema_uid, &attester);
+    client.index_attestation(&uid2, &recipient, &schema_uid, &attester);
+
+    // Revoke uid1 via callback
+    client.handle_revoke(&uid1);
+
+    assert_eq!(client.get_attestation_status(&uid1), Some(IndexStatus::Revoked));
+    assert_eq!(client.get_attestation_status(&uid2), Some(IndexStatus::Active));
+
+    // Historical includes both, active-only excludes revoked
+    let historical = client.get_recipient_filtered(&recipient, &true);
+    assert_eq!(historical.len(), 2);
+    let active = client.get_recipient_filtered(&recipient, &false);
+    assert_eq!(active.len(), 1);
+    assert_eq!(active.get(0).unwrap(), uid2);
+
+    // Schema and attester filtered also respect status
+    let schema_active = client.get_schema_filtered(&schema_uid, &false);
+    assert_eq!(schema_active.len(), 1);
+    let attester_active = client.get_attester_filtered(&attester, &false);
+    assert_eq!(attester_active.len(), 1);
+}
+
+#[test]
+fn test_replacement_links_old_and_new_without_deleting_history() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[4u8; 32]));
+    let attester = Address::generate(&env);
+
+    let old_uid = UID(soroban_sdk::BytesN::from_array(&env, &[20u8; 32]));
+    let new_uid = UID(soroban_sdk::BytesN::from_array(&env, &[21u8; 32]));
+    client.index_attestation(&old_uid, &recipient, &schema_uid, &attester);
+    // Replacement indexes new and marks old as Replaced
+    client.index_attestation(&new_uid, &recipient, &schema_uid, &attester);
+    client.handle_replace(&old_uid, &new_uid);
+
+    assert_eq!(client.get_attestation_status(&old_uid), Some(IndexStatus::Replaced));
+    assert_eq!(client.get_replacement(&old_uid), Some(new_uid.clone()));
+    assert_eq!(client.get_replaces(&new_uid), Some(old_uid.clone()));
+
+    // Historical returns both, active returns only new
+    let historical = client.get_recipient_filtered(&recipient, &true);
+    assert_eq!(historical.len(), 2);
+    assert!(historical.contains(&old_uid));
+    assert!(historical.contains(&new_uid));
+
+    let active = client.get_recipient_filtered(&recipient, &false);
+    assert_eq!(active.len(), 1);
+    assert_eq!(active.get(0).unwrap(), new_uid);
+}
+
+#[test]
+fn test_paginated_filtered_skips_revoked() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[4u8; 32]));
+    let attester = Address::generate(&env);
+
+    for i in 0..5u8 {
+        let mut bytes = [0u8; 32];
+        bytes[0] = i;
+        let uid = UID(soroban_sdk::BytesN::from_array(&env, &bytes));
+        client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+        if i % 2 == 0 {
+            client.handle_revoke(&uid);
+        }
+    }
+    // 5 total, 3 revoked (0,2,4), 2 active (1,3)
+    let active = client.get_recipient_filtered(&recipient, &false);
+    assert_eq!(active.len(), 2);
+
+    let paginated = client.get_recipient_paginated_filtered(&recipient, &0, &10, &false);
+    assert_eq!(paginated.len(), 2);
+
+    // Limit 1 returns one active; cursor walk should eventually collect both.
+    let page1 = client.get_recipient_paginated_filtered(&recipient, &0, &1, &false);
+    assert_eq!(page1.len(), 1);
+}
+
+#[test]
+fn test_batch_revocation_via_callbacks() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[6u8; 32]));
+    let attester = Address::generate(&env);
+    let mut uids = soroban_sdk::Vec::new(&env);
+    for i in 0..10u8 {
+        let mut bytes = [0u8; 32];
+        bytes[0] = i + 50;
+        let uid = UID(soroban_sdk::BytesN::from_array(&env, &bytes));
+        client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+        uids.push_back(uid);
+    }
+    // Simulate batch revoke
+    for uid in uids.iter() {
+        client.handle_revoke(&uid);
+    }
+    let active = client.get_recipient_filtered(&recipient, &false);
+    assert_eq!(active.len(), 0);
+    let historical = client.get_recipient_filtered(&recipient, &true);
+    assert_eq!(historical.len(), 10);
+}

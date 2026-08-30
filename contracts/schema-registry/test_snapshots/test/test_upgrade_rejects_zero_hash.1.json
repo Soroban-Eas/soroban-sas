@@ -152,11 +152,18 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "init"
+                "symbol": "upgrade"
               }
             ],
             "data": {
-              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+              "vec": [
+                {
+                  "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                },
+                {
+                  "u32": 2
+                }
+              ]
             }
           }
         }
@@ -176,7 +183,7 @@
               },
               {
                 "error": {
-                  "contract": 1
+                  "contract": 403
                 }
               }
             ],
@@ -186,7 +193,7 @@
                   "string": "failing with contract error"
                 },
                 {
-                  "u32": 1
+                  "u32": 403
                 }
               ]
             }
@@ -208,7 +215,7 @@
               },
               {
                 "error": {
-                  "contract": 1
+                  "contract": 403
                 }
               }
             ],
@@ -233,7 +240,7 @@
               },
               {
                 "error": {
-                  "contract": 1
+                  "contract": 403
                 }
               }
             ],
@@ -258,7 +265,7 @@
               },
               {
                 "error": {
-                  "contract": 1
+                  "contract": 403
                 }
               }
             ],
@@ -268,12 +275,15 @@
                   "string": "contract try_call failed"
                 },
                 {
-                  "symbol": "init"
+                  "symbol": "upgrade"
                 },
                 {
                   "vec": [
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                      "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    {
+                      "u32": 2
                     }
                   ]
                 }

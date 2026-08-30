@@ -21,6 +21,10 @@ pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
 /// Maximum number of attestations in one multi_attest invocation. This keeps
 /// authorization and storage work within the measured Soroban budget envelope.
 pub const MAX_MULTI_ATTEST: u32 = 100;
+/// Maximum number of UIDs in one multi_revoke invocation. Bounded like
+/// `MAX_MULTI_ATTEST` so the loop cannot exhaust the Soroban budget and
+/// callers get a predictable `BatchTooLarge` error up front.
+pub const MAX_MULTI_REVOKE: u32 = 100;
 const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
 #[contractimpl]
@@ -192,6 +196,17 @@ impl SAS {
             .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 
         events::publish_revoked(&env, &uid, timestamp);
+
+        // Notify indexer if bound, so revoked status is observable via
+        // filtered queries. Best-effort: ignore `invoke` failure if the
+        // indexer does not implement the callback (e.g. legacy indexer).
+        if let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) {
+            let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
+                &indexer,
+                &Symbol::new(&env, "handle_revoke"),
+                soroban_sdk::vec![&env, uid.clone().into_val(&env)],
+            );
+        }
     }
 
     /// Atomically replaces `old_uid` with `new_data`: revokes the old
@@ -226,8 +241,24 @@ impl SAS {
             ref_uid: old_uid.clone(),
             ..new_data
         };
+        let new_uid = new_data.uid.clone();
+        let old_uid_clone = old_uid.clone();
         Self::revoke_internal(env.clone(), old_uid);
-        Self::attest_internal(env, new_data)
+        let issued_uid = Self::attest_internal(env.clone(), new_data);
+        // Notify indexer about replacement linkage so history is preserved
+        // and old UID can be filtered as `Replaced` while new remains `Active`.
+        if let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) {
+            let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
+                &indexer,
+                &Symbol::new(&env, "handle_replace"),
+                soroban_sdk::vec![
+                    &env,
+                    old_uid_clone.into_val(&env),
+                    new_uid.into_val(&env)
+                ],
+            );
+        }
+        issued_uid
     }
 
     pub fn multi_attest(
@@ -282,9 +313,57 @@ impl SAS {
         Self::attest_internal(env, attestation)
     }
 
+    /// Revokes up to `MAX_MULTI_REVOKE` attestations atomically.
+    ///
+    /// Validates the whole batch before committing anything: an oversized
+    /// batch or a duplicate UID fails immediately with `BatchTooLarge` /
+    /// `DuplicateAttestation` before any attestation is touched. Each
+    /// distinct attester authorizes at most once per batch (via a `Map`
+    /// dedup, like `multi_attest`), and the actual state mutations go
+    /// through `revoke_internal` so storage-read/auth work is not repeated.
     pub fn multi_revoke(env: Env, uids: soroban_sdk::Vec<UID>) {
+        if uids.len() > MAX_MULTI_REVOKE {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+        if uids.is_empty() {
+            return;
+        }
+        // Reject duplicate UIDs up front — no revocation committed.
+        {
+            let mut seen = soroban_sdk::Map::new(&env);
+            for uid in uids.iter() {
+                if seen.contains_key(uid.clone()) {
+                    panic_with_error!(&env, SASError::DuplicateAttestation);
+                }
+                seen.set(uid.clone(), true);
+            }
+        }
+        // Validate existence / revocability and collect distinct attesters
+        // before touching storage, so a mixed-attester failure is atomic.
+        let mut distinct = soroban_sdk::Map::new(&env);
+        let mut to_revoke: soroban_sdk::Vec<UID> = soroban_sdk::Vec::new(&env);
         for uid in uids.iter() {
-            Self::revoke(env.clone(), uid);
+            let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+                panic_with_error!(&env, SASError::AttestationNotFound);
+            };
+            if !attestation.revocable {
+                panic_with_error!(&env, SASError::NotRevocable);
+            }
+            if attestation.revocation_time != 0 {
+                panic_with_error!(&env, SASError::AlreadyRevoked);
+            }
+            if !distinct.contains_key(attestation.attester.clone()) {
+                distinct.set(attestation.attester.clone(), true);
+            }
+            to_revoke.push_back(uid);
+        }
+        // Authorize each distinct attester exactly once.
+        for (attester, _) in distinct.iter() {
+            attester.require_auth();
+        }
+        // All validation + auth passed; commit.
+        for uid in to_revoke.iter() {
+            Self::revoke_internal(env.clone(), uid);
         }
     }
 
@@ -421,6 +500,28 @@ impl SAS {
             true
         } else {
             false
+        }
+    }
+
+    /// Fetch an attestation by UID with TTL renewal. This is the
+    /// SDK-supported view that keeps live entries from expiring: on a
+    /// successful read the entry's TTL is bumped by `LEDGERS_IN_ONE_YEAR`.
+    ///
+    /// Returns `None` when the UID was never issued or has been
+    /// garbage-collected. When the entry is archived the host traps
+    /// before this code runs; callers should treat a simulation error
+    /// containing "archived" as `Archived` (needs `restoreFootprint`)
+    /// rather than `NotFound`. The SDK's `fetch_attestation_status`
+    /// helper surfaces that distinction as a structured
+    /// `AttestationResult::Archived`.
+    pub fn get_attestation(env: Env, uid: UID) -> Option<Attestation> {
+        if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            Some(attestation)
+        } else {
+            None
         }
     }
 }

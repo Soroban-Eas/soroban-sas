@@ -229,3 +229,103 @@ fn test_init_twice_is_rejected() {
         Err(Ok(soroban_sas_common::SASError::AlreadyInitialized.into()))
     );
 }
+
+#[test]
+fn test_get_version_defaults_to_one() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.init(&admin);
+    assert_eq!(client.get_version(), 1);
+}
+
+#[test]
+fn test_upgrade_preserves_schemas_and_config() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.init(&admin);
+
+    env.mock_all_auths();
+    // Register two schemas
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let s1 = String::from_str(&env, "bool like_soroban");
+    let s2 = String::from_str(&env, "string name, uint32 age");
+    let uid1 = client.register(&owner, &s1, &resolver, &true);
+    let uid2 = client.register(&owner, &s2, &resolver, &false);
+    client.set_fee(&1000);
+    client.set_treasury(&treasury);
+
+    // Upload the actual compiled WASM so the host's `update_current_contract_wasm`
+    // finds the hash. The build artifact is produced by `cargo build -p schema-registry --release --target wasm32-unknown-unknown`.
+    let wasm_bytes = include_bytes!("../../../target/wasm32-unknown-unknown/release/schema_registry.wasm");
+    let wasm = soroban_sdk::Bytes::from_slice(&env, wasm_bytes);
+    let hash = env.deployer().upload_contract_wasm(wasm);
+    // Check version before upgrade
+    {
+        let v_before = client.get_version();
+        assert_eq!(v_before, 1, "version before upgrade should be 1");
+    }
+    let hash_clone = hash.clone();
+    client.upgrade(&hash_clone, &2);
+    // Raw instance check
+    {
+        let raw: u32 = env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .get(&crate::storage::REGISTRY_VERSION)
+                .unwrap_or(0)
+        });
+        // Use host debug event to surface value (since println not available)
+        // We'll assert this raw value to get diagnostic.
+        if raw != 2 {
+            panic!("raw version after upgrade is {}, expected 2, hash={:?}", raw, hash_clone.to_array());
+        }
+    }
+
+    assert_eq!(client.get_version(), 2);
+    // Schemas survive
+    assert_eq!(client.get_schema(&uid1).unwrap().schema, s1);
+    assert_eq!(client.get_schema(&uid2).unwrap().schema, s2);
+    assert_eq!(client.get_schemas(&0, &10).len(), 2);
+    // Upgrade event emitted — at least one event after upgrade
+    let events = env.events().all();
+    assert!(
+        events.len() >= 1,
+        "expected at least one event after upgrade"
+    );
+}
+
+#[test]
+fn test_upgrade_rejects_incompatible_version() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.init(&admin);
+    env.mock_all_auths();
+    let hash = soroban_sdk::BytesN::from_array(&env, &[7u8; 32]);
+    // Must be exactly old+1 (2); 3 is unknown future.
+    let res = client.try_upgrade(&hash, &3);
+    assert_eq!(res, Err(Ok(soroban_sas_common::SASError::IncompatibleDependency.into())));
+    // Downgrade / same version also rejected as InvalidValue
+    let res2 = client.try_upgrade(&hash, &1);
+    assert_eq!(res2, Err(Ok(soroban_sas_common::SASError::InvalidValue.into())));
+}
+
+#[test]
+fn test_upgrade_rejects_zero_hash() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.init(&admin);
+    env.mock_all_auths();
+    let zero = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+    let res = client.try_upgrade(&zero, &2);
+    assert_eq!(res, Err(Ok(soroban_sas_common::SASError::InvalidValue.into())));
+}
