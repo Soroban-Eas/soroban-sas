@@ -29,9 +29,31 @@ impl SAS {
         if env.storage().instance().has(&SAS_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
-        let compatible: bool = env
-            .try_invoke_contract::<bool, soroban_sdk::Error>(&registry, &REGISTRY_INTERFACE_VERSION, soroban_sdk::vec![&env])
-            .unwrap_or(Ok(false)).unwrap_or(false);
+        // Compatibility probe: try both upper and lower spellings to support
+        // registries that expose `sasreg` vs `SASREG`. The spec historically
+        // used `SASREG` while the registry implemented `sasreg`; probing both
+        // keeps existing mocks (SASREG) and the real registry (sasreg) compatible.
+        let compatible: bool = {
+            let upper: bool = env
+                .try_invoke_contract::<bool, soroban_sdk::Error>(
+                    &registry,
+                    &REGISTRY_INTERFACE_VERSION,
+                    soroban_sdk::vec![&env],
+                )
+                .unwrap_or(Ok(false))
+                .unwrap_or(false);
+            if upper {
+                true
+            } else {
+                env.try_invoke_contract::<bool, soroban_sdk::Error>(
+                    &registry,
+                    &symbol_short!("sasreg"),
+                    soroban_sdk::vec![&env],
+                )
+                .unwrap_or(Ok(false))
+                .unwrap_or(false)
+            }
+        };
         if !compatible {
             panic_with_error!(&env, SASError::IncompatibleDependency);
         }
@@ -342,22 +364,11 @@ impl SAS {
             .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
     }
 
-    /// Verifies an off-chain attestation signed by the attester's ed25519 key.
-    ///
-    /// The signed digest commits to the current network id, this contract's
-    /// address, and `nonce` (see `soroban_sas_common::typed_data`), so a
-    /// signature cannot be replayed on another network, against another
-    /// contract, or under a different nonce. Panics if the public key does
-    /// not belong to the declared attester (`SASError::Unauthorized`), if the
-    /// attestation is revoked locally or by an on-chain revocation of the
-    /// same UID (`SASError::AlreadyRevoked`), if it is expired
-    /// (`SASError::AlreadyExpired`), or if the signature is invalid
-    /// (`ed25519_verify` host error).
-    ///
-    /// Key binding is accepted either structurally (the public key derives
-    /// the attester's classic Ed25519 account address) or via an explicit
-    /// `register_attester_key` registration, so attester addresses the
-    /// structural check cannot resolve are not permanently locked out.
+    /// Verifies off-chain attestation signed by attester's ed25519 key.
+    /// Panics Unauthorized, AlreadyRevoked, AlreadyExpired, InvalidSchema
+    /// (unknown/deprecated schema), or ed25519 error. Schema check mirrors
+    /// on-chain attest: deprecated invalidates prior signatures as well.
+    /// Resolver not invoked (read-only), but schema existence is consistent.
     pub fn verify_offchain_attestation(
         env: Env,
         attestation: Attestation,
@@ -393,6 +404,26 @@ impl SAS {
             }
         }
 
+        // --- Schema availability check (same as on-chain attest) ---
+        // Unknown or deprecated schemas are rejected with InvalidSchema.
+        // Deprecated schemas invalidate previously signed payloads as well,
+        // not just new issuance; see doc comment above.
+        let registry: Address = env
+            .storage()
+            .instance()
+            .get(&SCHEMA_REGISTRY)
+            .unwrap_or_else(|| panic_with_error!(&env, SASError::NotInitialized));
+        let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
+            &registry,
+            &Symbol::new(&env, "get_schema"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        );
+        if schema_opt.is_none() {
+            panic_with_error!(&env, SASError::InvalidSchema);
+        }
+        // Resolver callback is intentionally not invoked for off-chain
+        // verification (read-only); see doc comment.
+
         let domain = soroban_sas_common::AttestationDomain {
             network_id: env.ledger().network_id(),
             contract: env.current_contract_address(),
@@ -427,3 +458,5 @@ impl SAS {
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_extra;

@@ -17,6 +17,16 @@ fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
+fn require_registry_admin(env: &Env) -> Address {
+    let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
+    match admin {
+        Some(a) => a,
+        None => panic_with_error!(env, SASError::NotInitialized),
+    }
+}
+
+const MAX_SCAN_BUDGET: u32 = 100;
+
 #[contractimpl]
 impl SchemaRegistry {
     /// Compatibility probe used by SAS::init before storing this registry.
@@ -34,51 +44,62 @@ impl SchemaRegistry {
 
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
         extend_instance_ttl(&env);
-        let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
+        let admin = require_registry_admin(&env);
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     pub fn set_fee(env: Env, fee: i128) {
         extend_instance_ttl(&env);
-        let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
+        let admin = require_registry_admin(&env);
         admin.require_auth();
         env.storage().instance().set(&SCHEMA_FEE, &fee);
     }
 
     pub fn set_treasury(env: Env, treasury: soroban_sdk::Address) {
         extend_instance_ttl(&env);
-        let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
+        let admin = require_registry_admin(&env);
         admin.require_auth();
         env.storage().instance().set(&TREASURY, &treasury);
     }
 
     pub fn withdraw_fees(env: Env, amount: i128) {
         extend_instance_ttl(&env);
-        let admin: soroban_sdk::Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
+        let admin = require_registry_admin(&env);
         admin.require_auth();
         // Native token transfer logic goes here
     }
 
-    /// Deprecates a schema. Only its original registrant or the registry
-    /// administrator may authorize this operation.
+    /// Deprecates a schema. Only creator or admin may call.
+    /// Panics NotInitialized if not init, SchemaNotFound if uid unknown
+    /// (no tombstone written). Repeated calls are idempotent.
     pub fn deprecate(env: Env, uid: UID, authorizer: Address) {
         extend_instance_ttl(&env);
+        let admin = require_registry_admin(&env);
+
+        if !env.storage().persistent().has(&uid) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+
         authorizer.require_auth();
 
-        let admin: Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
         let creator: Option<Address> = env
             .storage()
             .persistent()
             .get(&(SCHEMA_CREATOR, uid.clone()));
-        // Schemas registered before creator tracking was introduced have no
-        // mapping. The registry admin remains able to deprecate those legacy
-        // records; new records also permit their creator.
         if authorizer != admin && creator.as_ref() != Some(&authorizer) {
             panic_with_error!(&env, SASError::Unauthorized);
         }
 
-        let deprecated_key = (DEPRECATED, uid);
+        let deprecated_key = (DEPRECATED, uid.clone());
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&deprecated_key)
+            .unwrap_or(false)
+        {
+            return;
+        }
         env.storage().persistent().set(&deprecated_key, &true);
         env.storage().persistent().extend_ttl(
             &deprecated_key,
@@ -181,26 +202,79 @@ impl SchemaRegistry {
         env.storage().persistent().has(&uid)
     }
 
+    /// Returns up to `limit` active schemas from `start`, skipping deprecated.
+    /// Scans until page full, budget (100) or end. Use paginated for cursor.
     pub fn get_schemas(env: Env, start: u32, limit: u32) -> soroban_sdk::Vec<SchemaRecord> {
         extend_instance_ttl(&env);
-        let mut schemas = soroban_sdk::Vec::new(&env);
+        if limit == 0 {
+            return soroban_sdk::Vec::new(&env);
+        }
         let count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
-
-        let end = if start + limit > count {
-            count
-        } else {
-            start + limit
-        };
-        for i in start..end {
-            if let Some(uid) = env.storage().persistent().get::<u32, UID>(&i) {
-                if let Some(record) = env.storage().persistent().get(&uid) {
-                    schemas.push_back(record);
+        if start >= count {
+            return soroban_sdk::Vec::new(&env);
+        }
+        let mut schemas = soroban_sdk::Vec::new(&env);
+        let mut index = start;
+        let mut scanned: u32 = 0;
+        while index < count && schemas.len() < limit && scanned < MAX_SCAN_BUDGET {
+            if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
+                let is_deprecated: bool = env
+                    .storage()
+                    .persistent()
+                    .get(&(DEPRECATED, uid.clone()))
+                    .unwrap_or(false);
+                if !is_deprecated {
+                    if let Some(record) = env.storage().persistent().get::<UID, SchemaRecord>(&uid)
+                    {
+                        schemas.push_back(record);
+                    }
                 }
             }
+            index = index.saturating_add(1);
+            scanned = scanned.saturating_add(1);
         }
         schemas
+    }
+
+    /// Paginated: returns (schemas, next_cursor). Same semantics as get_schemas.
+    pub fn get_schemas_paginated(
+        env: Env,
+        start: u32,
+        limit: u32,
+    ) -> (soroban_sdk::Vec<SchemaRecord>, u32) {
+        extend_instance_ttl(&env);
+        let count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        if limit == 0 || start >= count {
+            return (
+                soroban_sdk::Vec::new(&env),
+                if start >= count { count } else { start },
+            );
+        }
+        let mut schemas = soroban_sdk::Vec::new(&env);
+        let mut index = start;
+        let mut scanned: u32 = 0;
+        while index < count && schemas.len() < limit && scanned < MAX_SCAN_BUDGET {
+            if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
+                let is_deprecated: bool = env
+                    .storage()
+                    .persistent()
+                    .get(&(DEPRECATED, uid.clone()))
+                    .unwrap_or(false);
+                if !is_deprecated {
+                    if let Some(record) = env.storage().persistent().get::<UID, SchemaRecord>(&uid)
+                    {
+                        schemas.push_back(record);
+                    }
+                }
+            }
+            index = index.saturating_add(1);
+            scanned = scanned.saturating_add(1);
+        }
+        (schemas, index)
     }
 }
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_extra;
