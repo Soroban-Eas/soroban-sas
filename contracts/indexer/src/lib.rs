@@ -19,6 +19,30 @@ const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
 const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
+/// Persistent key prefix for a UID's [`IndexStatus`]: `(STATUS_KEY, uid)`.
+const STATUS_KEY: Symbol = symbol_short!("IDXSTAT");
+/// Persistent key prefix for a UID's idempotency record: `(INDEXED_KEY, uid)`
+/// stores the `(recipient, schema_uid, attester)` triple the UID was first
+/// indexed with. Its presence marks the UID as already indexed and pins the
+/// metadata a retry must match.
+const INDEXED_KEY: Symbol = symbol_short!("INDEXED");
+
+/// The `(recipient, schema_uid, attester)` triple a UID was first indexed
+/// with. A later `index_attestation` for the same UID must supply an
+/// identical triple (idempotent retry) or it is rejected. Stored as a plain
+/// tuple rather than a `#[contracttype]` struct so no `arbitrary`/testutils
+/// bound is imposed on `UID` in downstream test builds.
+type IndexRecord = (Address, UID, Address);
+
+/// Lifecycle state the indexer tracks per attestation UID so filtered
+/// queries can hide revoked / replaced entries without deleting history.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexStatus {
+    Active,
+    Revoked,
+    Replaced,
+}
 
 fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
@@ -86,6 +110,12 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
     extend_instance_ttl(env);
 }
 
+/// Records a non-default lifecycle state for `uid`. Only `Revoked` /
+/// `Replaced` are ever persisted — an unindexed or freshly indexed UID has
+/// no status entry, which [`is_active`] and [`Indexer::get_attestation_status`]
+/// both read as active. Invoked by the SAS `handle_revoke` / `handle_replace`
+/// callbacks (added separately).
+#[allow(dead_code)]
 fn set_index_status(env: &Env, uid: &UID, status: IndexStatus) {
     let key = (STATUS_KEY, uid.clone());
     env.storage().persistent().set(&key, &status);
@@ -96,14 +126,12 @@ fn set_index_status(env: &Env, uid: &UID, status: IndexStatus) {
 
 fn is_active(env: &Env, uid: &UID) -> bool {
     // No status entry means legacy `Active` (issued before status tracking).
-    match env
-        .storage()
-        .persistent()
-        .get::<_, IndexStatus>(&(STATUS_KEY, uid.clone()))
-    {
-        Some(IndexStatus::Active) | None => true,
-        _ => false,
-    }
+    matches!(
+        env.storage()
+            .persistent()
+            .get::<_, IndexStatus>(&(STATUS_KEY, uid.clone())),
+        Some(IndexStatus::Active) | None
+    )
 }
 
 fn collect_filtered(
@@ -180,6 +208,14 @@ impl Indexer {
         env.storage().instance().get(&SAS_CONTRACT)
     }
 
+    /// Records `uid` in the recipient, schema, and attester indexes.
+    ///
+    /// Idempotent: a repeated call with the **same**
+    /// `(recipient, schema_uid, attester)` triple is a no-op (it only
+    /// renews TTLs), so a retried cross-contract call or a migration replay
+    /// can't duplicate query results or inflate storage. A repeated call
+    /// for the same `uid` with a **different** triple is rejected with
+    /// `SASError::DuplicateAttestation`.
     pub fn index_attestation(
         env: Env,
         uid: UID,
@@ -188,10 +224,46 @@ impl Indexer {
         attester: Address,
     ) {
         extend_instance_ttl(&env);
+
+        let record: IndexRecord = (recipient.clone(), schema_uid.clone(), attester.clone());
+        let record_key = (INDEXED_KEY, uid.clone());
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<_, IndexRecord>(&record_key)
+        {
+            if existing != record {
+                panic_with_error!(&env, SASError::DuplicateAttestation);
+            }
+            // Identical retry: renew the idempotency record's TTL and return
+            // without touching the append-only indexes.
+            env.storage().persistent().extend_ttl(
+                &record_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            extend_instance_ttl(&env);
+            return;
+        }
+
+        env.storage().persistent().set(&record_key, &record);
+        env.storage().persistent().extend_ttl(
+            &record_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
         extend_instance_ttl(&env);
+    }
+
+    /// Returns the recorded [`IndexStatus`] for `uid`, or `None` when the
+    /// UID was never indexed (or was indexed before status tracking existed).
+    pub fn get_attestation_status(env: Env, uid: UID) -> Option<IndexStatus> {
+        extend_instance_ttl(&env);
+        env.storage().persistent().get(&(STATUS_KEY, uid))
     }
 
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
