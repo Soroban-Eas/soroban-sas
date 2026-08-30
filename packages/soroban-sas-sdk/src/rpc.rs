@@ -4,10 +4,13 @@
 //! SDK needs to submit and track transactions, sends them over HTTP via
 //! `ureq`, and parses the matching JSON-RPC responses.
 
+use std::io::Read;
 use std::time::Duration;
 
 use crate::errors::SdkError;
+use crate::limits::{rpc_response_limits, DEFAULT_MAX_RESPONSE_BYTES};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use soroban_sdk::xdr::{ReadXdr, TransactionEnvelope};
 use ureq::{Agent, AgentBuilder};
 
 /// Per-request timeout applied by [`RpcClient`] unless overridden via
@@ -27,6 +30,11 @@ pub struct RpcClient {
     /// `ureq`'s agent doesn't expose its configured timeout; readable via
     /// [`RpcClient::timeout`].
     timeout: Duration,
+    /// Largest response body this client will buffer or decode, in bytes.
+    /// A larger `Content-Length`, or more bytes on the wire, fails with
+    /// [`SdkError::ResponseTooLarge`] before the body is fully read. Also
+    /// bounds the `len` of every XDR decode of that body's contents.
+    max_response_bytes: usize,
     /// HTTP agent preconfigured with `timeout`; every request goes through
     /// it so none can bypass the bound.
     agent: Agent,
@@ -37,8 +45,23 @@ impl RpcClient {
         Self {
             network_url: network_url.into(),
             timeout: DEFAULT_RPC_TIMEOUT,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             agent: rpc_agent(DEFAULT_RPC_TIMEOUT),
         }
+    }
+
+    /// Overrides the largest response body this client will accept
+    /// ([`DEFAULT_MAX_RESPONSE_BYTES`](crate::limits::DEFAULT_MAX_RESPONSE_BYTES)
+    /// by default). Raise it for endpoints that legitimately return very
+    /// large `getLedgerEntries` / `simulateTransaction` payloads.
+    pub fn with_max_response_bytes(mut self, max_response_bytes: usize) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
+    }
+
+    /// The largest response body, in bytes, this client will buffer or decode.
+    pub fn max_response_bytes(&self) -> usize {
+        self.max_response_bytes
     }
 
     /// Overrides this client's per-request timeout, returning the configured
@@ -107,7 +130,7 @@ impl RpcClient {
         body: &str,
     ) -> Result<GetTransactionResult, SdkError> {
         let result = parse_response(body)?;
-        validate_supported_transaction_envelope(&result)?;
+        validate_supported_transaction_envelope(&result, self.max_response_bytes)?;
         Ok(result)
     }
 
@@ -196,15 +219,50 @@ impl RpcClient {
     }
 
     /// POSTs a JSON-RPC request body to this client's `network_url` and
-    /// returns the raw response body.
+    /// returns the raw response body, refusing anything larger than
+    /// [`RpcClient::max_response_bytes`] before it is fully buffered.
     fn post<P: Serialize>(&self, request: &JsonRpcRequest<P>) -> Result<String, SdkError> {
-        self.agent
+        let response = self
+            .agent
             .post(&self.network_url)
             .send_json(request)
-            .map_err(|err| SdkError::TransportError(err.to_string()))?
-            .into_string()
-            .map_err(|err| SdkError::TransportError(err.to_string()))
+            .map_err(|err| SdkError::TransportError(err.to_string()))?;
+        read_body_bounded(response, self.max_response_bytes)
     }
+}
+
+/// Reads a `ureq` response body into a `String`, rejecting it with
+/// [`SdkError::ResponseTooLarge`] if the announced `Content-Length` exceeds
+/// `limit` or if the body turns out to be longer than `limit` on the wire
+/// (covering chunked responses with no declared length).
+fn read_body_bounded(response: ureq::Response, limit: usize) -> Result<String, SdkError> {
+    if let Some(len) = response
+        .header("Content-Length")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+    {
+        if len > limit {
+            return Err(SdkError::ResponseTooLarge {
+                limit,
+                observed: Some(len),
+            });
+        }
+    }
+
+    // Read at most `limit + 1` bytes: the extra byte tells us the body was
+    // over the limit without ever holding more than `limit + 1` in memory.
+    let mut buf = Vec::new();
+    let read = response
+        .into_reader()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|err| SdkError::TransportError(err.to_string()))?;
+    if read > limit {
+        return Err(SdkError::ResponseTooLarge {
+            limit,
+            observed: None,
+        });
+    }
+    String::from_utf8(buf).map_err(|err| SdkError::TransportError(err.to_string()))
 }
 
 /// Builds the `ureq` agent used for every [`RpcClient`] request, with
@@ -227,12 +285,18 @@ fn parse_response<T: DeserializeOwned>(body: &str) -> Result<T, SdkError> {
     }
 }
 
-fn validate_supported_transaction_envelope(result: &GetTransactionResult) -> Result<(), SdkError> {
+fn validate_supported_transaction_envelope(
+    result: &GetTransactionResult,
+    max_body_bytes: usize,
+) -> Result<(), SdkError> {
     let Some(envelope_xdr) = &result.envelope_xdr else {
         return Ok(());
     };
-    let envelope = TransactionEnvelope::from_xdr_base64(envelope_xdr, Limits::none())
-        .map_err(|err| SdkError::DecodingError(format!("failed to decode envelopeXdr: {err:?}")))?;
+    let envelope =
+        TransactionEnvelope::from_xdr_base64(envelope_xdr, rpc_response_limits(max_body_bytes))
+            .map_err(|err| {
+                SdkError::DecodingError(format!("failed to decode envelopeXdr: {err:?}"))
+            })?;
     match envelope {
         TransactionEnvelope::Tx(_) => Ok(()),
         other => Err(SdkError::DecodingError(format!(
@@ -290,6 +354,12 @@ pub struct GetTransactionResult {
     pub envelope_xdr: Option<String>,
     #[serde(rename = "resultXdr")]
     pub result_xdr: Option<String>,
+    /// The transaction hash. Absent in a raw `getTransaction` reply (which
+    /// is queried *by* hash); the SDK fills it in from the preceding
+    /// `sendTransaction` so callers — especially asynchronous ones — always
+    /// have the hash to poll or record.
+    #[serde(default)]
+    pub hash: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -412,7 +482,80 @@ pub struct LedgerEntryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::xdr::{
+        FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
+        FeeBumpTransactionInnerTx, Limits, Memo, MuxedAccount, Preconditions, SequenceNumber,
+        Transaction, TransactionExt, TransactionV0, TransactionV0Envelope, TransactionV0Ext,
+        TransactionV1Envelope, Uint256, VecM, WriteXdr,
+    };
     use std::time::Instant;
+
+    /// A minimal, well-formed `Transaction` body used to assemble the
+    /// envelope fixtures below. Its contents don't matter — the tests only
+    /// care which `TransactionEnvelope` variant it is wrapped in.
+    fn sample_transaction() -> Transaction {
+        Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256([0u8; 32])),
+            fee: 100,
+            seq_num: SequenceNumber(0),
+            cond: Preconditions::None,
+            memo: Memo::None,
+            operations: VecM::default(),
+            ext: TransactionExt::V0,
+        }
+    }
+
+    /// Base64 XDR for a modern V1 (`TransactionEnvelope::Tx`) envelope — the
+    /// only variant the SDK accepts from `getTransaction`.
+    fn v1_envelope_xdr() -> String {
+        TransactionEnvelope::Tx(TransactionV1Envelope {
+            tx: sample_transaction(),
+            signatures: VecM::default(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
+
+    /// Base64 XDR for a legacy V0 (`TransactionEnvelope::TxV0`) envelope,
+    /// which the SDK must reject without panicking.
+    fn v0_envelope_xdr() -> String {
+        let tx = TransactionV0 {
+            source_account_ed25519: Uint256([0u8; 32]),
+            fee: 100,
+            seq_num: SequenceNumber(0),
+            time_bounds: None,
+            memo: Memo::None,
+            operations: VecM::default(),
+            ext: TransactionV0Ext::V0,
+        };
+        TransactionEnvelope::TxV0(TransactionV0Envelope {
+            tx,
+            signatures: VecM::default(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
+
+    /// Base64 XDR for a fee-bump (`TransactionEnvelope::TxFeeBump`) envelope,
+    /// which the SDK must reject without panicking.
+    fn fee_bump_envelope_xdr() -> String {
+        let inner = FeeBumpTransactionInnerTx::Tx(TransactionV1Envelope {
+            tx: sample_transaction(),
+            signatures: VecM::default(),
+        });
+        let tx = FeeBumpTransaction {
+            fee_source: MuxedAccount::Ed25519(Uint256([0u8; 32])),
+            fee: 200,
+            inner_tx: inner,
+            ext: FeeBumpTransactionExt::V0,
+        };
+        TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope {
+            tx,
+            signatures: VecM::default(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
 
     #[test]
     fn builds_send_transaction_request() {
@@ -713,6 +856,160 @@ mod tests {
             elapsed < Duration::from_secs(2),
             "hung node took {elapsed:?} to fail; timeout not applied"
         );
+    }
+
+    // --- Issue #136: response bodies are bounded before JSON / XDR decode ---
+
+    /// Serves one HTTP/1.1 response built from `status_line_extra_headers`
+    /// (everything between the status line and the blank line, `\r\n`
+    /// terminated) plus `body`. Lets a test forge a `Content-Length` or ship
+    /// an over-large body.
+    fn spawn_raw_http_server(headers: String, body: Vec<u8>) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                // Fully drain the request (headers + body) first: closing a
+                // socket with unread bytes sends an RST that can wipe the
+                // response mid-flight.
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    let read = reader.read_line(&mut line).unwrap_or(0);
+                    if read == 0 || line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        content_length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut req_body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut req_body);
+
+                let mut stream = stream;
+                let _ = stream.write_all(
+                    format!("HTTP/1.1 200 OK\r\n{headers}Connection: close\r\n\r\n").as_bytes(),
+                );
+                let _ = stream.write_all(&body);
+                let _ = stream.flush();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn default_max_response_bytes_matches_the_documented_limit() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        assert_eq!(
+            client.max_response_bytes(),
+            crate::limits::DEFAULT_MAX_RESPONSE_BYTES
+        );
+    }
+
+    #[test]
+    fn with_max_response_bytes_overrides_the_default() {
+        let client =
+            RpcClient::new("https://soroban-testnet.stellar.org").with_max_response_bytes(1024);
+        assert_eq!(client.max_response_bytes(), 1024);
+    }
+
+    #[test]
+    fn oversized_content_length_is_rejected_before_the_body_is_read() {
+        // Announce a gigabyte but send almost nothing: a client that trusts
+        // Content-Length would try to allocate 1 GiB.
+        let url = spawn_raw_http_server(
+            "Content-Type: application/json\r\nContent-Length: 1073741824\r\n".to_string(),
+            b"{}".to_vec(),
+        );
+        let client = RpcClient::new(url).with_max_response_bytes(64 * 1024);
+        let err = client.get_transaction("deadbeef").unwrap_err();
+        match err {
+            SdkError::ResponseTooLarge { limit, observed } => {
+                assert_eq!(limit, 64 * 1024);
+                assert_eq!(observed, Some(1_073_741_824));
+            }
+            other => panic!("expected ResponseTooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_body_without_content_length_is_cut_off_at_the_limit() {
+        let big = vec![b'a'; 200 * 1024];
+        // Chunked-style: no Content-Length header at all.
+        let url = spawn_raw_http_server("Content-Type: application/json\r\n".to_string(), big);
+        let client = RpcClient::new(url).with_max_response_bytes(64 * 1024);
+        let err = client.get_transaction("deadbeef").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SdkError::ResponseTooLarge {
+                    limit: 65536,
+                    observed: None
+                }
+            ),
+            "expected ResponseTooLarge, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_body_within_the_limit_still_parses_normally() {
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"status":"SUCCESS","latestLedger":7,"envelopeXdr":{}}}}}"#,
+            serde_json::to_string(&v1_envelope_xdr()).unwrap()
+        )
+        .into_bytes();
+        let url = spawn_raw_http_server(
+            format!(
+                "Content-Type: application/json\r\nContent-Length: {}\r\n",
+                body.len()
+            ),
+            body,
+        );
+        let client = RpcClient::new(url).with_max_response_bytes(64 * 1024);
+        let result = client.get_transaction("deadbeef").unwrap();
+        assert_eq!(result.status, "SUCCESS");
+    }
+
+    #[test]
+    fn nested_xdr_past_the_configured_depth_is_rejected_not_recursed() {
+        use soroban_sdk::xdr::{Limits as XdrLimits, ScVal, ScVec};
+
+        // A modestly nested `ScVal::Vec` (shallow enough that *encoding* it
+        // here doesn't overflow this test thread's own stack).
+        let mut nested = ScVal::Vec(Some(ScVec(VecM::default())));
+        for _ in 0..24 {
+            nested = ScVal::Vec(Some(ScVec(vec![nested].try_into().unwrap())));
+        }
+        let deep_b64 = nested.to_xdr_base64(XdrLimits::none()).unwrap();
+
+        // Unbounded / generous depth accepts it...
+        assert!(ScVal::from_xdr_base64(&deep_b64, XdrLimits::none()).is_ok());
+        assert!(ScVal::from_xdr_base64(&deep_b64, rpc_response_limits(1 << 20)).is_ok());
+        // ...but a decoder whose depth ceiling sits below the nesting bails
+        // with an error instead of recursing without bound.
+        let shallow = XdrLimits {
+            depth: 8,
+            len: 1 << 20,
+        };
+        assert!(ScVal::from_xdr_base64(&deep_b64, shallow).is_err());
+    }
+
+    #[test]
+    fn oversized_base64_xdr_is_rejected_by_the_finite_byte_limit() {
+        use soroban_sdk::xdr::{Limits as XdrLimits, ScVal};
+
+        // A big `ScVal::Bytes` blob: legal XDR, but larger than a tight
+        // `len` ceiling, so the bounded decoder refuses it up front.
+        let blob = ScVal::Bytes(vec![7u8; 200 * 1024].try_into().unwrap());
+        let b64 = blob.to_xdr_base64(XdrLimits::none()).unwrap();
+        assert!(ScVal::from_xdr_base64(&b64, XdrLimits::none()).is_ok());
+        let tight = XdrLimits {
+            depth: crate::limits::DEFAULT_XDR_DEPTH,
+            len: 64 * 1024,
+        };
+        assert!(ScVal::from_xdr_base64(&b64, tight).is_err());
     }
 
     /// Happy-path guard: with the timeout-wired agent in place, ordinary

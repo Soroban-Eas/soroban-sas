@@ -24,9 +24,11 @@ pub fn fetch_sequence_number(rpc: &RpcClient, public_key: &[u8; 32]) -> Result<i
 
     let entry = &result.entries[0];
 
-    let data = LedgerEntryData::from_xdr_base64(&entry.xdr, Limits::none()).map_err(|e| {
-        SdkError::DecodingError(format!("failed to decode account ledger entry xdr: {e:?}"))
-    })?;
+    let data =
+        LedgerEntryData::from_xdr_base64(&entry.xdr, crate::limits::default_rpc_response_limits())
+            .map_err(|e| {
+                SdkError::DecodingError(format!("failed to decode account ledger entry xdr: {e:?}"))
+            })?;
 
     match data {
         LedgerEntryData::Account(account) => Ok(account.seq_num.0),
@@ -61,6 +63,19 @@ mod tests {
         AccountEntry, AccountEntryExt, AccountId, ContractDataDurability, Hash, PublicKey,
         ScAddress, ScVal, SequenceNumber, String32, Thresholds, Uint256,
     };
+
+    /// Decodes a base64 `LedgerKey::Account` XDR and asserts its account id
+    /// carries exactly `expected` as its Ed25519 public key.
+    fn assert_account_key_bytes(key_b64: &str, expected: [u8; 32]) {
+        let key = LedgerKey::from_xdr_base64(key_b64, Limits::none()).unwrap();
+        let LedgerKey::Account(LedgerKeyAccount {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(bytes))),
+        }) = key
+        else {
+            panic!("expected a LedgerKey::Account, got {key:?}");
+        };
+        assert_eq!(bytes, expected);
+    }
 
     #[test]
     fn account_ledger_key_round_trips_multiple_ed25519_keys() {

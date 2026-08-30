@@ -171,7 +171,7 @@ pub(crate) fn validate_simulated_transaction(
     if invoke_args.function_name.0.to_string() != function_name {
         return Err(SdkError::ValidationError(format!(
             "function name mismatch: expected {function_name}, got {}",
-            invoke_args.function_name.0.to_string()
+            invoke_args.function_name.0
         )));
     }
 
@@ -289,8 +289,12 @@ pub fn decode_result<T>(env: &Env, result_xdr_base64: &str) -> Result<T, SdkErro
 where
     T: TryFromVal<Env, Val>,
 {
-    let sc_val = ScVal::from_xdr_base64(result_xdr_base64, Limits::none())
-        .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))?;
+    // RPC-supplied payload: bound recursion depth and size (issue #136).
+    let sc_val = ScVal::from_xdr_base64(
+        result_xdr_base64,
+        crate::limits::default_rpc_response_limits(),
+    )
+    .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))?;
     let val: Val = Val::try_from_val(env, &sc_val)
         .map_err(|_| SdkError::DecodingError("failed to convert ScVal to host Val".to_string()))?;
     T::try_from_val(env, &val)
