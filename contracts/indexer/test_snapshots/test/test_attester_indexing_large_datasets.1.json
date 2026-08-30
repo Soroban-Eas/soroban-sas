@@ -73,7 +73,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -97,7 +97,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -110,7 +110,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -126,7 +140,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -150,7 +164,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -163,7 +177,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -179,7 +207,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -203,7 +231,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -216,7 +244,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -232,7 +274,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -256,7 +298,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -269,7 +311,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -285,7 +341,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -309,7 +365,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -322,7 +378,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -338,7 +408,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -362,7 +432,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -375,7 +445,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -391,7 +475,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -415,7 +499,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -428,7 +512,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -444,7 +542,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -468,7 +566,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -481,7 +579,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -497,7 +609,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -521,7 +633,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -534,7 +646,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -550,7 +676,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -574,7 +700,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -587,7 +713,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -603,7 +743,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -627,7 +767,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -640,7 +780,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -656,7 +810,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -680,7 +834,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -693,7 +847,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -709,7 +877,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -733,7 +901,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -746,7 +914,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -762,7 +944,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -786,7 +968,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -799,7 +981,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -815,7 +1011,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -839,7 +1035,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -852,7 +1048,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -868,7 +1078,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -892,7 +1102,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -905,7 +1115,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -921,7 +1145,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -945,7 +1169,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -958,7 +1182,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -974,7 +1212,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -998,7 +1236,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1011,7 +1249,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1027,7 +1279,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1051,7 +1303,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1064,7 +1316,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1080,7 +1346,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1104,7 +1370,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1117,7 +1383,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1133,7 +1413,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1157,7 +1437,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1170,7 +1450,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1186,7 +1480,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1210,7 +1504,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1223,7 +1517,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1239,7 +1547,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1263,7 +1571,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1276,7 +1584,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1292,7 +1614,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1316,7 +1638,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1329,7 +1651,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1345,7 +1681,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1369,7 +1705,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1382,7 +1718,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1398,7 +1748,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1422,7 +1772,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1435,7 +1785,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1451,7 +1815,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1475,7 +1839,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1488,7 +1852,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1504,7 +1882,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1528,7 +1906,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1541,7 +1919,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1557,7 +1949,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1581,7 +1973,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1594,7 +1986,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1610,7 +2016,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1634,7 +2040,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1647,7 +2053,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1663,7 +2083,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1687,7 +2107,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1700,7 +2120,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1716,7 +2150,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1740,7 +2174,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1753,7 +2187,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1769,7 +2217,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1793,7 +2241,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1806,7 +2254,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1822,7 +2284,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1846,7 +2308,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1859,7 +2321,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1875,7 +2351,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1899,7 +2375,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1912,7 +2388,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1928,7 +2418,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -1952,7 +2442,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -1965,7 +2455,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -1981,7 +2485,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2005,7 +2509,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2018,7 +2522,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2034,7 +2552,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2058,7 +2576,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2071,7 +2589,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2087,7 +2619,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2111,7 +2643,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2124,7 +2656,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2140,7 +2686,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2164,7 +2710,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2177,7 +2723,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2193,7 +2753,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2217,7 +2777,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2230,7 +2790,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2246,7 +2820,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2270,7 +2844,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2283,7 +2857,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2299,7 +2887,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2323,7 +2911,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2336,7 +2924,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2352,7 +2954,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2376,7 +2978,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2389,7 +2991,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2405,7 +3021,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2429,7 +3045,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2442,7 +3058,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2458,7 +3088,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2482,7 +3112,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2495,7 +3125,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2511,7 +3155,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2535,7 +3179,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2548,7 +3192,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2564,7 +3222,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2588,7 +3246,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2601,7 +3259,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2617,7 +3289,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2641,7 +3313,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2654,7 +3326,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -2670,7 +3356,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -2694,7 +3380,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -2707,7 +3393,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },

@@ -81,6 +81,94 @@ fn test_chunked_storage_limits() {
 */
 
 #[test]
+fn test_reindexing_identical_metadata_is_a_no_op() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    // Same call three times — a retried cross-contract call / migration replay.
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+
+    assert_eq!(client.get_attestations_by_recipient(&recipient).len(), 1);
+    assert_eq!(client.get_attestations_by_schema(&schema_uid).len(), 1);
+    assert_eq!(client.get_attestations_by_attester(&attester).len(), 1);
+}
+
+#[test]
+fn test_reusing_a_uid_with_a_different_recipient_is_rejected() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let attester = Address::generate(&env);
+
+    client.index_attestation(&uid, &Address::generate(&env), &schema_uid, &attester);
+    let res = client.try_index_attestation(&uid, &Address::generate(&env), &schema_uid, &attester);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::DuplicateAttestation.into()))
+    );
+}
+
+#[test]
+fn test_reusing_a_uid_with_a_different_schema_or_attester_is_rejected() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+    let schema_a = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let schema_b = UID(soroban_sdk::BytesN::from_array(&env, &[3u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester_a = Address::generate(&env);
+    let attester_b = Address::generate(&env);
+
+    client.index_attestation(&uid, &recipient, &schema_a, &attester_a);
+
+    let wrong_schema = client.try_index_attestation(&uid, &recipient, &schema_b, &attester_a);
+    assert_eq!(
+        wrong_schema,
+        Err(Ok(soroban_sas_common::SASError::DuplicateAttestation.into()))
+    );
+
+    let wrong_attester = client.try_index_attestation(&uid, &recipient, &schema_a, &attester_b);
+    assert_eq!(
+        wrong_attester,
+        Err(Ok(soroban_sas_common::SASError::DuplicateAttestation.into()))
+    );
+
+    // The original entry is untouched by the rejected retries.
+    assert_eq!(client.get_attestations_by_recipient(&recipient).len(), 1);
+}
+
+#[test]
+fn test_get_attestation_status_defaults_to_none_until_a_callback_sets_it() {
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    assert_eq!(client.get_attestation_status(&uid), None);
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+    // A freshly indexed UID has no explicit status entry; `None` is read as
+    // active by the filtered queries.
+    assert_eq!(client.get_attestation_status(&uid), None);
+}
+
+#[test]
 fn test_reverse_lookup() {
     let env = Env::default();
     let indexer_id = env.register_contract(None, Indexer);

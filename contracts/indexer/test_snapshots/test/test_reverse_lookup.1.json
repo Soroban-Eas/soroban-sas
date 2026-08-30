@@ -26,7 +26,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -50,7 +50,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -63,7 +63,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
@@ -79,7 +93,7 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "STATUS"
+                  "symbol": "INDEXED"
                 },
                 {
                   "vec": [
@@ -103,7 +117,7 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "STATUS"
+                      "symbol": "INDEXED"
                     },
                     {
                       "vec": [
@@ -116,7 +130,21 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u32": 0
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                        }
+                      ]
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                    }
+                  ]
                 }
               }
             },
