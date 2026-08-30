@@ -20,6 +20,10 @@ pub const TREASURY: Symbol = symbol_short!("TREASURY");
 /// Instance key for the `(fee_token, fee_amount)` pair required by
 /// `attest_with_value`. Absent means attestation is fee-free (#164).
 pub const FEE_CONFIG: Symbol = symbol_short!("FEECFG");
+/// Instance key for the fail-closed indexing toggle. When `true`, a failed
+/// Indexer push aborts attestation issuance with `IndexerUnavailable`
+/// instead of emitting `IndexFailed` (#161). Defaults to `false` (fail-open).
+pub const INDEXER_STRICT: Symbol = symbol_short!("IDXSTRICT");
 pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 /// Per-attester high-watermark for delegated nonces. The value stored is the
 /// highest `nonce` that has been consumed for that attester; a delegated
@@ -302,7 +306,71 @@ impl SAS {
         if matches!(outcome, Ok(Ok(()))) {
             return;
         }
+        if env
+            .storage()
+            .instance()
+            .get(&INDEXER_STRICT)
+            .unwrap_or(false)
+        {
+            panic_with_error!(env, SASError::IndexerUnavailable);
+        }
         events::publish_index_failed(env, &attestation.uid);
+    }
+
+    /// Admin: choose the Indexer availability policy (#161).
+    ///
+    /// `false` (default) is fail-open: a failed Indexer push is tolerated and
+    /// surfaced via an `IndexFailed` event. `true` is fail-closed: a failed
+    /// push aborts the attestation with `SASError::IndexerUnavailable`, which
+    /// operators pair with health checks, rotation via `set_indexer`, and the
+    /// `reindex_attestation` recovery path.
+    pub fn set_indexer_strict(env: Env, strict: bool) {
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().set(&INDEXER_STRICT, &strict);
+        extend_instance_ttl(&env);
+    }
+
+    /// Returns the current Indexer availability policy: `true` fail-closed,
+    /// `false` fail-open (the default).
+    pub fn get_indexer_strict(env: Env) -> bool {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&INDEXER_STRICT).unwrap_or(false)
+    }
+
+    /// Replays an already-issued attestation to the currently bound Indexer.
+    ///
+    /// Reconciliation for the fail-open policy (#161): when an `IndexFailed`
+    /// event shows the mirror missed an attestation, anyone can replay it
+    /// once the Indexer is healthy. Reads the stored attestation (so a caller
+    /// cannot fabricate one), requires an Indexer to be bound
+    /// (`NotInitialized` otherwise), and reports a still-failing Indexer as
+    /// `SASError::IndexerUnavailable` so callers know to retry later. On
+    /// success emits `Reindexed(uid)`.
+    pub fn reindex_attestation(env: Env, uid: UID) {
+        extend_instance_ttl(&env);
+        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            panic_with_error!(&env, SASError::AttestationNotFound);
+        };
+        let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) else {
+            panic_with_error!(&env, SASError::NotInitialized);
+        };
+        let outcome = env.try_invoke_contract::<(), soroban_sdk::Error>(
+            &indexer,
+            &Symbol::new(&env, "index_attestation"),
+            soroban_sdk::vec![
+                &env,
+                attestation.uid.clone().into_val(&env),
+                attestation.recipient.clone().into_val(&env),
+                attestation.schema_uid.clone().into_val(&env),
+                attestation.attester.clone().into_val(&env),
+            ],
+        );
+        if !matches!(outcome, Ok(Ok(()))) {
+            panic_with_error!(&env, SASError::IndexerUnavailable);
+        }
+        events::publish_reindexed(&env, &uid);
     }
 
     pub fn revoke(env: Env, uid: UID) {
