@@ -111,3 +111,11 @@ jobs:
             --package soroban-sas-indexer \
             --target wasm32-unknown-unknown \
             --release
+
+  doc-checks:
+    name: Documentation & Claim Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Validate documentation links, paths, and shell snippets
+        run: ./scripts/check_docs.sh

@@ -2,17 +2,26 @@ version: "3"
 
 services:
   stellar-quickstart:
-    image: stellar/quickstart:testing
+    image: stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784
     command: --standalone --enable-soroban-rpc
     ports:
       - "8000:8000"
     volumes:
       - quickstart_data:/opt/stellar
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
-      interval: 10s
+      test:
+        - "CMD-SHELL"
+        - >
+          curl -s -f -X POST -H 'Content-Type: application/json'
+          -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+          http://localhost:8000/soroban/rpc | grep -q '"status":[[:space:]]*"healthy"' &&
+          curl -s -f -X POST -H 'Content-Type: application/json'
+          -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'
+          http://localhost:8000/soroban/rpc | grep -q '"sequence":[[:space:]]*[1-9]' || exit 1
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 30
+      start_period: 10s
 
 volumes:
   quickstart_data:

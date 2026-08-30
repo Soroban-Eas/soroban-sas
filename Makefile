@@ -1,4 +1,4 @@
-.PHONY: all build test clean bench
+.PHONY: all build test clean bench check-docs wait-localnet
 
 all: build test
 
@@ -7,6 +7,12 @@ build:
 
 test:
 	cargo test --workspace
+
+check-docs:
+	./scripts/check_docs.sh
+
+wait-localnet:
+	./scripts/wait_for_localnet.sh
 
 bench:
 	cargo bench

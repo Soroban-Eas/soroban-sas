@@ -95,6 +95,58 @@ contracts — depending on version it can enable features the Soroban VM rejects
 If you must use raw Binaryen, pin the same version the CLI bundles and test the
 output on Testnet before trusting it.
 
+## Local Development (LocalNet & Docker Quickstart)
+
+For local development and integration testing, a standalone Stellar node with Soroban RPC is provided via `docker-compose.yml`.
+
+### Protocol and Toolchain Compatibility Matrix
+
+| Component | Pinned Version / Digest |
+| --- | --- |
+| Stellar Quickstart Image | `stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784` |
+| Soroban SDK | `20.0.0` (workspace dependency) |
+| Stellar Protocol | Protocol 20 / 21 |
+| Rust Toolchain | `1.79.0` (`rust-toolchain.toml`) |
+| Stellar CLI | v23+ (`stellar`) |
+
+### Starting LocalNet and Verifying RPC Readiness
+
+Start the Quickstart container:
+
+```bash
+docker compose up -d
+```
+
+The container health check actively probes Soroban JSON-RPC (`getHealth` and `getLatestLedger`). To wait for full node readiness in tests or CI scripts, run:
+
+```bash
+./scripts/wait_for_localnet.sh
+```
+
+This reusable script verifies that:
+1. `getHealth` reports `"status": "healthy"`.
+2. `getNetwork` returns the network passphrase and protocol version.
+3. `getLatestLedger` returns an advancing ledger sequence (`sequence >= 1`).
+
+If Soroban RPC fails to become ready within the timeout window, the script prints actionable container and RPC diagnostics and exits with a non-zero status.
+
+### Quickstart Image Update Procedure
+
+To update the pinned Quickstart container:
+
+1. Query the remote repository for the current digest of the target release or testing tag:
+   ```bash
+   docker buildx imagetools inspect docker.io/stellar/quickstart:testing
+   ```
+2. Update `docker-compose.yml` with the new immutable digest (`image: stellar/quickstart:<tag>@sha256:<digest>`).
+3. Start LocalNet and verify RPC readiness and contract deployment:
+   ```bash
+   docker compose up -d
+   ./scripts/wait_for_localnet.sh
+   ./scripts/deploy.sh --network testnet --rpc-url http://localhost:8000/soroban/rpc --secret-key S...
+   ```
+4. Update the compatibility matrix in this documentation and submit an upgrade pull request containing LocalNet verification evidence.
+
 ## Deploying to Testnet
 
 The three contracts must be deployed **and initialized in dependency order**:
@@ -118,10 +170,12 @@ decisive guarantee.
 ### One-shot deploy with `scripts/deploy.sh` (recommended)
 
 [`scripts/deploy.sh`](../scripts/deploy.sh) performs every step in this section
-for you:
+for you (or use [`scripts/deploy_testnet.sh`](../scripts/deploy_testnet.sh) as a convenient Testnet wrapper):
 
 ```bash
 ./scripts/deploy.sh --network testnet --secret-key SABC...
+# or via the testnet convenience entry point:
+./scripts/deploy_testnet.sh --secret-key SABC...
 ```
 
 To keep the key out of your shell history, export it instead:

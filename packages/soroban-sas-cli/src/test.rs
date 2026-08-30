@@ -136,6 +136,68 @@ mod tests {
         );
         assert!(decode_hex_or_base64("not valid at all!!").is_err());
     }
+
+    #[test]
+    fn verify_clap_cli_structure() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_schema_get_flags() {
+        let uid = hex::encode([3u8; 32]);
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--output",
+            "json",
+            "schema",
+            "get",
+            "--uid",
+            &uid,
+            "--registry-contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Schema {
+            action: crate::SchemaCommands::Get { uid: parsed_uid, .. },
+        }) = cli.command
+        else {
+            panic!("expected schema get command");
+        };
+        assert_eq!(parsed_uid, uid);
+    }
+
+    #[test]
+    fn parses_query_by_recipient_flags() {
+        let recipient = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBAAA6XKZW3";
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--output",
+            "json",
+            "query",
+            "by-recipient",
+            "--address",
+            recipient,
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Query {
+            action: crate::QueryCommands::ByRecipient { address, .. },
+        }) = cli.command
+        else {
+            panic!("expected query by-recipient command");
+        };
+        assert_eq!(address, recipient);
+    }
 }
 
 #[cfg(test)]
