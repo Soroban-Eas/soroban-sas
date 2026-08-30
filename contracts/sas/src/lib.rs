@@ -272,22 +272,37 @@ impl SAS {
         );
 
         if let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) {
-            env.invoke_contract::<()>(
-                &indexer,
-                &Symbol::new(&env, "index_attestation"),
-                soroban_sdk::vec![
-                    &env,
-                    attestation.uid.clone().into_val(&env),
-                    attestation.recipient.clone().into_val(&env),
-                    attestation.schema_uid.clone().into_val(&env),
-                    attestation.attester.clone().into_val(&env),
-                ],
-            );
+            Self::notify_indexer_of_issuance(&env, &indexer, &attestation);
         }
 
         events::publish_attested(&env, &attestation);
 
         attestation.uid.clone()
+    }
+
+    /// Pushes a freshly issued attestation to the bound Indexer.
+    ///
+    /// The attestation is the protocol's source of truth; the Indexer is a
+    /// downstream mirror. The default policy is therefore **fail-open**: an
+    /// unavailable, upgraded, or incompatible Indexer must not roll back
+    /// issuance. A failed push emits `IndexFailed(uid)` so operators can
+    /// detect the gap and repair it with `reindex_attestation` (#161).
+    fn notify_indexer_of_issuance(env: &Env, indexer: &Address, attestation: &Attestation) {
+        let outcome = env.try_invoke_contract::<(), soroban_sdk::Error>(
+            indexer,
+            &Symbol::new(env, "index_attestation"),
+            soroban_sdk::vec![
+                env,
+                attestation.uid.clone().into_val(env),
+                attestation.recipient.clone().into_val(env),
+                attestation.schema_uid.clone().into_val(env),
+                attestation.attester.clone().into_val(env),
+            ],
+        );
+        if matches!(outcome, Ok(Ok(()))) {
+            return;
+        }
+        events::publish_index_failed(env, &attestation.uid);
     }
 
     pub fn revoke(env: Env, uid: UID) {
