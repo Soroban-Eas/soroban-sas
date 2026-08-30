@@ -104,13 +104,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Build contracts (WASM)
-        run: |
-          cargo build \
-            --package sas \
-            --package schema-registry \
-            --package soroban-sas-indexer \
-            --target wasm32-unknown-unknown \
-            --release
+        run: make build-contracts
 
   doc-checks:
     name: Documentation & Claim Verification
