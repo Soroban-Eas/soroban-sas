@@ -237,6 +237,53 @@ impl RpcClient {
         self.parse_get_ledger_entries_response(&body, id)
     }
 
+    /// Fetches the RPC's view of the latest closed ledger via
+    /// `getLatestLedger`.
+    pub fn get_latest_ledger(&self) -> Result<GetLatestLedgerResult, SdkError> {
+        let request = JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+            "getLatestLedger",
+            serde_json::Value::Null,
+        );
+        let id = request.id;
+        let body = self.post(&request)?;
+        parse_response(&body, id)
+    }
+
+    /// Returns the authoritative network wall-clock: the close time (unix
+    /// seconds) of the RPC's latest ledger, plus that ledger's sequence.
+    ///
+    /// Uses `getLatestLedger` for the current sequence, then `getLedgers` for
+    /// that ledger's close time. The per-request timeout on this client
+    /// bounds both calls, so an unreachable node fails fast rather than
+    /// hanging the caller (#172).
+    pub fn get_latest_ledger_clock(&self) -> Result<LedgerClock, SdkError> {
+        let latest = self.get_latest_ledger()?;
+        let request = JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+            "getLedgers",
+            GetLedgersParams {
+                start_ledger: latest.sequence,
+                pagination: LedgersPagination { limit: 1 },
+            },
+        );
+        let id = request.id;
+        let body = self.post(&request)?;
+        let result: GetLedgersResult = parse_response(&body, id)?;
+        let close_time_str = result
+            .ledgers
+            .first()
+            .map(|l| l.ledger_close_time.clone())
+            .unwrap_or(result.latest_ledger_close_time);
+        let close_time: u64 = close_time_str
+            .parse()
+            .map_err(|_| SdkError::RpcError(format!("invalid ledger close time: {close_time_str}")))?;
+        Ok(LedgerClock {
+            sequence: latest.sequence,
+            close_time,
+        })
+    }
+
     /// POSTs a JSON-RPC request body to this client's `network_url` and
     /// returns the raw response body, refusing anything larger than
     /// [`RpcClient::max_response_bytes`] before it is fully buffered.
@@ -531,6 +578,104 @@ pub struct LedgerEntryResult {
     /// the entry is expiring / archived and needs TTL bump or restoration.
     #[serde(rename = "liveUntilLedgerSeq")]
     pub live_until_ledger_seq: Option<u32>,
+}
+
+/// The `result` payload of a Soroban `getLatestLedger` response.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct GetLatestLedgerResult {
+    pub id: String,
+    #[serde(rename = "protocolVersion")]
+    pub protocol_version: u32,
+    pub sequence: u32,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct GetLedgersParams {
+    #[serde(rename = "startLedger")]
+    pub start_ledger: u32,
+    pub pagination: LedgersPagination,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct LedgersPagination {
+    pub limit: u32,
+}
+
+/// The subset of a Soroban `getLedgers` response the SDK needs to read a
+/// ledger close time. Close times are transmitted as decimal strings of unix
+/// seconds.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct GetLedgersResult {
+    #[serde(rename = "latestLedger")]
+    pub latest_ledger: u32,
+    #[serde(rename = "latestLedgerCloseTime")]
+    pub latest_ledger_close_time: String,
+    #[serde(default)]
+    pub ledgers: Vec<LedgerInfo>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct LedgerInfo {
+    pub sequence: u32,
+    #[serde(rename = "ledgerCloseTime")]
+    pub ledger_close_time: String,
+}
+
+/// A network ledger's sequence and close time (unix seconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LedgerClock {
+    pub sequence: u32,
+    pub close_time: u64,
+}
+
+/// Why the network ledger time could not be used as-is for issuance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssuanceTimeError {
+    /// The ledger close time is more than `max_skew_secs` behind the local
+    /// clock — the RPC node is lagging, or the local clock jumped forward.
+    LedgerStale {
+        close_time: u64,
+        local_time: u64,
+        max_skew_secs: u64,
+    },
+    /// The ledger close time is more than `max_skew_secs` ahead of the local
+    /// clock.
+    LedgerInFuture {
+        close_time: u64,
+        local_time: u64,
+        max_skew_secs: u64,
+    },
+}
+
+/// Deterministic issuance-time policy (#172): use the network ledger close
+/// time, but refuse it when it disagrees with `local_time` by more than
+/// `max_skew_secs` in either direction. A stale RPC and a forward-skewed
+/// local clock both surface as an error the caller must handle (retry, pick a
+/// different RPC, or explicitly opt into the local clock) rather than issuing
+/// a timestamp that ledger-time validation may reject.
+///
+/// `local_time` is passed in rather than read from `SystemTime` here so tests
+/// can inject a local/ledger disagreement deterministically.
+pub fn resolve_issuance_time(
+    ledger: &LedgerClock,
+    local_time: u64,
+    max_skew_secs: u64,
+) -> Result<u64, IssuanceTimeError> {
+    if ledger.close_time > local_time.saturating_add(max_skew_secs) {
+        return Err(IssuanceTimeError::LedgerInFuture {
+            close_time: ledger.close_time,
+            local_time,
+            max_skew_secs,
+        });
+    }
+    if local_time.saturating_sub(ledger.close_time) > max_skew_secs {
+        return Err(IssuanceTimeError::LedgerStale {
+            close_time: ledger.close_time,
+            local_time,
+            max_skew_secs,
+        });
+    }
+    Ok(ledger.close_time)
 }
 
 #[cfg(test)]
@@ -1185,5 +1330,55 @@ mod tests {
         let r3 = client.build_send_transaction_request("AAAAAgAAAAA=");
         assert_ne!(r1.id, r2.id);
         assert_ne!(r2.id, r3.id);
+    }
+}
+
+#[cfg(test)]
+mod issuance_time_tests {
+    use super::{resolve_issuance_time, IssuanceTimeError, LedgerClock};
+
+    fn clock(close_time: u64) -> LedgerClock {
+        LedgerClock {
+            sequence: 100,
+            close_time,
+        }
+    }
+
+    #[test]
+    fn uses_ledger_time_when_clocks_agree() {
+        assert_eq!(resolve_issuance_time(&clock(1_000), 1_000, 300), Ok(1_000));
+        // Small disagreement inside the skew budget is fine; ledger wins.
+        assert_eq!(resolve_issuance_time(&clock(1_000), 1_200, 300), Ok(1_000));
+        assert_eq!(resolve_issuance_time(&clock(1_000), 800, 300), Ok(1_000));
+    }
+
+    #[test]
+    fn rejects_a_stale_rpc_ledger() {
+        assert_eq!(
+            resolve_issuance_time(&clock(1_000), 2_000, 300),
+            Err(IssuanceTimeError::LedgerStale {
+                close_time: 1_000,
+                local_time: 2_000,
+                max_skew_secs: 300,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_a_ledger_from_the_future() {
+        assert_eq!(
+            resolve_issuance_time(&clock(5_000), 1_000, 300),
+            Err(IssuanceTimeError::LedgerInFuture {
+                close_time: 5_000,
+                local_time: 1_000,
+                max_skew_secs: 300,
+            })
+        );
+    }
+
+    #[test]
+    fn saturating_math_does_not_panic_at_the_extremes() {
+        assert!(resolve_issuance_time(&clock(0), u64::MAX, 300).is_err());
+        assert!(resolve_issuance_time(&clock(u64::MAX), 0, 300).is_err());
     }
 }
