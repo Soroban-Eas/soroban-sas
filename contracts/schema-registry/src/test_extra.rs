@@ -12,7 +12,7 @@ fn test_pre_init_admin_endpoints_return_not_initialized() {
     let client = SchemaRegistryClient::new(&env, &cid);
     env.mock_all_auths();
     let hash = BytesN::from_array(&env, &[0u8; 32]);
-    assert_eq!(client.try_upgrade(&hash), Err(Ok(SASError::NotInitialized.into())));
+    assert_eq!(client.try_upgrade(&hash, &2u32), Err(Ok(SASError::NotInitialized.into())));
     assert_eq!(client.try_set_fee(&100), Err(Ok(SASError::NotInitialized.into())));
     let treasury = Address::generate(&env);
     assert_eq!(client.try_set_treasury(&treasury), Err(Ok(SASError::NotInitialized.into())));
