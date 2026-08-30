@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Meaningful benchmarks for UID, domain, attestation, and payload hashing
+  across small, typical, and maximum payload sizes. (#183)
+- Runnable `basic_attestation` example with dry-run mode and optional
+  testnet submission. (#181)
+- Fuzz targets exercising schema validation, typed-data hashing, event
+  decoding, CLI JSON parsing, and XDR decoding. (#182)
+
+### Removed
+- `soroban_sas_sdk::init()`: the undocumented no-op entry point has been
+  removed. Callers should instantiate `SASClient` and builders directly. (#180)
+
+### Added
 - `Indexer::index_attestation` is now idempotent: a repeated call with the
   same `(recipient, schema_uid, attester)` triple for a UID is a no-op, and a
   repeated call with a different triple is rejected with

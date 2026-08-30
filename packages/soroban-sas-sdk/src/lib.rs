@@ -8,8 +8,6 @@
 pub mod account;
 pub mod client;
 pub mod schema_builder;
-
-pub fn init() {}
 pub mod attestation_builder;
 pub mod batch;
 pub mod limits;
