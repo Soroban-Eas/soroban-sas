@@ -363,7 +363,20 @@ impl SAS {
     /// through `revoke_internal` so storage-read/auth work is not repeated.
     pub fn multi_revoke(env: Env, uids: soroban_sdk::Vec<UID>) {
         extend_instance_ttl(&env);
+        if uids.len() > MAX_MULTI_REVOKE {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+
+        let mut seen: soroban_sdk::Map<UID, bool> = soroban_sdk::Map::new(&env);
+        let mut distinct: soroban_sdk::Map<Address, bool> = soroban_sdk::Map::new(&env);
+        let mut to_revoke: soroban_sdk::Vec<UID> = soroban_sdk::Vec::new(&env);
+
         for uid in uids.iter() {
+            if seen.contains_key(uid.clone()) {
+                panic_with_error!(&env, SASError::DuplicateAttestation);
+            }
+            seen.set(uid.clone(), true);
+
             let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
                 panic_with_error!(&env, SASError::AttestationNotFound);
             };
