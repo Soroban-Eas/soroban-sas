@@ -361,6 +361,17 @@ enum AttestCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
+        #[arg(
+            long,
+            help = "Use the local system clock if the network ledger time cannot be fetched or is out of range"
+        )]
+        allow_local_time: bool,
+        #[arg(
+            long,
+            help = "Max seconds the network ledger time may disagree with the local clock before it is rejected",
+            default_value_t = 300
+        )]
+        max_ledger_skew: u64,
     },
     /// Create and submit a new on-chain attestation
     Create {
@@ -581,6 +592,8 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             network_passphrase,
             contract_id,
             rpc_url,
+            allow_local_time,
+            max_ledger_skew,
         } => {
             let schema_uid_bytes = parse_uid(&schema_uid)?;
             let data_bytes = decode_hex_or_base64(&data)?;
@@ -590,22 +603,38 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             )
             .to_string();
 
-            let now = std::time::SystemTime::now()
+            let local_now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| format!("system clock error: {e}"))?;
+
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+
+            // Issuance time is the network ledger close time, not the local
+            // clock (#172). The local clock is only a fallback the operator
+            // must explicitly opt into with --allow-local-time.
+            let issuance_time = resolve_cli_issuance_time(
+                &rpc,
+                local_now.as_secs(),
+                max_ledger_skew,
+                allow_local_time,
+            )?;
+
+            // UID uniqueness entropy is kept separate from the semantic
+            // timestamp and does not depend solely on wall-clock nanoseconds.
             let uid = offchain::generate_uid(
                 &env,
                 &schema_uid_bytes,
                 &recipient,
                 &attester,
                 &data_bytes,
-                now.as_nanos(),
+                uid_entropy(local_now.as_nanos()),
             );
 
             let input = offchain::AttestationInput {
                 uid: hex::encode(uid),
                 schema_uid: schema_uid.clone(),
-                time: now.as_secs(),
+                time: issuance_time,
                 expiration_time: expiration,
                 ref_uid: hex::encode([0u8; 32]),
                 recipient,
@@ -615,8 +644,6 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             };
             let attestation = offchain::parse_attestation(&env, &input)?;
 
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .attest(&env, &rpc, &network_passphrase, &seed, attestation)
                 .map_err(|e| format!("{e:?}"))?;
@@ -741,6 +768,52 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             print_transaction_result(result, output)
         }
     }
+}
+
+/// Resolves the timestamp a new attestation is issued with (#172).
+///
+/// Prefers the network ledger close time via [`RpcClient::get_latest_ledger_clock`],
+/// validated against the local clock by
+/// [`soroban_sas_sdk::rpc::resolve_issuance_time`]. Falls back to the local
+/// clock only when `allow_local` is set; otherwise a fetch failure or an
+/// out-of-range ledger time is a hard error telling the operator to retry or
+/// pass `--allow-local-time`.
+fn resolve_cli_issuance_time(
+    rpc: &soroban_sas_sdk::rpc::RpcClient,
+    local_now_secs: u64,
+    max_skew_secs: u64,
+    allow_local: bool,
+) -> Result<u64, String> {
+    match rpc.get_latest_ledger_clock() {
+        Ok(clock) => {
+            match soroban_sas_sdk::rpc::resolve_issuance_time(&clock, local_now_secs, max_skew_secs) {
+                Ok(t) => Ok(t),
+                Err(_) if allow_local => Ok(local_now_secs),
+                Err(e) => Err(format!(
+                    "network ledger time rejected ({e:?}); pass --allow-local-time to use the local clock"
+                )),
+            }
+        }
+        Err(_) if allow_local => Ok(local_now_secs),
+        Err(e) => Err(format!(
+            "could not fetch network ledger time ({e:?}); pass --allow-local-time to use the local clock"
+        )),
+    }
+}
+
+/// UID uniqueness entropy, deliberately independent of the semantic issuance
+/// timestamp (#172). Mixes the local nanosecond reading with the process id
+/// and a per-run counter, so two attestations issued in the same second — or
+/// against a frozen clock — still get distinct UIDs.
+fn uid_entropy(local_nanos: u128) -> u128 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = u128::from(COUNTER.fetch_add(1, Ordering::Relaxed));
+    let pid = u128::from(std::process::id());
+    local_nanos
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(pid.wrapping_shl(64))
+        .wrapping_add(seq.wrapping_mul(0xD1B5_4A32_D192_ED03))
 }
 
 fn parse_uid(value: &str) -> Result<[u8; 32], String> {
