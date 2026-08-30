@@ -104,7 +104,16 @@ The three contracts must be deployed **and initialized in dependency order**:
 3. `indexer` — needs the sas address → `init(admin, sas)`
 
 Each `init` can only succeed once (`AlreadyInitialized` error afterwards), so
-get the addresses right the first time.
+get the addresses right the first time. The intended admin must sign each
+`init` call with `require_auth()`, which binds the configuration to the same
+account that pays for deployment rather than letting an unrelated account claim
+an uninitialized contract instance. This is the protection against
+front-running: even if a deployment emits a deterministic contract ID, the
+contract's initialization is still gated by the signer and cannot be stolen by
+another account that simply replays the same deploy transaction. In other words,
+contract constructors are not a security fabric by themselves when deployment and
+initialization are independent transactions; the authorization check is the
+decisive guarantee.
 
 ### One-shot deploy with `scripts/deploy.sh` (recommended)
 
@@ -223,7 +232,26 @@ stellar contract invoke \
     --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS" --sas "$SAS_CONTRACT_ID"
+
+stellar contract invoke \
+    --id "$SAS_CONTRACT_ID" \
+    --source-account "$IDENTITY" \
+    --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
+    -- set_indexer --indexer "$INDEXER_CONTRACT_ID"
 ```
+
+After that, verify both ends of the pair are consistent:
+
+```bash
+stellar contract invoke --id "$SAS_CONTRACT_ID" --source-account "$IDENTITY" \
+    --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" -- get_indexer
+stellar contract invoke --id "$INDEXER_CONTRACT_ID" --source-account "$IDENTITY" \
+    --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" -- get_sas
+```
+
+The script does this automatically and aborts with a recovery hint if the two
+values disagree; this catches partial binding failures immediately instead of
+writing a stale `.env` file.
 
 **Record the results** in a `.env` file using the same key names as
 [`.env.example`](../.env.example) — the rest of this guide and the SDK/CLI

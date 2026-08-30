@@ -39,6 +39,7 @@ impl SchemaRegistry {
         if env.storage().instance().has(&REGISTRY_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
+        admin.require_auth();
         env.storage().instance().set(&REGISTRY_ADMIN, &admin);
         // Genesis version = 1. Stored so upgrades can enforce monotonic
         // version increments and storage-migration gates.

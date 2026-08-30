@@ -242,6 +242,18 @@ invoke "$INDEXER_ID" init --admin "$ADMIN_ADDRESS" --sas "$SAS_ID" ||
     die "Indexer::init failed — indexer deployed at $INDEXER_ID but is NOT initialized"
 info "Indexer initialized with sas $SAS_ID"
 
+step "Binding SAS to the deployed indexer"
+invoke "$SAS_ID" set_indexer --indexer "$INDEXER_ID" ||
+    die "SAS::set_indexer failed — indexer was initialized but SAS was not bound"
+
+step "Verifying the SAS <-> Indexer binding"
+SAS_BOUND="$(invoke "$SAS_ID" get_indexer)"
+INDEXER_BOUND="$(invoke "$INDEXER_ID" get_sas)"
+if [[ "$SAS_BOUND" != "$INDEXER_ID" || "$INDEXER_BOUND" != "$SAS_ID" ]]; then
+    die "binding verification failed: SAS.get_indexer=$SAS_BOUND, Indexer.get_sas=$INDEXER_BOUND. Re-run with the same admin key, then call 'stellar contract invoke --id $SAS_ID -- set_indexer --indexer $INDEXER_ID' and verify with 'stellar contract invoke --id $INDEXER_ID -- get_sas'"
+fi
+info "SAS and Indexer are bidirectionally bound"
+
 # ---------------------------------------------------------------------------
 # Write .env — merge into any existing file without clobbering unrelated
 # variables. Managed keys use the exact names from .env.example.

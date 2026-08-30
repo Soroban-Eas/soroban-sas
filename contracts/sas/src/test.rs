@@ -145,6 +145,7 @@ fn test_happy_path_attestation() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -183,6 +184,7 @@ fn test_auth_failure_missing_signature() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -219,6 +221,7 @@ fn test_schema_validation_rejection() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -256,6 +259,7 @@ fn test_revocation_success() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -458,6 +462,7 @@ fn test_revocation_failure() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -495,6 +500,7 @@ fn test_multi_attest_returns_both_uids() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -548,6 +554,7 @@ fn test_batch_operations() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -622,6 +629,7 @@ fn test_resolver_callback() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -656,6 +664,7 @@ fn test_attest_with_value_collects_the_fee() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -686,6 +695,7 @@ fn test_attest_with_value_zero_skips_transfer() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -710,6 +720,7 @@ fn test_attest_with_value_rejects_negative_value() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -732,6 +743,7 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -747,6 +759,81 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
 }
 
 #[test]
+fn test_init_requires_admin_authorization() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    let res = sas_client.try_init(&admin, &registry_id);
+
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_second_revocation_is_rejected_for_direct_and_batch_paths() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let attestation = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
+    sas_client.attest(&attestation);
+
+    sas_client.revoke(&attestation.uid);
+    let direct_res = sas_client.try_revoke(&attestation.uid);
+    assert_eq!(direct_res, Err(Ok(SASError::AlreadyRevoked.into())));
+
+    let second_attestation = attestation_fixture(&env, &attester, &recipient, [11u8; 32]);
+    sas_client.attest(&second_attestation);
+    let batch = soroban_sdk::vec![&env, second_attestation.uid.clone()];
+    let batch_res = sas_client.try_multi_revoke(&batch);
+    assert_eq!(batch_res, Err(Ok(SASError::AlreadyRevoked.into())));
+}
+
+#[test]
+fn test_withdraw_tokens_requires_authorized_balance_and_event_path() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let destination = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+    let token = soroban_sdk::token::Client::new(&env, &token_id);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [12u8; 32]);
+    token_admin.mint(&attester, &1_000);
+    let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
+    assert_eq!(uid, attestation.uid);
+
+    let res = sas_client.try_withdraw_tokens(&admin, &token_id, &600, &destination);
+    assert_eq!(res, Err(Ok(SASError::InvalidValue.into())));
+
+    let withdrawal = sas_client.try_withdraw_tokens(&admin, &token_id, &250, &destination);
+    assert!(withdrawal.is_ok());
+    assert_eq!(token.balance(&destination), 250);
+    assert_eq!(token.balance(&sas_id), 250);
+
+    let unauthorized = sas_client.try_withdraw_tokens(&attester, &token_id, &1, &destination);
+    assert_eq!(unauthorized, Err(Ok(SASError::Unauthorized.into())));
+}
+
+#[test]
 fn test_init_twice_is_rejected() {
     let env = Env::default();
 
@@ -755,6 +842,7 @@ fn test_init_twice_is_rejected() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let res = sas_client.try_init(&admin, &registry_id);
@@ -770,6 +858,7 @@ fn test_expired_attestation_reports_already_expired() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     env.ledger().with_mut(|li| li.timestamp = 2_000);
@@ -793,6 +882,7 @@ fn test_unknown_schema_reports_invalid_schema() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -813,6 +903,7 @@ fn test_attest_rejects_zero_recipient() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -836,6 +927,7 @@ fn test_attest_rejects_self_attestation() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -855,6 +947,7 @@ fn test_non_revocable_attestation_reports_not_revocable() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -878,6 +971,7 @@ fn test_revoking_unknown_uid_reports_attestation_not_found() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     env.mock_all_auths();
@@ -896,6 +990,7 @@ fn test_attestation_expiration() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -932,6 +1027,7 @@ fn test_attest_by_delegation() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -983,6 +1079,7 @@ mod offchain {
         let sas_client = SASClient::new(&env, &sas_id);
 
         let admin = Address::generate(&env);
+        env.mock_all_auths();
         sas_client.init(&admin, &registry_id);
 
         let signing_key = SigningKey::from_bytes(&seed);
@@ -1282,6 +1379,7 @@ fn test_comprehensive_lifecycle() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -1325,6 +1423,7 @@ fn test_attest_emits_attestation_issued_event() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -1375,6 +1474,7 @@ fn test_revoke_emits_attestation_revoked_event() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);

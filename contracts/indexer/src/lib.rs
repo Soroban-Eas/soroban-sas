@@ -183,6 +183,7 @@ impl Indexer {
         if env.storage().instance().has(&INDEXER_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
+        admin.require_auth();
         let compatible: bool = env
             .try_invoke_contract::<bool, soroban_sdk::Error>(&sas, &SAS_INTERFACE_VERSION, soroban_sdk::vec![&env])
             .unwrap_or(Ok(false)).unwrap_or(false);

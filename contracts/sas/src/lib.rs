@@ -16,6 +16,7 @@ pub struct SAS;
 pub const SAS_ADMIN: Symbol = symbol_short!("ADMIN");
 pub const SCHEMA_REGISTRY: Symbol = symbol_short!("REGISTRY");
 pub const INDEXER: Symbol = symbol_short!("INDEXER");
+pub const TREASURY: Symbol = symbol_short!("TREASURY");
 pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 /// Per-attester high-watermark for delegated nonces. The value stored is the
 /// highest `nonce` that has been consumed for that attester; a delegated
@@ -36,6 +37,13 @@ fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
+fn require_admin(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get(&SAS_ADMIN)
+        .unwrap_or_else(|| panic_with_error!(env, SASError::NotInitialized))
+}
+
 #[contractimpl]
 impl SAS {
     pub fn init(env: Env, admin: Address, registry: Address) {
@@ -43,6 +51,7 @@ impl SAS {
         if env.storage().instance().has(&SAS_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
+        admin.require_auth();
         // Compatibility probe: try both upper and lower spellings to support
         // registries that expose `sasreg` vs `SASREG`. The spec historically
         // used `SASREG` while the registry implemented `sasreg`; probing both
@@ -76,12 +85,61 @@ impl SAS {
         extend_instance_ttl(&env);
     }
 
+    /// Returns the bound indexer, if one has been configured.
+    pub fn get_indexer(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&INDEXER)
+    }
+
     /// Binds an Indexer contract that should mirror newly issued attestations.
     pub fn set_indexer(env: Env, indexer: Address) {
         extend_instance_ttl(&env);
-        let admin: Address = env.storage().instance().get(&SAS_ADMIN).unwrap();
+        let admin: Address = require_admin(&env);
         admin.require_auth();
         env.storage().instance().set(&INDEXER, &indexer);
+        extend_instance_ttl(&env);
+    }
+
+    pub fn set_treasury(env: Env, treasury: Address) {
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().set(&TREASURY, &treasury);
+        extend_instance_ttl(&env);
+    }
+
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&TREASURY)
+    }
+
+    pub fn withdraw_tokens(
+        env: Env,
+        authorizer: Address,
+        token: Address,
+        amount: i128,
+        destination: Address,
+    ) {
+        extend_instance_ttl(&env);
+        if amount <= 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let admin = require_admin(&env);
+        let provided_treasury: Option<Address> = env.storage().instance().get(&TREASURY);
+        if authorizer != admin && provided_treasury.as_ref() != Some(&authorizer) {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+        authorizer.require_auth();
+
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance < amount {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        token_client.transfer(&env.current_contract_address(), &destination, &amount);
+        events::publish_withdrawal(&env, &token, amount, &destination, &authorizer);
         extend_instance_ttl(&env);
     }
 
@@ -223,6 +281,9 @@ impl SAS {
 
         if !attestation.revocable {
             panic_with_error!(&env, SASError::NotRevocable);
+        }
+        if attestation.revocation_time != 0 {
+            panic_with_error!(&env, SASError::AlreadyRevoked);
         }
 
         let timestamp = env.ledger().timestamp();
