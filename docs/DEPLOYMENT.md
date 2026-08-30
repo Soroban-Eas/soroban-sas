@@ -140,7 +140,7 @@ Concretely, the script:
    then `chmod 600`) using exactly the key names from
    [`.env.example`](../.env.example): `SOROBAN_RPC_URL`,
    `SOROBAN_NETWORK_PASSPHRASE`, `SAS_CONTRACT_ID`,
-   `SCHEMA_REGISTRY_CONTRACT_ID`, `INDEXER_CONTRACT_ID`, `ADMIN_SECRET_KEY`.
+   `SCHEMA_REGISTRY_CONTRACT_ID`, `INDEXER_CONTRACT_ID`, `ADMIN_PUBLIC_ADDRESS`.
 7. Prints a summary of the three contract IDs, the admin address and network.
 
 | Flag | Meaning |
@@ -150,6 +150,7 @@ Concretely, the script:
 | `--rpc-url URL` | Override the network's default RPC endpoint |
 | `--env-file FILE` | Where to write results (default `.env`) |
 | `--skip-build` | Reuse previously built WASM artifacts |
+| `--export-secret` | Opt-in: write `ADMIN_SECRET_KEY` to `.env` (default: only stores `ADMIN_PUBLIC_ADDRESS`) |
 
 When it finishes, load the environment for the verification section:
 
@@ -167,8 +168,8 @@ Prefer doing it by hand (or need custom RPC settings)? The script performs
 exactly this — follow it top to bottom with your own values:
 
 ```bash
-export ADMIN_SECRET_KEY="$(stellar keys show deploy-admin)"   # S...
-export ADMIN_ADDRESS="$(stellar keys address deploy-admin)"   # G...
+IDENTITY="deploy-admin"
+ADMIN_ADDRESS="$(stellar keys address "$IDENTITY")"   # G...
 export RPC_URL="https://soroban-testnet.stellar.org:443"
 export PASSPHRASE="Test SDF Network ; September 2015"
 ```
@@ -181,13 +182,13 @@ export PASSPHRASE="Test SDF Network ; September 2015"
 ```bash
 stellar contract deploy \
     --wasm target/wasm32-unknown-unknown/release/schema_registry.wasm \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
 # → prints C... — save as SCHEMA_REGISTRY_CONTRACT_ID
 
 stellar contract invoke \
     --id "$SCHEMA_REGISTRY_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS"
 ```
@@ -197,13 +198,13 @@ stellar contract invoke \
 ```bash
 stellar contract deploy \
     --wasm target/wasm32-unknown-unknown/release/sas.wasm \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
 # → prints C... — save as SAS_CONTRACT_ID
 
 stellar contract invoke \
     --id "$SAS_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS" --registry "$SCHEMA_REGISTRY_CONTRACT_ID"
 ```
@@ -213,13 +214,13 @@ stellar contract invoke \
 ```bash
 stellar contract deploy \
     --wasm target/wasm32-unknown-unknown/release/soroban_sas_indexer.wasm \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
 # → prints C... — save as INDEXER_CONTRACT_ID
 
 stellar contract invoke \
     --id "$INDEXER_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS" --sas "$SAS_CONTRACT_ID"
 ```
@@ -235,8 +236,9 @@ SOROBAN_NETWORK_PASSPHRASE="$PASSPHRASE"
 SAS_CONTRACT_ID=$SAS_CONTRACT_ID
 SCHEMA_REGISTRY_CONTRACT_ID=$SCHEMA_REGISTRY_CONTRACT_ID
 INDEXER_CONTRACT_ID=$INDEXER_CONTRACT_ID
+ADMIN_PUBLIC_ADDRESS=$ADMIN_ADDRESS
 EOF
-chmod 600 .env   # it contains no secrets itself, but sibling files might
+chmod 600 .env   # no secret keys stored — signing uses the CLI identity
 ```
 
 ## Post-deploy verification
@@ -254,7 +256,6 @@ set -a; source .env; set +a
 IDENTITY="deploy-admin"
 
 ADMIN_ADDRESS="$(stellar keys address "$IDENTITY")"    # G...
-ADMIN_SECRET_KEY="$(stellar keys show "$IDENTITY")"    # S...
 RPC_URL="$SOROBAN_RPC_URL"
 PASSPHRASE="$SOROBAN_NETWORK_PASSPHRASE"
 ```
@@ -267,7 +268,7 @@ the `register` call returns it:
 ```bash
 SCHEMA_UID="$(stellar contract invoke \
     --id "$SCHEMA_REGISTRY_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- register \
         --owner "$ADMIN_ADDRESS" \
@@ -311,7 +312,7 @@ revocable: true
 schema:    {"first_name":"String","last_name":"String"}
 ```
 
-Add `--json` to get the same record as pretty-printed JSON. A missing UID
+Add `--output json` to get the same record as pretty-printed JSON. A missing UID
 prints `Schema not found`.
 
 ### 3. Issue an attestation
@@ -341,7 +342,7 @@ EOF
 
 stellar contract invoke \
     --id "$SAS_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- attest --attestation "$(cat /tmp/attestation.json)"
 ```
@@ -376,7 +377,7 @@ address — do this **before** issuing attestations you want discoverable:
 ```bash
 stellar contract invoke \
     --id "$SAS_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- set_indexer --indexer "$INDEXER_CONTRACT_ID"
 ```
@@ -399,7 +400,7 @@ Expected output:
 Attestation is valid
 ```
 
-(`--json` prints `{"valid": true}` instead. An unknown, revoked or expired
+(`--output json` prints `{"valid": true}` instead. An unknown, revoked or expired
 UID prints `Attestation is invalid or not found` / `{"valid": false}`.)
 
 ### 6. Cross-check the indexer
@@ -417,7 +418,7 @@ cargo run -p soroban-sas-cli -- query by-recipient \
 ```
 
 Expected output: one line per indexed attestation containing
-`$ATTESTATION_UID` (`--json` prints a JSON array instead). If this works, your
+`$ATTESTATION_UID` (`--output json` prints a JSON array instead). If this works, your
 end-to-end deployment is healthy.
 
 **If you did not bind an indexer** — `index_attestation` is permissionless, so
@@ -427,7 +428,7 @@ shape for `UID` arguments):
 ```bash
 stellar contract invoke \
     --id "$INDEXER_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- index_attestation \
         --uid "[\"$ATTESTATION_UID\"]" \
