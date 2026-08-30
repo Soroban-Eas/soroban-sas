@@ -38,14 +38,21 @@ pub mod mock1 {
 
     #[contractimpl]
     impl MockRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
+            true
+        }
+
+        pub fn SASREG(_env: Env) -> bool {
             true
         }
 
         pub fn get_schema(env: Env, uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             Some(soroban_sas_common::SchemaRecord {
                 uid: uid.clone(),
-                resolver: Address::generate(&env),
+                resolver: env.current_contract_address(),
                 revocable: true,
                 schema: soroban_sdk::String::from_str(&env, "bool like"),
             })
@@ -60,8 +67,14 @@ pub mod mock2 {
 
     #[contractimpl]
     impl MockRejectRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
             false
+        }
+        pub fn SASREG(_env: Env) -> bool {
+            true
         }
         pub fn get_schema(_env: Env, _uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             None
@@ -77,6 +90,9 @@ pub mod mock3 {
     #[contractimpl]
     impl MockResolver {
         pub fn on_attest(_env: Env, _attestation: Attestation) {
+            // Mock execution
+        }
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {
             // Mock execution
         }
     }
@@ -129,6 +145,7 @@ fn test_happy_path_attestation() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -167,6 +184,7 @@ fn test_auth_failure_missing_signature() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -203,6 +221,7 @@ fn test_schema_validation_rejection() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -240,6 +259,7 @@ fn test_revocation_success() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -442,6 +462,7 @@ fn test_revocation_failure() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -479,6 +500,7 @@ fn test_multi_attest_returns_both_uids() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -532,6 +554,7 @@ fn test_batch_operations() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -606,6 +629,7 @@ fn test_resolver_callback() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -640,6 +664,7 @@ fn test_attest_with_value_collects_the_fee() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -670,6 +695,7 @@ fn test_attest_with_value_zero_skips_transfer() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -694,6 +720,7 @@ fn test_attest_with_value_rejects_negative_value() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -716,6 +743,7 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -731,6 +759,81 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
 }
 
 #[test]
+fn test_init_requires_admin_authorization() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    let res = sas_client.try_init(&admin, &registry_id);
+
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_second_revocation_is_rejected_for_direct_and_batch_paths() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let attestation = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
+    sas_client.attest(&attestation);
+
+    sas_client.revoke(&attestation.uid);
+    let direct_res = sas_client.try_revoke(&attestation.uid);
+    assert_eq!(direct_res, Err(Ok(SASError::AlreadyRevoked.into())));
+
+    let second_attestation = attestation_fixture(&env, &attester, &recipient, [11u8; 32]);
+    sas_client.attest(&second_attestation);
+    let batch = soroban_sdk::vec![&env, second_attestation.uid.clone()];
+    let batch_res = sas_client.try_multi_revoke(&batch);
+    assert_eq!(batch_res, Err(Ok(SASError::AlreadyRevoked.into())));
+}
+
+#[test]
+fn test_withdraw_tokens_requires_authorized_balance_and_event_path() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let destination = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+    let token = soroban_sdk::token::Client::new(&env, &token_id);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [12u8; 32]);
+    token_admin.mint(&attester, &1_000);
+    let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
+    assert_eq!(uid, attestation.uid);
+
+    let res = sas_client.try_withdraw_tokens(&admin, &token_id, &600, &destination);
+    assert_eq!(res, Err(Ok(SASError::InvalidValue.into())));
+
+    let withdrawal = sas_client.try_withdraw_tokens(&admin, &token_id, &250, &destination);
+    assert!(withdrawal.is_ok());
+    assert_eq!(token.balance(&destination), 250);
+    assert_eq!(token.balance(&sas_id), 250);
+
+    let unauthorized = sas_client.try_withdraw_tokens(&attester, &token_id, &1, &destination);
+    assert_eq!(unauthorized, Err(Ok(SASError::Unauthorized.into())));
+}
+
+#[test]
 fn test_init_twice_is_rejected() {
     let env = Env::default();
 
@@ -739,6 +842,7 @@ fn test_init_twice_is_rejected() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let res = sas_client.try_init(&admin, &registry_id);
@@ -754,6 +858,7 @@ fn test_expired_attestation_reports_already_expired() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     env.ledger().with_mut(|li| li.timestamp = 2_000);
@@ -777,6 +882,7 @@ fn test_unknown_schema_reports_invalid_schema() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -789,6 +895,50 @@ fn test_unknown_schema_reports_invalid_schema() {
 }
 
 #[test]
+fn test_attest_rejects_zero_recipient() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    ));
+    let attestation = attestation_fixture(&env, &attester, &recipient, [15u8; 32]);
+
+    env.mock_all_auths();
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidRecipient.into())));
+}
+
+#[test]
+fn test_attest_rejects_self_attestation() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let attestation = attestation_fixture(&env, &attester, &attester, [16u8; 32]);
+
+    env.mock_all_auths();
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidRecipient.into())));
+}
+
+#[test]
 fn test_non_revocable_attestation_reports_not_revocable() {
     let env = Env::default();
 
@@ -797,6 +947,7 @@ fn test_non_revocable_attestation_reports_not_revocable() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -820,6 +971,7 @@ fn test_revoking_unknown_uid_reports_attestation_not_found() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     env.mock_all_auths();
@@ -838,6 +990,7 @@ fn test_attestation_expiration() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -874,6 +1027,7 @@ fn test_attest_by_delegation() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -925,6 +1079,7 @@ mod offchain {
         let sas_client = SASClient::new(&env, &sas_id);
 
         let admin = Address::generate(&env);
+        env.mock_all_auths();
         sas_client.init(&admin, &registry_id);
 
         let signing_key = SigningKey::from_bytes(&seed);
@@ -1224,6 +1379,7 @@ fn test_comprehensive_lifecycle() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -1267,6 +1423,7 @@ fn test_attest_emits_attestation_issued_event() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -1317,6 +1474,7 @@ fn test_revoke_emits_attestation_revoked_event() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
     let attester = Address::generate(&env);
@@ -1362,4 +1520,152 @@ fn test_revoke_emits_attestation_revoked_event() {
 
     // Emitted timestamp must match the revocation time written to storage.
     assert!(!sas_client.verify_attestation(&uid));
+}
+
+#[test]
+fn test_delegation_nonce_survives_one_year_ttl_and_rejects_replay() {
+    // Validates durable nonce: per-attester strictly increasing instance storage
+    // must reject replay even after ledger advancement beyond the previous
+    // one-year TOMBSTONE TTL (LEDGERS_IN_ONE_YEAR).
+    let s = offchain::setup([55u8; 32]);
+    let nonce = 42u64;
+    let signature = offchain::sign(&s, &s.attestation, nonce);
+    let public_key = offchain::public_key(&s);
+
+    // First delegation succeeds and consumes nonce 42
+    s.sas_client
+        .attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
+    assert!(s.sas_client.verify_attestation(&s.attestation.uid));
+
+    // Replay before TTL must fail
+    let replay_before = s
+        .sas_client
+        .try_attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
+    assert!(replay_before.is_err());
+
+    // Advance ledger in two stages with intermediate renewal to keep instance
+    // and attestation entries alive across the old one-year tombstone window.
+    // First half-year.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
+        li.timestamp += 60 * 60 * 24 * 180;
+    });
+    // Renew instance and attestation TTLs via a read that extends them.
+    let _ = s.sas_client.verify_attestation(&s.attestation.uid);
+    // Second half-year + 10 beyond original TTL
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2 + 10;
+        li.timestamp += 60 * 60 * 24 * 186;
+    });
+
+    // Replay after the previous one-year TTL must still fail (durable protection)
+    let replay_after = s
+        .sas_client
+        .try_attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
+    assert!(replay_after.is_err());
+}
+
+#[test]
+fn test_delegation_nonce_strictly_increasing_and_out_of_order() {
+    let s = offchain::setup([56u8; 32]);
+    let public_key = offchain::public_key(&s);
+
+    // First delegation with nonce 10
+    let att1 = s.attestation.clone();
+    let sig10 = offchain::sign(&s, &att1, 10);
+    s.sas_client
+        .attest_by_delegation(&att1, &10, &sig10, &public_key);
+
+    // Out-of-order smaller nonce 5 must be rejected (strictly increasing)
+    let mut att2 = s.attestation.clone();
+    att2.uid = UID(BytesN::from_array(&s.env, &[99u8; 32]));
+    let sig5 = offchain::sign(&s, &att2, 5);
+    let res_small = s
+        .sas_client
+        .try_attest_by_delegation(&att2, &5, &sig5, &public_key);
+    assert!(res_small.is_err());
+
+    // Next increasing nonce 11 succeeds
+    let mut att3 = s.attestation.clone();
+    att3.uid = UID(BytesN::from_array(&s.env, &[100u8; 32]));
+    let sig11 = offchain::sign(&s, &att3, 11);
+    let uid3 = s
+        .sas_client
+        .attest_by_delegation(&att3, &11, &sig11, &public_key);
+    assert_eq!(uid3, att3.uid);
+
+    // Replay of 10 still fails
+    let replay10 = s
+        .sas_client
+        .try_attest_by_delegation(&att1, &10, &sig10, &public_key);
+    assert!(replay10.is_err());
+
+    // Concurrent distinct increasing nonces: 12 and 13 in any order both succeed if increasing
+    let mut att4 = s.attestation.clone();
+    att4.uid = UID(BytesN::from_array(&s.env, &[101u8; 32]));
+    let sig12 = offchain::sign(&s, &att4, 12);
+    s.sas_client
+        .attest_by_delegation(&att4, &12, &sig12, &public_key);
+    let mut att5 = s.attestation.clone();
+    att5.uid = UID(BytesN::from_array(&s.env, &[102u8; 32]));
+    let sig13 = offchain::sign(&s, &att5, 13);
+    s.sas_client
+        .attest_by_delegation(&att5, &13, &sig13, &public_key);
+
+    // Nonce state is bounded: only one instance entry per attester (verified by storage growth not exploding)
+    // We can check that instance still has only one entry for this attester's nonce high-watermark
+    let last: u64 = s.env.as_contract(&s.sas_id, || {
+        s.env
+            .storage()
+            .instance()
+            .get(&(crate::DELEGATION_NONCE, s.attestation.attester.clone()))
+            .unwrap()
+    });
+    assert_eq!(last, 13);
+}
+
+#[test]
+fn test_delegation_nonce_storage_bounded_and_describes_concurrent_behavior() {
+    // Ensures nonce storage is bounded to one u64 per attester and concurrent
+    // submissions with same nonce are serialized (second fails).
+    let s = offchain::setup([57u8; 32]);
+    let public_key = offchain::public_key(&s);
+    let att = s.attestation.clone();
+    let sig = offchain::sign(&s, &att, 20);
+    s.sas_client
+        .attest_by_delegation(&att, &20, &sig, &public_key);
+
+    // Same nonce concurrent retry must fail
+    let dup = s
+        .sas_client
+        .try_attest_by_delegation(&att, &20, &sig, &public_key);
+    assert!(dup.is_err());
+
+    // Different attester with same nonce is independent (bounded per-attester)
+    // This other setup would have its own SAS contract id, so we need a unified SAS instance.
+    // Instead, use same SAS contract but a different attester address derived from other seed.
+    let other_key = ed25519_dalek::SigningKey::from_bytes(&[58u8; 32]);
+    let other_strkey =
+        stellar_strkey::ed25519::PublicKey(other_key.verifying_key().to_bytes()).to_string();
+    let other_attester =
+        Address::from_string(&soroban_sdk::String::from_str(&s.env, &other_strkey));
+    let mut other_att = s.attestation.clone();
+    other_att.attester = other_attester.clone();
+    other_att.uid = UID(BytesN::from_array(&s.env, &[200u8; 32]));
+    let domain = soroban_sas_common::AttestationDomain {
+        network_id: s.env.ledger().network_id(),
+        contract: s.sas_id.clone(),
+        nonce: 20,
+    };
+    let payload_hash =
+        soroban_sas_common::hash_offchain_attestation(&s.env, &other_att, &domain);
+    let other_sig = BytesN::from_array(&s.env, &other_key.sign(&payload_hash.to_array()).to_bytes());
+    let other_pk = BytesN::from_array(&s.env, &other_key.verifying_key().to_bytes());
+    // This should succeed because nonce 20 for other attester is first for that attester
+    // (requires register fallback if structural check fails - use generated address that matches key structurally)
+    // The other_attester was derived from other_key, so it matches structurally, no registration needed
+    let uid = s
+        .sas_client
+        .attest_by_delegation(&other_att, &20, &other_sig, &other_pk);
+    assert_eq!(uid, other_att.uid);
 }

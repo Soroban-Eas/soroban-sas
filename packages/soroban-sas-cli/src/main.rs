@@ -59,14 +59,41 @@ fn emit_error(output: OutputFormat, message: &str) {
 }
 
 /// Client-side schema syntax check (issue #26), mirroring
-/// `soroban_sas_common::validate_schema_syntax`: a schema must be non-empty
-/// and at most 1024 bytes. Runs before any transaction is built or
-/// simulated, so an invalid schema fails fast with no RPC round-trip and no
-/// simulation fee.
+/// `soroban_sas_common::validate_schema_syntax`: a schema must be a
+/// comma-separated list of `name Type` pairs, be non-empty, and stay within
+/// the 1024-byte cap. Runs before any transaction is built or simulated, so
+/// an invalid schema fails fast with no RPC round-trip and no simulation fee.
 const MAX_SCHEMA_LENGTH: usize = 1024;
 
+fn is_ascii_whitespace(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\n' | b'\r' | b'\t' | 0x0b | 0x0c)
+}
+
+fn trim_bounds(bytes: &[u8], mut start: usize, mut end: usize) -> Option<(usize, usize)> {
+    while start < end {
+        if !is_ascii_whitespace(bytes[start]) {
+            break;
+        }
+        start += 1;
+    }
+
+    while end > start {
+        if !is_ascii_whitespace(bytes[end - 1]) {
+            break;
+        }
+        end -= 1;
+    }
+
+    if start >= end {
+        None
+    } else {
+        Some((start, end))
+    }
+}
+
 fn validate_schema_syntax(schema: &str) -> Result<(), String> {
-    if schema.trim().is_empty() {
+    let schema = schema.as_bytes();
+    if schema.is_empty() {
         return Err("schema is empty: pass a non-empty --schema definition string".to_string());
     }
     if schema.len() > MAX_SCHEMA_LENGTH {
@@ -75,6 +102,83 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
             schema.len()
         ));
     }
+
+    let Some((mut start, end)) = trim_bounds(schema, 0, schema.len()) else {
+        return Err("schema is empty: pass a non-empty --schema definition string".to_string());
+    };
+
+    let mut field_count = 0u32;
+    while start < end {
+        let mut field_end = start;
+        while field_end < end && schema[field_end] != b',' {
+            field_end += 1;
+        }
+
+        let Some((field_start, field_end)) = trim_bounds(schema, start, field_end) else {
+            return Err(
+                "schema must use comma-separated `name Type` field definitions".to_string(),
+            );
+        };
+
+        let mut split_index = field_start;
+        while split_index < field_end && !is_ascii_whitespace(schema[split_index]) {
+            split_index += 1;
+        }
+        if split_index == field_start || split_index >= field_end {
+            return Err(
+                "schema must use comma-separated `name Type` field definitions".to_string(),
+            );
+        }
+
+        let mut ty_start = split_index;
+        while ty_start < field_end && is_ascii_whitespace(schema[ty_start]) {
+            ty_start += 1;
+        }
+        if ty_start >= field_end {
+            return Err(
+                "schema must use comma-separated `name Type` field definitions".to_string(),
+            );
+        }
+
+        let name = &schema[field_start..split_index];
+        let ty = &schema[ty_start..field_end];
+        let identifier_ok = !name.is_empty()
+            && (name[0].is_ascii_alphabetic() || name[0] == b'_')
+            && name[1..]
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        let type_ok = !ty.is_empty()
+            && ty.iter().any(|byte| byte.is_ascii_alphabetic())
+            && ty.iter().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'_' | b'<' | b'>' | b'[' | b']' | b',' | b':' | b'(' | b')' | b' ' | b'?'
+                    )
+            });
+        if !identifier_ok || !type_ok {
+            return Err(
+                "schema must use comma-separated `name Type` field definitions".to_string(),
+            );
+        }
+        field_count += 1;
+
+        if field_end >= end {
+            break;
+        }
+        start = field_end + 1;
+        while start < end && is_ascii_whitespace(schema[start]) {
+            start += 1;
+        }
+        if start >= end {
+            return Err("schema must use comma-separated `name Type` field definitions".to_string());
+        }
+    }
+
+    if field_count == 0 {
+        return Err("schema must define at least one field".to_string());
+    }
+
     Ok(())
 }
 
@@ -213,16 +317,9 @@ enum SchemaCommands {
         registry_contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of a human-readable summary")]
-        json: bool,
     },
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum OutputFormat {
-    Human,
-    Json,
-}
 
 #[derive(Subcommand)]
 enum AttestCommands {
@@ -264,8 +361,6 @@ enum AttestCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Output format: human or json", default_value = "human")]
-        output: OutputFormat,
     },
     /// Create and submit a new on-chain attestation
     Create {
@@ -319,8 +414,6 @@ enum AttestCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of a human-readable result")]
-        json: bool,
     },
     /// Atomically revoke an attestation and issue a replacement linked to
     /// it via ref_uid. The replacement's attester/recipient must match the
@@ -367,8 +460,6 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of one UID per line")]
-        json: bool,
     },
     /// Query attestations by schema UID
     BySchema {
@@ -382,8 +473,6 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of one UID per line")]
-        json: bool,
     },
 }
 
@@ -492,7 +581,6 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             network_passphrase,
             contract_id,
             rpc_url,
-            output,
         } => {
             let schema_uid_bytes = parse_uid(&schema_uid)?;
             let data_bytes = decode_hex_or_base64(&data)?;
@@ -601,9 +689,7 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             uid,
             contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
@@ -707,9 +793,7 @@ fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> 
             address,
             contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let uids = client
@@ -721,9 +805,7 @@ fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> 
             uid,
             contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let schema_uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
@@ -907,9 +989,7 @@ fn run_schema(action: SchemaCommands, output: OutputFormat) -> Result<(), String
             uid,
             registry_contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let uid_bytes = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());

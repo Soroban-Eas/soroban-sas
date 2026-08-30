@@ -1,0 +1,39 @@
+[package]
+name = "soroban-sas-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+soroban-sas-common = { path = "../packages/soroban-sas-common" }
+soroban-sas-sdk = { path = "../packages/soroban-sas-sdk" }
+soroban-sdk = "20.0.0"
+serde_json = "1.0"
+
+[[bin]]
+name = "schema_fuzz"
+path = "fuzz_targets/schema_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "typed_data_fuzz"
+path = "fuzz_targets/typed_data_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "xdr_decode_fuzz"
+path = "fuzz_targets/xdr_decode_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "cli_json_fuzz"
+path = "fuzz_targets/cli_json_fuzz.rs"
+test = false
+doc = false

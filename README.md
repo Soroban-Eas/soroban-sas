@@ -82,18 +82,18 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
 
 ## Command-Line Interface
 
-Most read commands support `--json` for machine-readable output; `attest attest` supports `--output human` (default) or `--output json`.
+All commands support `--output human` (default) or `--output json` for machine-readable output.
 
 Usage examples:
 
 ```bash
-cargo run -p soroban-sas-cli -- schema get --uid UID... --registry-contract-id C... --rpc-url URL --json
-cargo run -p soroban-sas-cli -- attest verify --uid UID... --contract-id C... --rpc-url URL --json
-cargo run -p soroban-sas-cli -- attest attest \
+cargo run -p soroban-sas-cli -- --output json schema get --uid UID... --registry-contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json attest verify --uid UID... --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json attest attest \
   --schema-uid UID... --recipient G... --data 0xdeadbeef \
   --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
-  --contract-id C... --rpc-url URL --output json
-cargo run -p soroban-sas-cli -- query by-recipient --address G... --contract-id C... --rpc-url URL --json
+  --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json query by-recipient --address G... --contract-id C... --rpc-url URL
 ```
 
 ## Shell Auto-Completion
@@ -211,6 +211,9 @@ TMPDIR=/tmp cargo test --workspace
 ## Documentation
 
 - Documentation on Schema Syntax and Payloads: `docs/schemas.md`
+- [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
+  `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
+  the Stellar CLI), verify the deployment, and a Mainnet operational checklist.
 
 ## Project Roadmap
 

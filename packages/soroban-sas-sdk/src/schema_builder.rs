@@ -37,20 +37,21 @@ impl SchemaBuilder {
 
     /// Builds a `SchemaRecord`, deriving its UID from the schema definition.
     pub fn build(self, env: &Env) -> Result<SchemaRecord, SdkError> {
-        if self.schema.is_empty() {
-            return Err(SdkError::RpcError(
-                "schema definition cannot be empty".to_string(),
-            ));
-        }
-
         let schema = SorobanString::from_str(env, &self.schema);
+        if let Err(e) = soroban_sas_common::validate_schema_syntax(env, &schema) {
+            return Err(SdkError::RpcError(format!("Invalid schema syntax: {:?}", e)));
+        }
         let resolver = self
             .resolver
             .ok_or_else(|| SdkError::RpcError("resolver address is required".to_string()))?;
         let resolver = Address::from_string(&SorobanString::from_str(env, &resolver));
 
+        // Must match the on-chain UID derivation in contracts/schema-registry
+        // (schema XDR || resolver XDR || revocable byte).
         let mut payload = Bytes::new(env);
         payload.append(&schema.clone().to_xdr(env));
+        payload.append(&resolver.clone().to_xdr(env));
+        payload.append(&Bytes::from_slice(env, &[self.revocable as u8]));
         let uid = UID(BytesN::from_array(
             env,
             &env.crypto().sha256(&payload).to_array(),

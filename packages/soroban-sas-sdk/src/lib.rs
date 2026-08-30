@@ -8,11 +8,11 @@
 pub mod account;
 pub mod client;
 pub mod schema_builder;
-
-pub fn init() {}
 pub mod attestation_builder;
 pub mod batch;
+pub mod limits;
 pub mod rpc;
+pub mod sequence;
 pub mod signature;
 pub mod simulate;
 pub mod transaction;

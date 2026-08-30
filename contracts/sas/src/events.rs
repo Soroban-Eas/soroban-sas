@@ -2,7 +2,7 @@ use soroban_sas_common::{
     events::{ATTESTED, REVOKED},
     Attestation, AttestationIssuedEvent, AttestationRevokedEvent, UID,
 };
-use soroban_sdk::Env;
+use soroban_sdk::{symbol_short, Address, Env};
 
 /// Publishes the `AttestationIssued` event.
 ///
@@ -35,5 +35,12 @@ pub fn publish_revoked(env: &Env, uid: &UID, timestamp: u64) {
             uid: uid.clone(),
             timestamp,
         },
+    );
+}
+
+pub fn publish_withdrawal(env: &Env, token: &Address, amount: i128, destination: &Address, authorizer: &Address) {
+    env.events().publish(
+        (symbol_short!("WITHDRAW"), token.clone(), authorizer.clone()),
+        (amount, destination.clone(), token.clone(), authorizer.clone()),
     );
 }

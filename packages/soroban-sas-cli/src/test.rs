@@ -17,6 +17,9 @@ mod tests {
         assert!(validate_schema_syntax("   ").is_err());
         assert!(validate_schema_syntax(&"a".repeat(1025)).is_err());
         assert!(validate_schema_syntax("string name").is_ok());
+        assert!(validate_schema_syntax("!!!").is_err());
+        assert!(validate_schema_syntax("12345").is_err());
+        assert!(validate_schema_syntax("first_name String, last_name String").is_ok());
     }
 
     #[test]
@@ -41,7 +44,6 @@ mod tests {
             "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
             "--rpc-url",
             "https://soroban-testnet.stellar.org",
-            "--json",
         ])
         .unwrap();
 
@@ -49,7 +51,6 @@ mod tests {
             action:
                 AttestCommands::Verify {
                     uid: parsed_uid,
-                    json: true,
                     ..
                 },
         }) = cli.command
@@ -65,13 +66,15 @@ mod tests {
     }
 
     /// Issue #25 acceptance criterion: `attest attest` parses the flags the
-    /// issue specifies, including the `--output json` variant.
+    /// issue specifies, including the global `--output json` variant.
     #[test]
     fn parses_attest_attest_flags() {
         let schema_uid = hex::encode([2u8; 32]);
         let recipient = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBAAA6XKZW3";
         let cli = Cli::try_parse_from([
             "soroban-sas",
+            "--output",
+            "json",
             "attest",
             "attest",
             "--schema-uid",
@@ -91,10 +94,10 @@ mod tests {
             "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
             "--rpc-url",
             "https://soroban-testnet.stellar.org",
-            "--output",
-            "json",
         ])
         .unwrap();
+
+        assert_eq!(cli.output, OutputFormat::Json);
 
         let Some(Commands::Attest {
             action:

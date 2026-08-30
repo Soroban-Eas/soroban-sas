@@ -14,3 +14,4 @@ stellar-strkey = "0.0.8"
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+hex = "0.4"
