@@ -157,6 +157,19 @@ impl SASClient {
         invoke_read_only(env, rpc, &self.contract_id, "verify_attestation", vec![arg])
     }
 
+    /// Reads the on-chain fee policy that `SAS::attest_with_value` enforces,
+    /// via `simulateTransaction` (a pure read). `Ok(None)` means attestation
+    /// is fee-free and `attest_with_value` must be called with `value == 0`;
+    /// `Ok(Some((token, amount)))` is the exact payment a caller must supply.
+    /// Intended for SDK/CLI front-ends to display the fee before signing.
+    pub fn fetch_fee(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+    ) -> Result<Option<(Address, i128)>, SdkError> {
+        invoke_read_only(env, rpc, &self.contract_id, "get_fee", vec![])
+    }
+
     /// Calls `SchemaRegistry::get_schema(uid)` on `registry_contract_id` via
     /// `simulateTransaction` — a pure read, same as `verify_attestation`.
     ///

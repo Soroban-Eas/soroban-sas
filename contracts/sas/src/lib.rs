@@ -17,6 +17,9 @@ pub const SAS_ADMIN: Symbol = symbol_short!("ADMIN");
 pub const SCHEMA_REGISTRY: Symbol = symbol_short!("REGISTRY");
 pub const INDEXER: Symbol = symbol_short!("INDEXER");
 pub const TREASURY: Symbol = symbol_short!("TREASURY");
+/// Instance key for the `(fee_token, fee_amount)` pair required by
+/// `attest_with_value`. Absent means attestation is fee-free (#164).
+pub const FEE_CONFIG: Symbol = symbol_short!("FEECFG");
 pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 /// Per-attester high-watermark for delegated nonces. The value stored is the
 /// highest `nonce` that has been consumed for that attester; a delegated
@@ -126,6 +129,38 @@ impl SAS {
     pub fn get_treasury(env: Env) -> Option<Address> {
         extend_instance_ttl(&env);
         env.storage().instance().get(&TREASURY)
+    }
+
+    /// Returns the `(token, amount)` fee that `attest_with_value` requires, or
+    /// `None` when attestation is fee-free. This is the authenticated policy
+    /// callers must satisfy; it is not derived from caller input (#164).
+    pub fn get_fee(env: Env) -> Option<(Address, i128)> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&FEE_CONFIG)
+    }
+
+    /// Admin: pin the fee asset and exact amount for `attest_with_value`.
+    /// `amount` must be positive; call `clear_fee` for fee-free schemas
+    /// instead of encoding "no fee" as an arbitrary zero (#164).
+    pub fn set_fee(env: Env, token: Address, amount: i128) {
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        env.storage().instance().set(&FEE_CONFIG, &(token, amount));
+        extend_instance_ttl(&env);
+    }
+
+    /// Admin: remove the fee requirement. `attest_with_value` is then callable
+    /// only with `value == 0` (#164).
+    pub fn clear_fee(env: Env) {
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().remove(&FEE_CONFIG);
+        extend_instance_ttl(&env);
     }
 
     pub fn withdraw_tokens(
