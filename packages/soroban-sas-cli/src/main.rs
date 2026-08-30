@@ -317,8 +317,6 @@ enum SchemaCommands {
         registry_contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of a human-readable summary")]
-        json: bool,
     },
 }
 
@@ -363,8 +361,6 @@ enum AttestCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Output format: human or json", default_value = "human")]
-        output: OutputFormat,
     },
     /// Create and submit a new on-chain attestation
     Create {
@@ -418,8 +414,6 @@ enum AttestCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of a human-readable result")]
-        json: bool,
     },
     /// Atomically revoke an attestation and issue a replacement linked to
     /// it via ref_uid. The replacement's attester/recipient must match the
@@ -466,8 +460,6 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of one UID per line")]
-        json: bool,
     },
     /// Query attestations by schema UID
     BySchema {
@@ -481,8 +473,6 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: String,
-        #[arg(long, help = "Print raw JSON instead of one UID per line")]
-        json: bool,
     },
 }
 
@@ -591,7 +581,6 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             network_passphrase,
             contract_id,
             rpc_url,
-            output,
         } => {
             let schema_uid_bytes = parse_uid(&schema_uid)?;
             let data_bytes = decode_hex_or_base64(&data)?;
@@ -700,9 +689,7 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             uid,
             contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
@@ -806,9 +793,7 @@ fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> 
             address,
             contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let uids = client
@@ -820,9 +805,7 @@ fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> 
             uid,
             contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let schema_uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
@@ -1006,9 +989,7 @@ fn run_schema(action: SchemaCommands, output: OutputFormat) -> Result<(), String
             uid,
             registry_contract_id,
             rpc_url,
-            json,
         } => {
-            let output = if json { OutputFormat::Json } else { output };
             let uid_bytes = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());

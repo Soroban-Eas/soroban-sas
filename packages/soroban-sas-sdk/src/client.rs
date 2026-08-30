@@ -48,6 +48,57 @@ const BASE_FEE: u32 = 100;
 const DEFAULT_MAX_POLL_ATTEMPTS: u32 = 10;
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Configurable fee policy for simulated write transactions.
+///
+/// Ledger state or fee conditions can change between simulation and
+/// inclusion, so callers can apply a safety margin or cap to avoid
+/// insufficient-fee rejections.
+#[derive(Debug, Clone, Default)]
+pub enum FeePolicy {
+    /// No margin — use the exact `BASE_FEE + minResourceFee` from simulation.
+    #[default]
+    Default,
+    /// Adds `percent` percentage points to the simulation-reported
+    /// `minResourceFee` before adding `BASE_FEE`.  A 10 % margin on a
+    /// 5 000-stroop resource fee yields an extra 500 stroops.
+    PercentageMargin { percent: u32 },
+    /// Adds a fixed number of stroops to the simulation-reported
+    /// `minResourceFee`.
+    AbsoluteMargin { stroops: u32 },
+    /// Caps the total fee (`BASE_FEE + resource_fee + margin`) at `max`
+    /// stroops.  Returns an error when the computed fee would exceed the cap.
+    MaxFee { max: u32 },
+}
+
+/// Applies the `FeePolicy` to a raw `BASE_FEE + resource_fee` sum and
+/// returns the fee that will be written into the transaction.
+fn apply_fee_policy(base_fee: u32, resource_fee: i64, policy: &FeePolicy) -> Result<u32, SdkError> {
+    let base = i64::from(base_fee);
+    let raw = match policy {
+        FeePolicy::Default => base + resource_fee,
+        FeePolicy::PercentageMargin { percent } => {
+            let margin = resource_fee
+                .checked_mul(i64::from(*percent))
+                .and_then(|v| v.checked_div(100))
+                .ok_or_else(|| {
+                    SdkError::RpcError("fee margin percentage caused an overflow".to_string())
+                })?;
+            base + resource_fee + margin
+        }
+        FeePolicy::AbsoluteMargin { stroops } => base + resource_fee + i64::from(*stroops),
+        FeePolicy::MaxFee { max } => {
+            let computed = base + resource_fee;
+            if computed > i64::from(*max) {
+                return Err(SdkError::RpcError(format!(
+                    "computed fee {computed} stroops exceeds the configured maximum of {max} stroops"
+                )));
+            }
+            computed
+        }
+    };
+    u32::try_from(raw).map_err(|_| SdkError::RpcError("computed fee overflowed u32".to_string()))
+}
+
 /// The primary client for interacting with the SAS contract.
 pub struct SASClient {
     /// The Soroban contract ID.
@@ -248,6 +299,45 @@ impl SASClient {
         )
     }
 
+    /// Like [`register_schema`](Self::register_schema) but allows a
+    /// [`FeePolicy`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_schema_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema: &str,
+        resolver: &str,
+        revocable: bool,
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
+        let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
+        let resolver = Address::from_string(&SorobanString::from_str(env, resolver));
+        let schema = SorobanString::from_str(env, schema);
+
+        let args = vec![
+            simulate::encode_arg(env, &owner)?,
+            simulate::encode_arg(env, &schema)?,
+            simulate::encode_arg(env, &resolver)?,
+            simulate::encode_arg(env, &revocable)?,
+        ];
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            registry_contract_id,
+            "register",
+            args,
+            fee_policy,
+        )
+    }
+
     /// Calls `SAS::attest(attestation)`: builds the invoke transaction,
     /// signs it with the ed25519 key derived from `secret_seed`, and
     /// submits it — then polls until it settles.
@@ -279,6 +369,31 @@ impl SASClient {
         )
     }
 
+    /// Like [`attest`](Self::attest) but allows a [`FeePolicy`] that adds
+    /// a safety margin or caps the total fee.
+    pub fn attest_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        attestation: Attestation,
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        let arg = simulate::encode_arg(env, &attestation)?;
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "attest",
+            vec![arg],
+            fee_policy,
+        )
+    }
+
     /// Calls `SAS::multi_attest(attestations)`: encodes each attestation into
     /// one Soroban vector argument, signs the batch invoke with `secret_seed`,
     /// submits it, and polls until it settles.
@@ -298,6 +413,28 @@ impl SASClient {
             &self.contract_id,
             "multi_attest",
             vec![encode_multi_attest_arg(env, &attestations)?],
+        )
+    }
+
+    /// Like [`multi_attest`](Self::multi_attest) but allows a [`FeePolicy`].
+    pub fn multi_attest_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        attestations: Vec<Attestation>,
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "multi_attest",
+            vec![encode_multi_attest_arg(env, &attestations)?],
+            fee_policy,
         )
     }
 
@@ -321,6 +458,30 @@ impl SASClient {
             &self.contract_id,
             "revoke",
             vec![arg],
+        )
+    }
+
+    /// Like [`revoke`](Self::revoke) but allows a [`FeePolicy`].
+    pub fn revoke_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        uid: &[u8; 32],
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let uid = UID(BytesN::from_array(env, uid));
+        let arg = simulate::encode_arg(env, &uid)?;
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "revoke",
+            vec![arg],
+            fee_policy,
         )
     }
 
@@ -364,6 +525,41 @@ impl SASClient {
         )
     }
 
+    /// Like [`attest_by_delegation`](Self::attest_by_delegation) but allows a
+    /// [`FeePolicy`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn attest_by_delegation_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        relayer_secret_seed: &[u8; 32],
+        attestation: Attestation,
+        nonce: u64,
+        signature: &[u8; 64],
+        public_key: &[u8; 32],
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let signature = BytesN::from_array(env, signature);
+        let public_key = BytesN::from_array(env, public_key);
+        let args = vec![
+            simulate::encode_arg(env, &attestation)?,
+            simulate::encode_arg(env, &nonce)?,
+            simulate::encode_arg(env, &signature)?,
+            simulate::encode_arg(env, &public_key)?,
+        ];
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            relayer_secret_seed,
+            &self.contract_id,
+            "attest_by_delegation",
+            args,
+            fee_policy,
+        )
+    }
+
     /// Calls `SAS::revoke_by_delegation(uid, nonce, signature,
     /// public_key)`, same relayer model as `attest_by_delegation`.
     #[allow(clippy::too_many_arguments)]
@@ -398,6 +594,42 @@ impl SASClient {
         )
     }
 
+    /// Like [`revoke_by_delegation`](Self::revoke_by_delegation) but allows a
+    /// [`FeePolicy`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn revoke_by_delegation_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        relayer_secret_seed: &[u8; 32],
+        uid: &[u8; 32],
+        nonce: u64,
+        signature: &[u8; 64],
+        public_key: &[u8; 32],
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let uid = UID(BytesN::from_array(env, uid));
+        let signature = BytesN::from_array(env, signature);
+        let public_key = BytesN::from_array(env, public_key);
+        let args = vec![
+            simulate::encode_arg(env, &uid)?,
+            simulate::encode_arg(env, &nonce)?,
+            simulate::encode_arg(env, &signature)?,
+            simulate::encode_arg(env, &public_key)?,
+        ];
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            relayer_secret_seed,
+            &self.contract_id,
+            "revoke_by_delegation",
+            args,
+            fee_policy,
+        )
+    }
+
     /// Calls `SAS::replace_attestation(old_uid, new_data)`, same
     /// signing/submission flow as `attest`. Requires `secret_seed`'s
     /// account to be both `old_uid`'s attester and `new_data.attester`
@@ -425,6 +657,36 @@ impl SASClient {
             &self.contract_id,
             "replace_attestation",
             args,
+        )
+    }
+
+    /// Like [`replace_attestation`](Self::replace_attestation) but allows a
+    /// [`FeePolicy`].
+    pub fn replace_attestation_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        old_uid: &[u8; 32],
+        new_data: Attestation,
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &new_data)?;
+        let old_uid = UID(BytesN::from_array(env, old_uid));
+        let args = vec![
+            simulate::encode_arg(env, &old_uid)?,
+            simulate::encode_arg(env, &new_data)?,
+        ];
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "replace_attestation",
+            args,
+            fee_policy,
         )
     }
 }
@@ -690,6 +952,30 @@ fn invoke_write(
     function_name: &str,
     args: Vec<ScVal>,
 ) -> Result<GetTransactionResult, SdkError> {
+    invoke_write_with_fee_policy(
+        env,
+        rpc,
+        network_passphrase,
+        secret_seed,
+        contract_id,
+        function_name,
+        args,
+        &FeePolicy::Default,
+    )
+}
+
+/// Like [`invoke_write`] but allows the caller to specify a
+/// [`FeePolicy`] that adds a safety margin or caps the total fee.
+fn invoke_write_with_fee_policy(
+    env: &Env,
+    rpc: &RpcClient,
+    network_passphrase: &str,
+    secret_seed: &[u8; 32],
+    contract_id: &str,
+    function_name: &str,
+    args: Vec<ScVal>,
+    fee_policy: &FeePolicy,
+) -> Result<GetTransactionResult, SdkError> {
     let public_key = signature::derive_public_key(secret_seed);
     let next_seq = account::fetch_sequence_number(rpc, &public_key)? + 1;
 
@@ -729,8 +1015,7 @@ fn invoke_write(
         .unwrap_or("0")
         .parse()
         .map_err(|e| SdkError::RpcError(format!("invalid minResourceFee: {e:?}")))?;
-    let fee = u32::try_from(i64::from(BASE_FEE) + resource_fee)
-        .map_err(|_| SdkError::RpcError("computed fee overflowed u32".to_string()))?;
+    let fee = apply_fee_policy(BASE_FEE, resource_fee, fee_policy)?;
 
     // 2. Build the real transaction with that resource data and fee, validate
     //    it matches the original invocation, and sign it.
@@ -1049,5 +1334,49 @@ mod tests {
 
         let result = client.get_attestation_ledger(&env, &rpc, &[7u8; 32]);
         assert!(matches!(result, Err(SdkError::DecodingError(_))));
+    }
+
+    // --- Issue #134: Fee safety margin tests ---
+
+    #[test]
+    fn fee_policy_default_returns_exact_sum() {
+        let fee = apply_fee_policy(100, 5000, &FeePolicy::Default).unwrap();
+        assert_eq!(fee, 5100);
+    }
+
+    #[test]
+    fn fee_policy_percentage_margin_adds_correct_buffer() {
+        // 10% margin on 5000 stroops = 500 extra
+        let fee = apply_fee_policy(100, 5000, &FeePolicy::PercentageMargin { percent: 10 }).unwrap();
+        assert_eq!(fee, 5600);
+    }
+
+    #[test]
+    fn fee_policy_absolute_margin_adds_fixed_stroops() {
+        let fee = apply_fee_policy(100, 5000, &FeePolicy::AbsoluteMargin { stroops: 200 }).unwrap();
+        assert_eq!(fee, 5300);
+    }
+
+    #[test]
+    fn fee_policy_max_fee_caps_computed_fee() {
+        let fee = apply_fee_policy(100, 5000, &FeePolicy::MaxFee { max: 5050 }).unwrap();
+        assert_eq!(fee, 5050);
+    }
+
+    #[test]
+    fn fee_policy_max_fee_rejects_when_computed_exceeds_cap() {
+        let err = apply_fee_policy(100, 5000, &FeePolicy::MaxFee { max: 4000 }).unwrap_err();
+        match err {
+            SdkError::RpcError(msg) => {
+                assert!(msg.contains("exceeds the configured maximum"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fee_policy_zero_resource_fee() {
+        let fee = apply_fee_policy(100, 0, &FeePolicy::PercentageMargin { percent: 10 }).unwrap();
+        assert_eq!(fee, 100);
     }
 }

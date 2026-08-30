@@ -4,6 +4,7 @@
 //! SDK needs to submit and track transactions, sends them over HTTP via
 //! `ureq`, and parses the matching JSON-RPC responses.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::errors::SdkError;
@@ -30,6 +31,9 @@ pub struct RpcClient {
     /// HTTP agent preconfigured with `timeout`; every request goes through
     /// it so none can bypass the bound.
     agent: Agent,
+    /// Monotonically-increasing JSON-RPC request ID.  Each request gets the
+    /// next value so concurrent callers can correlate responses.
+    next_id: AtomicU32,
 }
 
 impl RpcClient {
@@ -38,6 +42,7 @@ impl RpcClient {
             network_url: network_url.into(),
             timeout: DEFAULT_RPC_TIMEOUT,
             agent: rpc_agent(DEFAULT_RPC_TIMEOUT),
+            next_id: AtomicU32::new(1),
         }
     }
 
@@ -72,6 +77,7 @@ impl RpcClient {
         tx_envelope_xdr: &str,
     ) -> JsonRpcRequest<SendTransactionParams> {
         JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
             "sendTransaction",
             SendTransactionParams {
                 transaction: tx_envelope_xdr.to_string(),
@@ -86,6 +92,7 @@ impl RpcClient {
         tx_hash: &str,
     ) -> JsonRpcRequest<GetTransactionParams> {
         JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
             "getTransaction",
             GetTransactionParams {
                 hash: tx_hash.to_string(),
@@ -97,16 +104,18 @@ impl RpcClient {
     pub fn parse_send_transaction_response(
         &self,
         body: &str,
+        expected_id: u32,
     ) -> Result<SendTransactionResult, SdkError> {
-        parse_response(body)
+        parse_response(body, expected_id)
     }
 
     /// Parses a raw `getTransaction` JSON-RPC response body.
     pub fn parse_get_transaction_response(
         &self,
         body: &str,
+        expected_id: u32,
     ) -> Result<GetTransactionResult, SdkError> {
-        let result = parse_response(body)?;
+        let result = parse_response(body, expected_id)?;
         validate_supported_transaction_envelope(&result)?;
         Ok(result)
     }
@@ -118,6 +127,7 @@ impl RpcClient {
         tx_envelope_xdr: &str,
     ) -> JsonRpcRequest<SimulateTransactionParams> {
         JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
             "simulateTransaction",
             SimulateTransactionParams {
                 transaction: tx_envelope_xdr.to_string(),
@@ -129,8 +139,9 @@ impl RpcClient {
     pub fn parse_simulate_transaction_response(
         &self,
         body: &str,
+        expected_id: u32,
     ) -> Result<SimulateTransactionResult, SdkError> {
-        parse_response(body)
+        parse_response(body, expected_id)
     }
 
     /// Simulates invoking a contract via `tx_envelope_xdr` (built by
@@ -144,8 +155,9 @@ impl RpcClient {
         tx_envelope_xdr: &str,
     ) -> Result<SimulateTransactionResult, SdkError> {
         let request = self.build_simulate_transaction_request(tx_envelope_xdr);
+        let id = request.id;
         let body = self.post(&request)?;
-        self.parse_simulate_transaction_response(&body)
+        self.parse_simulate_transaction_response(&body, id)
     }
 
     /// Submits `tx_envelope_xdr` to this RPC endpoint's `sendTransaction`
@@ -155,16 +167,18 @@ impl RpcClient {
         tx_envelope_xdr: &str,
     ) -> Result<SendTransactionResult, SdkError> {
         let request = self.build_send_transaction_request(tx_envelope_xdr);
+        let id = request.id;
         let body = self.post(&request)?;
-        self.parse_send_transaction_response(&body)
+        self.parse_send_transaction_response(&body, id)
     }
 
     /// Fetches the current status of `tx_hash` via this RPC endpoint's
     /// `getTransaction` method and parses the response.
     pub fn get_transaction(&self, tx_hash: &str) -> Result<GetTransactionResult, SdkError> {
         let request = self.build_get_transaction_request(tx_hash);
+        let id = request.id;
         let body = self.post(&request)?;
-        self.parse_get_transaction_response(&body)
+        self.parse_get_transaction_response(&body, id)
     }
 
     /// Builds the JSON-RPC request body for Soroban's `getLedgerEntries`.
@@ -173,15 +187,20 @@ impl RpcClient {
         &self,
         keys: Vec<String>,
     ) -> JsonRpcRequest<GetLedgerEntriesParams> {
-        JsonRpcRequest::new("getLedgerEntries", GetLedgerEntriesParams { keys })
+        JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+            "getLedgerEntries",
+            GetLedgerEntriesParams { keys },
+        )
     }
 
     /// Parses a raw `getLedgerEntries` JSON-RPC response body.
     pub fn parse_get_ledger_entries_response(
         &self,
         body: &str,
+        expected_id: u32,
     ) -> Result<GetLedgerEntriesResult, SdkError> {
-        parse_response(body)
+        parse_response(body, expected_id)
     }
 
     /// Fetches the ledger entries for `keys` (base64-encoded `LedgerKey`
@@ -191,8 +210,9 @@ impl RpcClient {
         keys: Vec<String>,
     ) -> Result<GetLedgerEntriesResult, SdkError> {
         let request = self.build_get_ledger_entries_request(keys);
+        let id = request.id;
         let body = self.post(&request)?;
-        self.parse_get_ledger_entries_response(&body)
+        self.parse_get_ledger_entries_response(&body, id)
     }
 
     /// POSTs a JSON-RPC request body to this client's `network_url` and
@@ -215,15 +235,50 @@ fn rpc_agent(timeout: Duration) -> Agent {
 
 /// Decodes a JSON-RPC response envelope and unwraps either its `result`
 /// or turns a JSON-RPC-level `error` (or malformed body) into an [`SdkError`].
-fn parse_response<T: DeserializeOwned>(body: &str) -> Result<T, SdkError> {
+///
+/// Validates that the response declares `jsonrpc == "2.0"` and carries the
+/// expected request `id` before decoding the result payload.
+fn parse_response<T: DeserializeOwned>(body: &str, expected_id: u32) -> Result<T, SdkError> {
     let response: JsonRpcResponse<T> =
         serde_json::from_str(body).map_err(|err| SdkError::RpcError(err.to_string()))?;
     match response {
-        JsonRpcResponse::Result { result, .. } => Ok(result),
-        JsonRpcResponse::Error { error, .. } => Err(SdkError::RpcError(format!(
-            "{}: {}",
-            error.code, error.message
-        ))),
+        JsonRpcResponse::Result {
+            jsonrpc,
+            id,
+            result,
+        } => {
+            if jsonrpc != "2.0" {
+                return Err(SdkError::RpcError(format!(
+                    "unsupported JSON-RPC version: expected \"2.0\", got \"{jsonrpc}\""
+                )));
+            }
+            if id != expected_id {
+                return Err(SdkError::RpcError(format!(
+                    "response id mismatch: expected {expected_id}, got {id}"
+                )));
+            }
+            Ok(result)
+        }
+        JsonRpcResponse::Error {
+            jsonrpc,
+            id,
+            error,
+        } => {
+            if jsonrpc != "2.0" {
+                return Err(SdkError::RpcError(format!(
+                    "unsupported JSON-RPC version: expected \"2.0\", got \"{jsonrpc}\""
+                )));
+            }
+            if id != expected_id {
+                return Err(SdkError::RpcError(format!(
+                    "response id mismatch: expected {expected_id}, got {id}"
+                )));
+            }
+            Err(SdkError::RpcError(format!(
+                "{}: {}",
+                error.code, error.message
+            )))
+        }
     }
 }
 
@@ -301,10 +356,10 @@ pub struct JsonRpcRequest<P: Serialize> {
 }
 
 impl<P: Serialize> JsonRpcRequest<P> {
-    fn new(method: &'static str, params: P) -> Self {
+    fn new(id: u32, method: &'static str, params: P) -> Self {
         Self {
             jsonrpc: "2.0",
-            id: 1,
+            id,
             method,
             params,
         }
@@ -419,10 +474,11 @@ mod tests {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
         let request = client.build_send_transaction_request("AAAAAgAAAAA=");
 
-        let value = serde_json::to_value(request).unwrap();
+        let value = serde_json::to_value(request.clone()).unwrap();
         assert_eq!(value["jsonrpc"], "2.0");
         assert_eq!(value["method"], "sendTransaction");
         assert_eq!(value["params"]["transaction"], "AAAAAgAAAAA=");
+        assert!(request.id >= 1);
     }
 
     #[test]
@@ -430,9 +486,10 @@ mod tests {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
         let request = client.build_get_transaction_request("deadbeef");
 
-        let value = serde_json::to_value(request).unwrap();
+        let value = serde_json::to_value(request.clone()).unwrap();
         assert_eq!(value["method"], "getTransaction");
         assert_eq!(value["params"]["hash"], "deadbeef");
+        assert!(request.id >= 1);
     }
 
     #[test]
@@ -449,7 +506,7 @@ mod tests {
             }
         }"#;
 
-        let result = client.parse_send_transaction_response(body).unwrap();
+        let result = client.parse_send_transaction_response(body, 1).unwrap();
         assert_eq!(result.status, "PENDING");
         assert_eq!(result.hash, "abcd1234");
         assert_eq!(result.latest_ledger, 12345);
@@ -474,7 +531,7 @@ mod tests {
             envelope_xdr = serde_json::to_string(&envelope_xdr).unwrap()
         );
 
-        let result = client.parse_get_transaction_response(&body).unwrap();
+        let result = client.parse_get_transaction_response(&body, 1).unwrap();
         assert_eq!(result.status, "SUCCESS");
         assert_eq!(result.envelope_xdr.as_deref(), Some(envelope_xdr.as_str()));
     }
@@ -495,7 +552,7 @@ mod tests {
             v0_envelope_xdr = serde_json::to_string(&v0_envelope_xdr()).unwrap()
         );
 
-        let err = client.parse_get_transaction_response(&body).unwrap_err();
+        let err = client.parse_get_transaction_response(&body, 1).unwrap_err();
         match err {
             SdkError::DecodingError(msg) => {
                 assert!(msg.contains("unsupported transaction envelope variant: TxV0"));
@@ -520,7 +577,7 @@ mod tests {
             fee_bump_envelope_xdr = serde_json::to_string(&fee_bump_envelope_xdr()).unwrap()
         );
 
-        let err = client.parse_get_transaction_response(&body).unwrap_err();
+        let err = client.parse_get_transaction_response(&body, 1).unwrap_err();
         match err {
             SdkError::DecodingError(msg) => {
                 assert!(msg.contains("unsupported transaction envelope variant: TxFeeBump"));
@@ -538,7 +595,7 @@ mod tests {
             "error": { "code": -32602, "message": "Invalid params" }
         }"#;
 
-        let err = client.parse_send_transaction_response(body).unwrap_err();
+        let err = client.parse_send_transaction_response(body, 1).unwrap_err();
         match err {
             SdkError::RpcError(msg) => assert!(msg.contains("Invalid params")),
             other => panic!("expected RpcError, got {other:?}"),
@@ -550,9 +607,10 @@ mod tests {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
         let request = client.build_simulate_transaction_request("AAAAAgAAAAA=");
 
-        let value = serde_json::to_value(request).unwrap();
+        let value = serde_json::to_value(request.clone()).unwrap();
         assert_eq!(value["method"], "simulateTransaction");
         assert_eq!(value["params"]["transaction"], "AAAAAgAAAAA=");
+        assert!(request.id >= 1);
     }
 
     #[test]
@@ -569,7 +627,7 @@ mod tests {
             }
         }"#;
 
-        let result = client.parse_simulate_transaction_response(body).unwrap();
+        let result = client.parse_simulate_transaction_response(body, 1).unwrap();
         assert_eq!(result.latest_ledger, 3993006);
         assert_eq!(result.error, None);
         assert_eq!(result.results.len(), 1);
@@ -594,7 +652,7 @@ mod tests {
             }
         }"#;
 
-        let result = client.parse_simulate_transaction_response(body).unwrap();
+        let result = client.parse_simulate_transaction_response(body, 1).unwrap();
         assert_eq!(result.latest_ledger, 3993006);
         assert!(result.error.unwrap().contains("MissingValue"));
         assert!(result.results.is_empty());
@@ -605,9 +663,10 @@ mod tests {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
         let request = client.build_get_ledger_entries_request(vec!["AAAAAA==".to_string()]);
 
-        let value = serde_json::to_value(request).unwrap();
+        let value = serde_json::to_value(request.clone()).unwrap();
         assert_eq!(value["method"], "getLedgerEntries");
         assert_eq!(value["params"]["keys"][0], "AAAAAA==");
+        assert!(request.id >= 1);
     }
 
     #[test]
@@ -624,7 +683,7 @@ mod tests {
             }
         }"#;
 
-        let result = client.parse_get_ledger_entries_response(body).unwrap();
+        let result = client.parse_get_ledger_entries_response(body, 1).unwrap();
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.entries[0].xdr, "AAAAAA==");
         assert_eq!(result.entries[0].last_modified_ledger_seq, 3993006);
@@ -634,7 +693,7 @@ mod tests {
     fn maps_malformed_body_to_sdk_error() {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
         let err = client
-            .parse_get_transaction_response("not json")
+            .parse_get_transaction_response("not json", 1)
             .unwrap_err();
         assert!(matches!(err, SdkError::RpcError(_)));
     }
@@ -734,5 +793,101 @@ mod tests {
             Err(SdkError::RpcError(_)) => {}
             Err(err) => panic!("unexpected error kind from live testnet: {err:?}"),
         }
+    }
+
+    // --- Issue #135: JSON-RPC version and response ID validation tests ---
+
+    #[test]
+    fn rejects_non_2_0_jsonrpc_version() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = r#"{
+            "jsonrpc": "1.0",
+            "id": 1,
+            "result": {
+                "status": "PENDING",
+                "hash": "abcd1234",
+                "latestLedger": 12345,
+                "latestLedgerCloseTime": "1234567890"
+            }
+        }"#;
+
+        let err = client.parse_send_transaction_response(body, 1).unwrap_err();
+        match err {
+            SdkError::RpcError(msg) => {
+                assert!(msg.contains("unsupported JSON-RPC version"));
+                assert!(msg.contains("1.0"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_response_with_wrong_id() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = r#"{
+            "jsonrpc": "2.0",
+            "id": 99,
+            "result": {
+                "status": "PENDING",
+                "hash": "abcd1234",
+                "latestLedger": 12345,
+                "latestLedgerCloseTime": "1234567890"
+            }
+        }"#;
+
+        let err = client.parse_send_transaction_response(body, 1).unwrap_err();
+        match err {
+            SdkError::RpcError(msg) => {
+                assert!(msg.contains("response id mismatch"));
+                assert!(msg.contains("99"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_error_response_with_wrong_id() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = r#"{
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": { "code": -32602, "message": "Invalid params" }
+        }"#;
+
+        let err = client.parse_send_transaction_response(body, 1).unwrap_err();
+        match err {
+            SdkError::RpcError(msg) => {
+                assert!(msg.contains("response id mismatch"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_error_response_with_wrong_jsonrpc_version() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = r#"{
+            "jsonrpc": "1.0",
+            "id": 1,
+            "error": { "code": -32602, "message": "Invalid params" }
+        }"#;
+
+        let err = client.parse_send_transaction_response(body, 1).unwrap_err();
+        match err {
+            SdkError::RpcError(msg) => {
+                assert!(msg.contains("unsupported JSON-RPC version"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn request_ids_are_distinct_for_concurrent_calls() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let r1 = client.build_send_transaction_request("AAAAAgAAAAA=");
+        let r2 = client.build_send_transaction_request("AAAAAgAAAAA=");
+        let r3 = client.build_send_transaction_request("AAAAAgAAAAA=");
+        assert_ne!(r1.id, r2.id);
+        assert_ne!(r2.id, r3.id);
     }
 }
