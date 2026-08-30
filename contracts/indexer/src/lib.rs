@@ -18,6 +18,10 @@ const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
 const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
 
+fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
 fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
     let count_key = (total_key, key.clone());
     let mut total: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
@@ -46,6 +50,7 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
 
     total += 1;
     env.storage().instance().set(&count_key, &total);
+    extend_instance_ttl(env);
 }
 
 fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
@@ -76,6 +81,7 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
 
     total += 1;
     env.storage().instance().set(&count_key, &total);
+    extend_instance_ttl(env);
 }
 
 #[contractimpl]
@@ -90,6 +96,7 @@ impl Indexer {
     /// attestations it indexes. Callable exactly once; a second call panics
     /// with `SASError::AlreadyInitialized`.
     pub fn init(env: Env, admin: Address, sas: Address) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&INDEXER_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
@@ -101,17 +108,20 @@ impl Indexer {
         }
         env.storage().instance().set(&INDEXER_ADMIN, &admin);
         env.storage().instance().set(&SAS_CONTRACT, &sas);
+        extend_instance_ttl(&env);
     }
 
     /// Returns the admin address recorded by `init`, if the indexer has been
     /// initialized.
     pub fn get_admin(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
         env.storage().instance().get(&INDEXER_ADMIN)
     }
 
     /// Returns the SAS contract address this indexer is bound to, if the
     /// indexer has been initialized.
     pub fn get_sas(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
         env.storage().instance().get(&SAS_CONTRACT)
     }
 
@@ -122,12 +132,15 @@ impl Indexer {
         schema_uid: UID,
         attester: Address,
     ) {
+        extend_instance_ttl(&env);
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
+        extend_instance_ttl(&env);
     }
 
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         let chunk_index = 0u32;
         env.storage()
             .persistent()
@@ -136,6 +149,7 @@ impl Indexer {
     }
 
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         let chunk_index = 0u32;
         env.storage()
             .persistent()
@@ -144,6 +158,7 @@ impl Indexer {
     }
 
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         let chunk_index = 0u32;
         env.storage()
             .persistent()
@@ -157,6 +172,7 @@ impl Indexer {
         cursor: u32,
         limit: u32,
     ) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         if limit == 0 {
             return soroban_sdk::Vec::new(&env);
         }

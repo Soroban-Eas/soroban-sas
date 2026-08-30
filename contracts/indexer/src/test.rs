@@ -160,3 +160,93 @@ fn test_cursor_pagination_large_datasets() {
     let paginated = client.get_atts_by_recipient_paginated(&recipient, &0, &10);
     assert_eq!(paginated.len(), 10);
 }
+
+#[test]
+fn test_instance_ttl_renewed_by_trusted_write_and_read() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let admin = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
+    client.init(&admin, &sas);
+
+    // Verify initial binding readable
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    assert_eq!(client.get_sas(), Some(sas.clone()));
+
+    // Simulate half-year passage then trusted write renews instance TTL
+    env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
+    });
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[77u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[78u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+
+    // Advance another half-year + 100 beyond original TTL; without renewal this would have expired
+    env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2 + 100;
+    });
+    // Trusted write renewed TTL, so admin/sas must still be readable
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    assert_eq!(client.get_sas(), Some(sas.clone()));
+    // Persistent chunk must still be readable
+    let by_recipient = client.get_attestations_by_recipient(&recipient);
+    assert_eq!(by_recipient.len(), 1);
+}
+
+#[test]
+fn test_read_only_renews_instance_without_mutating_chunks() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let admin = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
+    client.init(&admin, &sas);
+
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[88u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[89u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+
+    // Capture chunk before read-only renewal
+    let chunk_before: soroban_sdk::Vec<UID> = env.as_contract(&indexer_id, || {
+        env.storage()
+            .persistent()
+            .get(&(recipient.clone(), 0u32))
+            .unwrap()
+    });
+
+    // Advance half year, then perform read-only calls that should renew instance TTL
+    env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
+    });
+    // These reads renew instance but must not mutate persistent chunks
+    let _ = client.get_admin();
+    let _ = client.get_sas();
+    let _ = client.get_attestations_by_recipient(&recipient);
+    let _ = client.get_attestations_by_schema(&schema_uid);
+    let _ = client.get_attestations_by_attester(&attester);
+    let _ = client.get_atts_by_recipient_paginated(&recipient, &0, &10);
+
+    let chunk_after: soroban_sdk::Vec<UID> = env.as_contract(&indexer_id, || {
+        env.storage()
+            .persistent()
+            .get(&(recipient.clone(), 0u32))
+            .unwrap()
+    });
+    assert_eq!(chunk_before, chunk_after);
+
+    // Advance beyond original TTL, still readable due to read renewal
+    env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2 + 100;
+    });
+    assert_eq!(client.get_admin(), Some(admin));
+    assert_eq!(chunk_after.len(), 1);
+}

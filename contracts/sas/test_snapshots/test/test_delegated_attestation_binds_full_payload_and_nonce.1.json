@@ -187,57 +187,6 @@
         {
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "vec": [
-                {
-                  "symbol": "DELNONCE"
-                },
-                {
-                  "address": "GD5EQNAUP5XGSDBWSPX7MEZWARSAHTMK4KQU6MNTYQDTLBLJEOKWLSJG"
-                },
-                {
-                  "u64": 7
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "DELNONCE"
-                    },
-                    {
-                      "address": "GD5EQNAUP5XGSDBWSPX7MEZWARSAHTMK4KQU6MNTYQDTLBLJEOKWLSJG"
-                    },
-                    {
-                      "u64": 7
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "bool": true
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          6307200
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -272,6 +221,21 @@
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                         }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "DELNONCE"
+                            },
+                            {
+                              "address": "GD5EQNAUP5XGSDBWSPX7MEZWARSAHTMK4KQU6MNTYQDTLBLJEOKWLSJG"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": 7
+                        }
                       }
                     ]
                   }
@@ -280,7 +244,7 @@
             },
             "ext": "v0"
           },
-          4095
+          6307200
         ]
       ],
       [
@@ -301,7 +265,7 @@
             },
             "ext": "v0"
           },
-          4095
+          6307200
         ]
       ]
     ]

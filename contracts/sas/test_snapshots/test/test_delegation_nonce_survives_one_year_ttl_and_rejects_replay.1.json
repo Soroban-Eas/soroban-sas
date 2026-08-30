@@ -6,12 +6,15 @@
   "auth": [
     [],
     [],
+    [],
+    [],
+    [],
     []
   ],
   "ledger": {
     "protocol_version": 20,
-    "sequence_number": 0,
-    "timestamp": 0,
+    "sequence_number": 6307210,
+    "timestamp": 31622400,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -86,7 +89,7 @@
                         "symbol": "attester"
                       },
                       "val": {
-                        "address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+                        "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
                       }
                     },
                     {
@@ -179,7 +182,7 @@
             },
             "ext": "v0"
           },
-          6307200
+          9460800
         ]
       ],
       [
@@ -228,12 +231,12 @@
                               "symbol": "DELNONCE"
                             },
                             {
-                              "address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+                              "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
                             }
                           ]
                         },
                         "val": {
-                          "u64": 1
+                          "u64": 42
                         }
                       }
                     ]
@@ -243,7 +246,7 @@
             },
             "ext": "v0"
           },
-          6307200
+          9460800
         ]
       ],
       [
@@ -264,7 +267,7 @@
             },
             "ext": "v0"
           },
-          6307200
+          9460800
         ]
       ]
     ]
@@ -398,7 +401,7 @@
                         "symbol": "attester"
                       },
                       "val": {
-                        "address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+                        "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
                       }
                     },
                     {
@@ -488,13 +491,13 @@
                   ]
                 },
                 {
-                  "u64": 1
+                  "u64": 42
                 },
                 {
-                  "bytes": "68a432595372fd41192574fba5930d3cf056688d84c6caf6f0fbcedcb16c538f5dc86f852d61f931d41dfac4c3c48310bae1d9c6c826075667416f42bae96d03"
+                  "bytes": "6fdeff01a7719cd5c8a2b8c1d827d02848081f15e858ab8df2f50fb8737b52c5970a5656b3b272b9c349bd05d44e1561c25cb52bb1b2d9ef8793822b0b6cbd09"
                 },
                 {
-                  "bytes": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff"
+                  "bytes": "2c848ad8664ee651e4896c13a84a89a2964aca5eb77a8b881e60ded5c81b4e9d"
                 }
               ]
             }
@@ -618,7 +621,7 @@
                     "symbol": "attester"
                   },
                   "val": {
-                    "address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+                    "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
                   }
                 },
                 {
@@ -752,7 +755,7 @@
                 ]
               },
               {
-                "address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+                "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
               }
             ],
             "data": {
@@ -762,7 +765,7 @@
                     "symbol": "attester"
                   },
                   "val": {
-                    "address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+                    "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
                   }
                 },
                 {
@@ -846,26 +849,168 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
               },
               {
-                "symbol": "revoke_by_delegation"
+                "symbol": "verify_attestation"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "vec": [
+                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "verify_attestation"
+              }
+            ],
+            "data": {
+              "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "attest_by_delegation"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "map": [
                     {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                      "key": {
+                        "symbol": "attester"
+                      },
+                      "val": {
+                        "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "data"
+                      },
+                      "val": {
+                        "bytes": "010203"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "expiration_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "recipient"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "ref_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocable"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocation_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "schema_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "time"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                          }
+                        ]
+                      }
                     }
                   ]
                 },
                 {
-                  "u64": 2
+                  "u64": 42
                 },
                 {
-                  "bytes": "80711a32107ecf5adabdae87cd5d69212727c1548dc4129468c82e31ba0330488f31b047f1de65dfa33cccfa97f16881eb668c007a68b25942e0785cd76a130d"
+                  "bytes": "6fdeff01a7719cd5c8a2b8c1d827d02848081f15e858ab8df2f50fb8737b52c5970a5656b3b272b9c349bd05d44e1561c25cb52bb1b2d9ef8793822b0b6cbd09"
                 },
                 {
-                  "bytes": "9475c6cf0eda34057528d8694781ecc92ad639d7e2bd27761ed3ef74924beb07"
+                  "bytes": "2c848ad8664ee651e4896c13a84a89a2964aca5eb77a8b881e60ded5c81b4e9d"
                 }
               ]
             }
@@ -887,7 +1032,7 @@
               },
               {
                 "error": {
-                  "contract": 301
+                  "contract": 303
                 }
               }
             ],
@@ -897,7 +1042,7 @@
                   "string": "failing with contract error"
                 },
                 {
-                  "u32": 301
+                  "u32": 303
                 }
               ]
             }
@@ -919,7 +1064,7 @@
               },
               {
                 "error": {
-                  "contract": 301
+                  "contract": 303
                 }
               }
             ],
@@ -944,7 +1089,7 @@
               },
               {
                 "error": {
-                  "contract": 301
+                  "contract": 303
                 }
               }
             ],
@@ -969,7 +1114,7 @@
               },
               {
                 "error": {
-                  "contract": 301
+                  "contract": 303
                 }
               }
             ],
@@ -979,25 +1124,522 @@
                   "string": "contract try_call failed"
                 },
                 {
-                  "symbol": "revoke_by_delegation"
+                  "symbol": "attest_by_delegation"
                 },
                 {
                   "vec": [
                     {
-                      "vec": [
+                      "map": [
                         {
-                          "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                          "key": {
+                            "symbol": "attester"
+                          },
+                          "val": {
+                            "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "data"
+                          },
+                          "val": {
+                            "bytes": "010203"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "expiration_time"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "recipient"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "ref_uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "revocable"
+                          },
+                          "val": {
+                            "bool": true
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "revocation_time"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "schema_uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "time"
+                          },
+                          "val": {
+                            "u64": 1000
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                              }
+                            ]
+                          }
                         }
                       ]
                     },
                     {
-                      "u64": 2
+                      "u64": 42
                     },
                     {
-                      "bytes": "80711a32107ecf5adabdae87cd5d69212727c1548dc4129468c82e31ba0330488f31b047f1de65dfa33cccfa97f16881eb668c007a68b25942e0785cd76a130d"
+                      "bytes": "6fdeff01a7719cd5c8a2b8c1d827d02848081f15e858ab8df2f50fb8737b52c5970a5656b3b272b9c349bd05d44e1561c25cb52bb1b2d9ef8793822b0b6cbd09"
                     },
                     {
-                      "bytes": "9475c6cf0eda34057528d8694781ecc92ad639d7e2bd27761ed3ef74924beb07"
+                      "bytes": "2c848ad8664ee651e4896c13a84a89a2964aca5eb77a8b881e60ded5c81b4e9d"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "verify_attestation"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "verify_attestation"
+              }
+            ],
+            "data": {
+              "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "attest_by_delegation"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "attester"
+                      },
+                      "val": {
+                        "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "data"
+                      },
+                      "val": {
+                        "bytes": "010203"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "expiration_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "recipient"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "ref_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocable"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocation_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "schema_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "time"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "u64": 42
+                },
+                {
+                  "bytes": "6fdeff01a7719cd5c8a2b8c1d827d02848081f15e858ab8df2f50fb8737b52c5970a5656b3b272b9c349bd05d44e1561c25cb52bb1b2d9ef8793822b0b6cbd09"
+                },
+                {
+                  "bytes": "2c848ad8664ee651e4896c13a84a89a2964aca5eb77a8b881e60ded5c81b4e9d"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 303
+                }
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "failing with contract error"
+                },
+                {
+                  "u32": 303
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 303
+                }
+              }
+            ],
+            "data": {
+              "string": "escalating error to panic"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 303
+                }
+              }
+            ],
+            "data": {
+              "string": "caught error from function"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 303
+                }
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "contract try_call failed"
+                },
+                {
+                  "symbol": "attest_by_delegation"
+                },
+                {
+                  "vec": [
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "attester"
+                          },
+                          "val": {
+                            "address": "GAWIJCWYMZHOMUPERFWBHKCKRGRJMSWKL23XVC4IDZQN5VOIDNHJ3RQJ"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "data"
+                          },
+                          "val": {
+                            "bytes": "010203"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "expiration_time"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "recipient"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "ref_uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "revocable"
+                          },
+                          "val": {
+                            "bool": true
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "revocation_time"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "schema_uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "time"
+                          },
+                          "val": {
+                            "u64": 1000
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "u64": 42
+                    },
+                    {
+                      "bytes": "6fdeff01a7719cd5c8a2b8c1d827d02848081f15e858ab8df2f50fb8737b52c5970a5656b3b272b9c349bd05d44e1561c25cb52bb1b2d9ef8793822b0b6cbd09"
+                    },
+                    {
+                      "bytes": "2c848ad8664ee651e4896c13a84a89a2964aca5eb77a8b881e60ded5c81b4e9d"
                     }
                   ]
                 }

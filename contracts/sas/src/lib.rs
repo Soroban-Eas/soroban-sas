@@ -17,15 +17,25 @@ pub const SAS_ADMIN: Symbol = symbol_short!("ADMIN");
 pub const SCHEMA_REGISTRY: Symbol = symbol_short!("REGISTRY");
 pub const INDEXER: Symbol = symbol_short!("INDEXER");
 pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
+/// Per-attester high-watermark for delegated nonces. The value stored is the
+/// highest `nonce` that has been consumed for that attester; a delegated
+/// signature is valid only if `nonce > last`. This provides durable replay
+/// protection with one `instance` entry per attester (bounded growth) whose
+/// lifetime tracks contract liveness via `extend_instance_ttl`.
 pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
 /// Maximum number of attestations in one multi_attest invocation. This keeps
 /// authorization and storage work within the measured Soroban budget envelope.
 pub const MAX_MULTI_ATTEST: u32 = 100;
 const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
+fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
 #[contractimpl]
 impl SAS {
     pub fn init(env: Env, admin: Address, registry: Address) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&SAS_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
@@ -37,13 +47,16 @@ impl SAS {
         }
         env.storage().instance().set(&SAS_ADMIN, &admin);
         env.storage().instance().set(&SCHEMA_REGISTRY, &registry);
+        extend_instance_ttl(&env);
     }
 
     /// Binds an Indexer contract that should mirror newly issued attestations.
     pub fn set_indexer(env: Env, indexer: Address) {
+        extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&SAS_ADMIN).unwrap();
         admin.require_auth();
         env.storage().instance().set(&INDEXER, &indexer);
+        extend_instance_ttl(&env);
     }
 
     pub fn attest(env: Env, attestation: Attestation) -> UID {
@@ -76,6 +89,7 @@ impl SAS {
     }
 
     fn attest_internal(env: Env, attestation: Attestation) -> UID {
+        extend_instance_ttl(&env);
         if env.storage().persistent().has(&attestation.uid) {
             panic_with_error!(&env, SASError::DuplicateAttestation);
         }
@@ -176,6 +190,7 @@ impl SAS {
     }
 
     fn revoke_internal(env: Env, uid: UID) {
+        extend_instance_ttl(&env);
         let Some(mut attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
@@ -206,6 +221,7 @@ impl SAS {
     /// to match the old attestation's — a replacement changes what is being
     /// claimed, not who is claiming it or about whom.
     pub fn replace_attestation(env: Env, old_uid: UID, new_data: Attestation) -> UID {
+        extend_instance_ttl(&env);
         let Some(old) = env.storage().persistent().get::<_, Attestation>(&old_uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
@@ -234,6 +250,7 @@ impl SAS {
         env: Env,
         attestations: soroban_sdk::Vec<Attestation>,
     ) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         if attestations.len() > MAX_MULTI_ATTEST {
             panic_with_error!(&env, SASError::BatchTooLarge);
         }
@@ -265,6 +282,7 @@ impl SAS {
         token: Address,
         value: i128,
     ) -> UID {
+        extend_instance_ttl(&env);
         if value < 0 {
             panic_with_error!(&env, SASError::InvalidValue);
         }
@@ -283,6 +301,7 @@ impl SAS {
     }
 
     pub fn multi_revoke(env: Env, uids: soroban_sdk::Vec<UID>) {
+        extend_instance_ttl(&env);
         for uid in uids.iter() {
             Self::revoke(env.clone(), uid);
         }
@@ -302,6 +321,7 @@ impl SAS {
     /// Requires `attester.require_auth()`, so only the address owner can
     /// bind a key to it.
     pub fn register_attester_key(env: Env, attester: Address, public_key: soroban_sdk::BytesN<32>) {
+        extend_instance_ttl(&env);
         attester.require_auth();
         let key = (ATTESTER_KEY, attester);
         env.storage().persistent().set(&key, &public_key);
@@ -332,14 +352,16 @@ impl SAS {
     }
 
     fn consume_delegation_nonce(env: &Env, attester: &Address, nonce: u64) {
-        let key = (DELEGATION_NONCE, attester.clone(), nonce);
-        if env.storage().persistent().has(&key) {
-            panic_with_error!(env, SASError::DelegationReplay);
+        extend_instance_ttl(env);
+        let key = (DELEGATION_NONCE, attester.clone());
+        if env.storage().instance().has(&key) {
+            let last: u64 = env.storage().instance().get(&key).unwrap();
+            if nonce <= last {
+                panic_with_error!(env, SASError::DelegationReplay);
+            }
         }
-        env.storage().persistent().set(&key, &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        env.storage().instance().set(&key, &nonce);
+        extend_instance_ttl(env);
     }
 
     /// Verifies an off-chain attestation signed by the attester's ed25519 key.
@@ -365,6 +387,7 @@ impl SAS {
         public_key: soroban_sdk::BytesN<32>,
         signature: soroban_sdk::BytesN<64>,
     ) -> bool {
+        extend_instance_ttl(&env);
         Self::require_attester_key(&env, &attestation.attester, &public_key);
 
         if attestation.revocation_time != 0 {
@@ -406,6 +429,7 @@ impl SAS {
     }
 
     pub fn verify_attestation(env: Env, uid: UID) -> bool {
+        extend_instance_ttl(&env);
         if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
             env.storage()
                 .persistent()
