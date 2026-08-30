@@ -25,6 +25,18 @@ field declaration.
 ## Verification
 When verifying an attestation off-chain or on-chain, the client decodes the raw `data` field using the associated schema definition. The schema enforces that every issued attestation strictly conforms to the expected layout.
 
+## Revocability
+A schema's `revocable` flag is a ceiling on what attestations issued under it are allowed to claim, not a mandate:
+
+| `schema.revocable` | `attestation.revocable` | Result |
+| --- | --- | --- |
+| `true`  | `true`  | Allowed — the attestation may later be revoked. |
+| `true`  | `false` | Allowed — a revocable schema may still issue irrevocable attestations. |
+| `false` | `false` | Allowed — matches the schema's policy. |
+| `false` | `true`  | **Rejected** with `SASError::NotRevocable`. |
+
+This is enforced once, inside `attest_internal`, before the attestation is stored or the resolver is invoked — every issuance path (`attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest`, and `replace_attestation`) shares this same check, so none of them can bypass it. Note this only constrains issuance: it does not change how `revoke`/`multi_revoke`/`replace_attestation` behave once an attestation exists, which continue to key off the attestation's own `revocable` flag.
+
 ## Resolver Callbacks
 Schemas can optionally specify a `resolver` contract address. If specified, the SAS contract will invoke callbacks on the resolver to enforce schema-specific rules or synchronize dependent state.
 

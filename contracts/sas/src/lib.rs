@@ -143,6 +143,15 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidSchema);
         };
 
+        // A revocable schema permits both revocable and irrevocable
+        // attestations; a non-revocable schema forbids an attestation from
+        // claiming `revocable = true` under it. See docs/schemas.md.
+        if let Err(err) =
+            soroban_sas_common::check_revocable(&env, schema.revocable, attestation.revocable)
+        {
+            panic_with_error!(&env, err);
+        }
+
         // Optional resolver callback support
         let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
             &schema.resolver,

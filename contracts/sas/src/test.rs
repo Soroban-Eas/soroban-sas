@@ -133,41 +133,6 @@ pub mod mock4 {
     }
 }
 
-pub mod mock4 {
-    use super::*;
-    #[contract]
-    pub struct MockIndexer;
-
-    #[contractimpl]
-    impl MockIndexer {
-        pub fn index_attestation(
-            env: Env,
-            uid: UID,
-            recipient: Address,
-            _schema_uid: UID,
-            _attester: Address,
-        ) {
-            let mut uids: soroban_sdk::Vec<UID> = env
-                .storage()
-                .persistent()
-                .get(&recipient)
-                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-            uids.push_back(uid);
-            env.storage().persistent().set(&recipient, &uids);
-        }
-
-        pub fn get_attestations_by_recipient(
-            env: Env,
-            recipient: Address,
-        ) -> soroban_sdk::Vec<UID> {
-            env.storage()
-                .persistent()
-                .get(&recipient)
-                .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
-        }
-    }
-}
-
 #[test]
 fn test_happy_path_attestation() {
     let env = Env::default();
