@@ -676,6 +676,7 @@ fn test_attest_with_value_collects_the_fee() {
 
     env.mock_all_auths();
     token_admin.mint(&attester, &1_000);
+    sas_client.set_fee(&token_id, &500);
 
     let attestation = attestation_fixture(&env, &attester, &recipient, [7u8; 32]);
     let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
@@ -751,7 +752,10 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
     let token_id = env.register_stellar_asset_contract(admin.clone());
 
     env.mock_all_auths();
+    sas_client.set_fee(&token_id, &500);
     let attestation = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
+    // Fee is configured but the attester has no balance: the transfer fails
+    // and no attestation is issued.
     let res = sas_client.try_attest_with_value(&attestation, &token_id, &500);
 
     assert!(res.is_err());
@@ -818,6 +822,7 @@ fn test_withdraw_tokens_requires_authorized_balance_and_event_path() {
 
     let attestation = attestation_fixture(&env, &attester, &recipient, [12u8; 32]);
     token_admin.mint(&attester, &1_000);
+    sas_client.set_fee(&token_id, &500);
     let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
     assert_eq!(uid, attestation.uid);
 

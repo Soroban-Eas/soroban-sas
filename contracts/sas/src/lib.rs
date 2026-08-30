@@ -435,14 +435,18 @@ impl SAS {
         uids
     }
 
-    /// Issues an attestation and collects `value` units of the SEP-41
-    /// `token` from the attester into this contract's balance.
+    /// Issues an attestation and collects the configured fee from the
+    /// attester into this contract's balance.
     ///
-    /// The transfer happens before the attestation is recorded, so a failed
-    /// payment aborts the whole invocation and no attestation is issued.
-    /// `value` must be non-negative (`SASError::InvalidValue`); a `value` of
-    /// zero performs no transfer, which keeps the entrypoint usable for
-    /// fee-free schemas without paying for a no-op token call.
+    /// The required `(token, value)` is fixed by `set_fee` / `clear_fee`, not
+    /// by the caller: a configured fee pins both the asset and the exact
+    /// amount, and with no fee configured the only accepted `value` is zero.
+    /// A wrong token, a short amount, or any attempt to pay a fee that was
+    /// not configured fails with `SASError::FeeMismatch` before anything is
+    /// recorded (#164). `value` must still be non-negative
+    /// (`SASError::InvalidValue`). The transfer happens before the
+    /// attestation is stored, so a failed payment aborts the whole
+    /// invocation.
     pub fn attest_with_value(
         env: Env,
         attestation: Attestation,
@@ -452,6 +456,21 @@ impl SAS {
         extend_instance_ttl(&env);
         if value < 0 {
             panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        // Bind payment to authenticated configuration rather than caller input.
+        let configured: Option<(Address, i128)> = env.storage().instance().get(&FEE_CONFIG);
+        match configured {
+            Some((fee_token, fee_amount)) => {
+                if token != fee_token || value != fee_amount {
+                    panic_with_error!(&env, SASError::FeeMismatch);
+                }
+            }
+            None => {
+                if value != 0 {
+                    panic_with_error!(&env, SASError::FeeMismatch);
+                }
+            }
         }
 
         attestation.attester.require_auth();
