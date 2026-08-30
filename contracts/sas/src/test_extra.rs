@@ -130,3 +130,65 @@ fn test_verify_offchain_rejects_unknown_and_deprecated_schema() {
     let res = sas_client.try_attest(&att2);
     assert_eq!(res, Err(Ok(SASError::InvalidSchema.into())));
 }
+
+/// Issue #76: `set_indexer` must classify the pre-init case instead of
+/// trapping on a missing admin entry, and must still gate on the configured
+/// admin's authorization once `init` has run.
+#[test]
+fn test_set_indexer_before_init_returns_not_initialized() {
+    let env = Env::default();
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let indexer = Address::generate(&env);
+
+    env.mock_all_auths();
+    let res = sas_client.try_set_indexer(&indexer);
+    assert_eq!(res, Err(Ok(SASError::NotInitialized.into())));
+
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let admin = Address::generate(&env);
+    sas_client.init(&admin, &registry_id);
+
+    // After init the call succeeds, and it is the configured admin whose
+    // authorization is required.
+    sas_client.set_indexer(&indexer);
+    let auths = env.auths();
+    assert_eq!(auths.first().map(|(addr, _)| addr.clone()), Some(admin));
+}
+
+/// Issue #77: attesting against an unconfigured schema registry must surface
+/// the configuration failure as `NotInitialized`, not as an unclassified host
+/// trap and not as whichever payload check happens to run first.
+#[test]
+fn test_attest_before_init_returns_not_initialized() {
+    let env = Env::default();
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let attestation = Attestation {
+        uid: UID(BytesN::from_array(&env, &[51u8; 32])),
+        schema_uid: UID(BytesN::from_array(&env, &[52u8; 32])),
+        time: 1000,
+        expiration_time: 0,
+        revocation_time: 0,
+        ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+        recipient: Address::generate(&env),
+        attester: Address::generate(&env),
+        revocable: true,
+        data: Bytes::new(&env),
+    };
+
+    env.mock_all_auths();
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::NotInitialized.into())));
+
+    // An otherwise-invalid payload reports the same configuration failure, so
+    // callers get one stable error code for "the contract was never set up".
+    let expired = Attestation {
+        uid: UID(BytesN::from_array(&env, &[53u8; 32])),
+        expiration_time: 1,
+        ..attestation
+    };
+    let res = sas_client.try_attest(&expired);
+    assert_eq!(res, Err(Ok(SASError::NotInitialized.into())));
+}

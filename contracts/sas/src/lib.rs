@@ -37,11 +37,26 @@ fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
+/// Reads the admin recorded by `init`, or panics `NotInitialized`.
+///
+/// Reading the entry with a bare `unwrap` turns "the contract was never
+/// initialized" into an unclassified host trap, which SDK and CLI callers
+/// cannot distinguish from a genuine failure. Going through this guard gives
+/// every initialization-dependent entry point one stable error code.
 fn require_admin(env: &Env) -> Address {
-    env.storage()
-        .instance()
-        .get(&SAS_ADMIN)
-        .unwrap_or_else(|| panic_with_error!(env, SASError::NotInitialized))
+    match env.storage().instance().get(&SAS_ADMIN) {
+        Some(admin) => admin,
+        None => panic_with_error!(env, SASError::NotInitialized),
+    }
+}
+
+/// Reads the schema registry recorded by `init`, or panics `NotInitialized`.
+/// Companion to [`require_admin`]; see that guard for the rationale.
+fn require_registry(env: &Env) -> Address {
+    match env.storage().instance().get(&SCHEMA_REGISTRY) {
+        Some(registry) => registry,
+        None => panic_with_error!(env, SASError::NotInitialized),
+    }
 }
 
 #[contractimpl]
@@ -94,7 +109,7 @@ impl SAS {
     /// Binds an Indexer contract that should mirror newly issued attestations.
     pub fn set_indexer(env: Env, indexer: Address) {
         extend_instance_ttl(&env);
-        let admin: Address = require_admin(&env);
+        let admin = require_admin(&env);
         admin.require_auth();
         env.storage().instance().set(&INDEXER, &indexer);
         extend_instance_ttl(&env);
@@ -174,6 +189,10 @@ impl SAS {
 
     fn attest_internal(env: Env, attestation: Attestation) -> UID {
         extend_instance_ttl(&env);
+        // Resolved up front so a missing registry is always reported as the
+        // configuration failure it is, instead of being masked by whichever
+        // payload check the attestation happens to fail first.
+        let registry = require_registry(&env);
         if env.storage().persistent().has(&attestation.uid) {
             panic_with_error!(&env, SASError::DuplicateAttestation);
         }
@@ -191,7 +210,6 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidRecipient);
         }
 
-        let registry: Address = env.storage().instance().get(&SCHEMA_REGISTRY).unwrap();
         let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
             &registry,
             &Symbol::new(&env, "get_schema"),
@@ -509,8 +527,7 @@ impl SAS {
     fn consume_delegation_nonce(env: &Env, attester: &Address, nonce: u64) {
         extend_instance_ttl(env);
         let key = (DELEGATION_NONCE, attester.clone());
-        if env.storage().instance().has(&key) {
-            let last: u64 = env.storage().instance().get(&key).unwrap();
+        if let Some(last) = env.storage().instance().get::<_, u64>(&key) {
             if nonce <= last {
                 panic_with_error!(env, SASError::DelegationReplay);
             }
@@ -564,11 +581,7 @@ impl SAS {
         // Unknown or deprecated schemas are rejected with InvalidSchema.
         // Deprecated schemas invalidate previously signed payloads as well,
         // not just new issuance; see doc comment above.
-        let registry: Address = env
-            .storage()
-            .instance()
-            .get(&SCHEMA_REGISTRY)
-            .unwrap_or_else(|| panic_with_error!(&env, SASError::NotInitialized));
+        let registry = require_registry(&env);
         let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
             &registry,
             &Symbol::new(&env, "get_schema"),

@@ -59,6 +59,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SAS` can bind an `Indexer` and mirror newly issued attestations so
   replacements are discoverable through indexer lookups.
 
+### Fixed
+- `SAS::set_indexer` and `SAS::attest` no longer trap when the contract has
+  not been initialized. Both now report `SASError::NotInitialized` through a
+  shared `require_admin` / `require_registry` guard, so SDK and CLI callers
+  get one stable error code for a missing `init` instead of an unclassified
+  host trap. `set_indexer` classifies the pre-init case before requiring
+  authorization; `attest` resolves the registry before payload validation so
+  a configuration failure is never masked by a payload complaint.
+  (#76, #77)
+- `Indexer::get_attestations_by_recipient` / `_by_schema` / `_by_attester`
+  now walk every chunk backing a lookup key instead of returning chunk 0
+  only, so a key with more than 100 UIDs is no longer silently truncated.
+  All three dimensions share the same cursor model as the paginated and
+  filtered reads. (#78)
+- Indexer chunk reads now extend the TTL of the entries they touch, so a
+  frequently queried but rarely updated index is not archived out from under
+  its callers. Reads of a missing chunk return empty without creating storage
+  or trapping. (#79)
+
 ### Known Issues
 - `SchemaRegistry::deprecate` currently lacks an authorization check.
 - Delegated attest/revoke signatures do not bind the full attestation payload or a nonce, permitting potential replay.
