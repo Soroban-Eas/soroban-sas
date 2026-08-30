@@ -150,6 +150,7 @@ impl SASClient {
         secret_seed: &[u8; 32],
         attestation: Attestation,
     ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
         let arg = simulate::encode_arg(env, &attestation)?;
         invoke_write(
             env,
@@ -294,6 +295,7 @@ impl SASClient {
         old_uid: &[u8; 32],
         new_data: Attestation,
     ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &new_data)?;
         let old_uid = UID(BytesN::from_array(env, old_uid));
         let args = vec![
             simulate::encode_arg(env, &old_uid)?,

@@ -7,6 +7,8 @@ pub enum SASError {
     /// Lifecycle errors
     /// A contract's `init` was called on an already-initialized instance.
     AlreadyInitialized = 1,
+    /// A privileged operation was called before `init` stored an admin.
+    NotInitialized = 2,
 
     /// Schema validation errors
     InvalidSchema = 101,
