@@ -4,21 +4,64 @@
 //! SDK needs to submit and track transactions, sends them over HTTP via
 //! `ureq`, and parses the matching JSON-RPC responses.
 
+use std::time::Duration;
+
 use crate::errors::SdkError;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use soroban_sdk::xdr::{Limits, ReadXdr, TransactionEnvelope};
+use ureq::{Agent, AgentBuilder};
+
+/// Per-request timeout applied by [`RpcClient`] unless overridden via
+/// [`RpcClient::with_timeout`].
+pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A Soroban RPC endpoint the SDK will submit requests to,
 /// e.g. `https://soroban-testnet.stellar.org`.
+///
+/// Every request is bounded by a per-request timeout
+/// ([`DEFAULT_RPC_TIMEOUT`] unless [`RpcClient::with_timeout`] overrides
+/// it), so a slow or unreachable node cannot block the calling thread
+/// indefinitely.
 pub struct RpcClient {
     pub network_url: String,
+    /// The effective per-request timeout. Kept alongside `agent` because
+    /// `ureq`'s agent doesn't expose its configured timeout; readable via
+    /// [`RpcClient::timeout`].
+    timeout: Duration,
+    /// HTTP agent preconfigured with `timeout`; every request goes through
+    /// it so none can bypass the bound.
+    agent: Agent,
 }
 
 impl RpcClient {
     pub fn new(network_url: impl Into<String>) -> Self {
         Self {
             network_url: network_url.into(),
+            timeout: DEFAULT_RPC_TIMEOUT,
+            agent: rpc_agent(DEFAULT_RPC_TIMEOUT),
         }
+    }
+
+    /// Overrides this client's per-request timeout, returning the configured
+    /// client. Lets callers tune the bound without touching
+    /// [`RpcClient::new`]'s signature, whose default stays
+    /// [`DEFAULT_RPC_TIMEOUT`].
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use soroban_sas_sdk::rpc::RpcClient;
+    ///
+    /// let client = RpcClient::new("https://soroban-testnet.stellar.org")
+    ///     .with_timeout(Duration::from_secs(30));
+    /// ```
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self.agent = rpc_agent(timeout);
+        self
+    }
+
+    /// The per-request timeout applied to every request made by this client.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// Builds the JSON-RPC request body for Soroban's `sendTransaction`.
@@ -155,12 +198,19 @@ impl RpcClient {
     /// POSTs a JSON-RPC request body to this client's `network_url` and
     /// returns the raw response body.
     fn post<P: Serialize>(&self, request: &JsonRpcRequest<P>) -> Result<String, SdkError> {
-        ureq::post(&self.network_url)
+        self.agent
+            .post(&self.network_url)
             .send_json(request)
-            .map_err(|err| SdkError::RpcError(err.to_string()))?
+            .map_err(|err| SdkError::TransportError(err.to_string()))?
             .into_string()
-            .map_err(|err| SdkError::RpcError(err.to_string()))
+            .map_err(|err| SdkError::TransportError(err.to_string()))
     }
+}
+
+/// Builds the `ureq` agent used for every [`RpcClient`] request, with
+/// `timeout` bounding each request end-to-end (connect + send + read).
+fn rpc_agent(timeout: Duration) -> Agent {
+    AgentBuilder::new().timeout(timeout).build()
 }
 
 /// Decodes a JSON-RPC response envelope and unwraps either its `result`
@@ -337,72 +387,7 @@ pub struct LedgerEntryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::xdr::{
-        DecoratedSignature, FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
-        FeeBumpTransactionInnerTx, Memo, MuxedAccount, Operation, Preconditions, SequenceNumber,
-        Signature, SignatureHint, Transaction, TransactionExt, TransactionV0,
-        TransactionV0Envelope, TransactionV0Ext, TransactionV1Envelope, Uint256, VecM, WriteXdr,
-    };
-
-    fn v1_envelope_xdr() -> String {
-        TransactionEnvelope::Tx(TransactionV1Envelope {
-            tx: transaction_v1(),
-            signatures: VecM::default(),
-        })
-        .to_xdr_base64(Limits::none())
-        .unwrap()
-    }
-
-    fn v0_envelope_xdr() -> String {
-        TransactionEnvelope::TxV0(TransactionV0Envelope {
-            tx: TransactionV0 {
-                source_account_ed25519: Uint256([1u8; 32]),
-                fee: 100,
-                seq_num: SequenceNumber(1),
-                time_bounds: None,
-                memo: Memo::None,
-                operations: VecM::default(),
-                ext: TransactionV0Ext::V0,
-            },
-            signatures: VecM::default(),
-        })
-        .to_xdr_base64(Limits::none())
-        .unwrap()
-    }
-
-    fn fee_bump_envelope_xdr() -> String {
-        TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope {
-            tx: FeeBumpTransaction {
-                fee_source: MuxedAccount::Ed25519(Uint256([2u8; 32])),
-                fee: 200,
-                inner_tx: FeeBumpTransactionInnerTx::Tx(TransactionV1Envelope {
-                    tx: transaction_v1(),
-                    signatures: VecM::default(),
-                }),
-                ext: FeeBumpTransactionExt::V0,
-            },
-            signatures: vec![DecoratedSignature {
-                hint: SignatureHint([0; 4]),
-                signature: Signature(vec![0u8; 64].try_into().unwrap()),
-            }]
-            .try_into()
-            .unwrap(),
-        })
-        .to_xdr_base64(Limits::none())
-        .unwrap()
-    }
-
-    fn transaction_v1() -> Transaction {
-        Transaction {
-            source_account: MuxedAccount::Ed25519(Uint256([3u8; 32])),
-            fee: 100,
-            seq_num: SequenceNumber(1),
-            cond: Preconditions::None,
-            memo: Memo::None,
-            operations: VecM::<Operation, 100>::default(),
-            ext: TransactionExt::V0,
-        }
-    }
+    use std::time::Instant;
 
     #[test]
     fn builds_send_transaction_request() {
@@ -627,5 +612,102 @@ mod tests {
             .parse_get_transaction_response("not json")
             .unwrap_err();
         assert!(matches!(err, SdkError::RpcError(_)));
+    }
+
+    #[test]
+    fn defaults_to_a_ten_second_timeout() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        assert_eq!(client.timeout(), DEFAULT_RPC_TIMEOUT);
+    }
+
+    #[test]
+    fn with_timeout_overrides_the_default() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org")
+            .with_timeout(Duration::from_secs(42));
+        assert_eq!(client.timeout(), Duration::from_secs(42));
+    }
+
+    /// Issue #22 acceptance criterion: pointing the client at a port where
+    /// nothing is listening must produce a transport-level
+    /// `SdkError::RpcError` promptly instead of blocking the caller.
+    #[test]
+    fn unreachable_endpoint_fails_within_two_seconds_instead_of_hanging() {
+        let client = RpcClient::new("http://127.0.0.1:1");
+
+        let start = Instant::now();
+        let err = client
+            .get_ledger_entries(vec!["AAAAAA==".to_string()])
+            .unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(err, SdkError::TransportError(_)),
+            "expected SdkError::TransportError, got {err:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "unreachable endpoint took {elapsed:?} to fail; the client hangs"
+        );
+    }
+
+    /// A listener that accepts TCP connections but never writes anything:
+    /// the only way the request below can finish is the configured timeout
+    /// firing, proving the agent's bound really cuts off a hung node rather
+    /// than merely relying on the OS refusing the connection.
+    #[test]
+    fn hung_node_is_cut_off_by_the_configured_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            // Hold every accepted socket open without ever responding.
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => held.push(stream),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let client = RpcClient::new(url.as_str()).with_timeout(Duration::from_millis(500));
+
+        let start = Instant::now();
+        let err = client.get_transaction("deadbeef").unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(err, SdkError::TransportError(_)),
+            "expected SdkError::TransportError, got {err:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(400),
+            "returned after {elapsed:?}; the server never answers, so \
+             nothing should succeed before the timeout fires"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "hung node took {elapsed:?} to fail; timeout not applied"
+        );
+    }
+
+    /// Happy-path guard: with the timeout-wired agent in place, ordinary
+    /// requests against the public testnet still round-trip. Ignored by
+    /// default so the suite stays offline; run with
+    /// `cargo test -p soroban-sas-sdk -- --ignored`.
+    #[test]
+    #[ignore = "requires network access to soroban-testnet.stellar.org"]
+    fn live_testnet_request_succeeds_with_the_timeout_wired_agent() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let result = client.get_ledger_entries(vec![]);
+
+        match result {
+            Ok(response) => assert!(response.latest_ledger > 0),
+            // The server may reject our request body outright; what matters
+            // here is that the request round-tripped through the
+            // timeout-wired agent instead of failing at transport (which
+            // would surface as `SdkError::TransportError`, not this).
+            Err(SdkError::RpcError(_)) => {}
+            Err(err) => panic!("unexpected error kind from live testnet: {err:?}"),
+        }
     }
 }

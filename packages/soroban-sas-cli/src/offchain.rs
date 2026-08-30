@@ -80,6 +80,31 @@ pub fn parse_attestation(env: &Env, input: &AttestationInput) -> Result<Attestat
     })
 }
 
+/// Derives a fresh 32-byte UID for a new attestation from its content plus
+/// `entropy` (the issuing call's timestamp in nanoseconds), so the CLI's
+/// `attest attest` subcommand can issue an attestation without requiring the
+/// caller to pick a UID by hand. Not a content hash in the cryptographic
+/// sense — `entropy` exists purely so two attestations with identical
+/// content don't collide.
+pub fn generate_uid(
+    env: &Env,
+    schema_uid: &[u8; 32],
+    recipient: &str,
+    attester: &str,
+    data: &[u8],
+    entropy: u128,
+) -> [u8; 32] {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(schema_uid);
+    buf.extend_from_slice(recipient.as_bytes());
+    buf.extend_from_slice(attester.as_bytes());
+    buf.extend_from_slice(data);
+    buf.extend_from_slice(&entropy.to_be_bytes());
+    env.crypto()
+        .sha256(&Bytes::from_slice(env, &buf))
+        .to_array()
+}
+
 /// Computes the payload digest for `input` bound to the given network
 /// passphrase, contract, and nonce. Matches the on-chain digest exactly.
 pub fn compute_payload_hash(

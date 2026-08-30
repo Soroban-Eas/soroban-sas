@@ -18,6 +18,7 @@ pub enum SASError {
     AlreadyRevoked = 202,
     NotRevocable = 203,
     AlreadyExpired = 204,
+    DuplicateAttestation = 205,
 
     /// Authorization errors
     Unauthorized = 301,
@@ -29,4 +30,8 @@ pub enum SASError {
     InvalidRecipient = 402,
     /// A fee/value amount was negative.
     InvalidValue = 403,
+    /// The configured dependency does not implement the required interface.
+    IncompatibleDependency = 404,
+    /// The requested attestation batch exceeds the protocol limit.
+    BatchTooLarge = 405,
 }

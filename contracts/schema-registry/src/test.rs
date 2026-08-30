@@ -23,6 +23,24 @@ fn test_register_schema() {
 }
 
 #[test]
+fn test_register_rejects_malformed_schema_strings() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    for schema in ["!!!", " ", "12345"] {
+        let schema = String::from_str(&env, schema);
+        let res = client.try_register(&owner, &schema, &resolver, &true);
+        assert_eq!(res, Err(Ok(soroban_sas_common::SASError::InvalidSchema.into())));
+    }
+}
+
+#[test]
 fn test_register_emits_schema_registered_event() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SchemaRegistry);

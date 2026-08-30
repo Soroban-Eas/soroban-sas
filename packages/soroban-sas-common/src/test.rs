@@ -11,7 +11,9 @@ fn test_uid_deterministic() {
     assert_ne!(uid1, uid3);
 }
 
+use crate::validation::validate_schema_syntax;
 use crate::validation::validate_ttl;
+use crate::validation::validate_recipient;
 use soroban_sdk::Env;
 
 #[test]
@@ -25,6 +27,42 @@ fn test_validate_ttl() {
     // Invalid cases
     assert!(validate_ttl(&env, 200, 100).is_err());
     assert!(validate_ttl(&env, 100, 100).is_err()); // expired exactly at current time
+}
+
+#[test]
+fn test_validate_schema_syntax_rejects_malformed_strings() {
+    let env = Env::default();
+
+    for schema in ["!!!", " ", "12345", "field_only"] {
+        let schema = soroban_sdk::String::from_str(&env, schema);
+        assert_eq!(
+            validate_schema_syntax(&env, &schema),
+            Err(crate::errors::SASError::InvalidSchema)
+        );
+    }
+
+    let schema = soroban_sdk::String::from_str(&env, "first_name String, last_name String");
+    assert!(validate_schema_syntax(&env, &schema).is_ok());
+}
+
+#[test]
+fn test_validate_recipient_rejects_zero_addresses() {
+    let env = Env::default();
+
+    let zero_account = account_address(&env, &[0u8; 32]);
+    let zero_contract = Address::from_string(&SorobanString::from_str(
+        &env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    ));
+
+    assert_eq!(
+        validate_recipient(&env, &zero_account),
+        Err(crate::errors::SASError::InvalidRecipient)
+    );
+    assert_eq!(
+        validate_recipient(&env, &zero_contract),
+        Err(crate::errors::SASError::InvalidRecipient)
+    );
 }
 
 use crate::merkle::MerkleRoot;

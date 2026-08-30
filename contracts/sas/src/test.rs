@@ -38,14 +38,21 @@ pub mod mock1 {
 
     #[contractimpl]
     impl MockRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
+            true
+        }
+
+        pub fn SASREG(_env: Env) -> bool {
             true
         }
 
         pub fn get_schema(env: Env, uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             Some(soroban_sas_common::SchemaRecord {
                 uid: uid.clone(),
-                resolver: Address::generate(&env),
+                resolver: env.current_contract_address(),
                 revocable: true,
                 schema: soroban_sdk::String::from_str(&env, "bool like"),
             })
@@ -60,8 +67,14 @@ pub mod mock2 {
 
     #[contractimpl]
     impl MockRejectRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
             false
+        }
+        pub fn SASREG(_env: Env) -> bool {
+            true
         }
         pub fn get_schema(_env: Env, _uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
             None
@@ -78,6 +91,44 @@ pub mod mock3 {
     impl MockResolver {
         pub fn on_attest(_env: Env, _attestation: Attestation) {
             // Mock execution
+        }
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {
+            // Mock execution
+        }
+    }
+}
+
+pub mod mock4 {
+    use super::*;
+    #[contract]
+    pub struct MockIndexer;
+
+    #[contractimpl]
+    impl MockIndexer {
+        pub fn index_attestation(
+            env: Env,
+            uid: UID,
+            recipient: Address,
+            _schema_uid: UID,
+            _attester: Address,
+        ) {
+            let mut uids: soroban_sdk::Vec<UID> = env
+                .storage()
+                .persistent()
+                .get(&recipient)
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+            uids.push_back(uid);
+            env.storage().persistent().set(&recipient, &uids);
+        }
+
+        pub fn get_attestations_by_recipient(
+            env: Env,
+            recipient: Address,
+        ) -> soroban_sdk::Vec<UID> {
+            env.storage()
+                .persistent()
+                .get(&recipient)
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         }
     }
 }
@@ -786,6 +837,48 @@ fn test_unknown_schema_reports_invalid_schema() {
     env.mock_all_auths();
     let res = sas_client.try_attest(&attestation);
     assert_eq!(res, Err(Ok(SASError::InvalidSchema.into())));
+}
+
+#[test]
+fn test_attest_rejects_zero_recipient() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    ));
+    let attestation = attestation_fixture(&env, &attester, &recipient, [15u8; 32]);
+
+    env.mock_all_auths();
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidRecipient.into())));
+}
+
+#[test]
+fn test_attest_rejects_self_attestation() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let attestation = attestation_fixture(&env, &attester, &attester, [16u8; 32]);
+
+    env.mock_all_auths();
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidRecipient.into())));
 }
 
 #[test]

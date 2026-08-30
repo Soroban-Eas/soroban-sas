@@ -21,6 +21,16 @@ jobs:
           toolchain: 1.79.0
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Check Formatting
         run: cargo fmt --all -- --check
 
@@ -35,6 +45,16 @@ jobs:
           toolchain: 1.79.0
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -49,5 +69,45 @@ jobs:
           toolchain: 1.79.0
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Run Tests
         run: cargo test --workspace
+
+  build-contracts:
+    name: Build contracts (WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.79.0
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Build contracts (WASM)
+        run: |
+          cargo build \
+            --package sas \
+            --package schema-registry \
+            --package soroban-sas-indexer \
+            --target wasm32-unknown-unknown \
+            --release

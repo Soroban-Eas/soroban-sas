@@ -1,6 +1,16 @@
 use super::*;
 use soroban_sas_common::UID;
-use soroban_sdk::{testutils::Address as _, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Env};
+
+mod mock {
+    use super::*;
+    #[contract]
+    pub struct MockSas;
+    #[contractimpl]
+    impl MockSas {
+        pub fn SASV1(_env: Env) -> bool { true }
+    }
+}
 
 #[test]
 fn test_init_records_admin_and_sas_binding() {
@@ -9,7 +19,7 @@ fn test_init_records_admin_and_sas_binding() {
     let client = IndexerClient::new(&env, &indexer_id);
 
     let admin = Address::generate(&env);
-    let sas = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
 
     assert_eq!(client.get_admin(), None);
     client.init(&admin, &sas);
@@ -25,7 +35,7 @@ fn test_init_twice_is_rejected() {
     let client = IndexerClient::new(&env, &indexer_id);
 
     let admin = Address::generate(&env);
-    let sas = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
     client.init(&admin, &sas);
 
     let res = client.try_init(&admin, &sas);
@@ -118,6 +128,35 @@ fn test_attester_indexing_large_datasets() {
 fn test_cursor_pagination_large_datasets() {
     let env = Env::default();
     let indexer_id = env.register_contract(None, Indexer);
-    let _client = IndexerClient::new(&env, &indexer_id);
-    assert_eq!(1, 1);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[6u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    for i in 0..101u8 {
+        let mut bytes = [0u8; 32];
+        bytes[0] = i;
+        let uid = UID(soroban_sdk::BytesN::from_array(&env, &bytes));
+        client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+    }
+
+    let chunk0: soroban_sdk::Vec<UID> = env.as_contract(&indexer_id, || {
+        env.storage()
+            .persistent()
+            .get(&(recipient.clone(), 0u32))
+            .unwrap()
+    });
+    let chunk1: soroban_sdk::Vec<UID> = env.as_contract(&indexer_id, || {
+        env.storage()
+            .persistent()
+            .get(&(recipient.clone(), 1u32))
+            .unwrap()
+    });
+
+    assert_eq!(chunk0.len(), 100);
+    assert_eq!(chunk1.len(), 1);
+
+    let paginated = client.get_atts_by_recipient_paginated(&recipient, &0, &10);
+    assert_eq!(paginated.len(), 10);
 }

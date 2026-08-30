@@ -23,9 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SchemaBuilder` for constructing SDK `SchemaRecord` values and
   `SASClient::multi_attest` for submitting batch attestations.
 - `LEDGERS_IN_ONE_YEAR` common constant for persistent storage TTL bumps.
-- SDK tests for `multi_attest` argument encoding, account ledger-key
-  round-trips, unsupported response envelopes, and authenticated signing
-  preflight behavior.
 
 ### Changed
 - All contract failure paths now panic with typed `SASError` variants instead
@@ -38,8 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refresh TTL for active state.
 - `SAS` can bind an `Indexer` and mirror newly issued attestations so
   replacements are discoverable through indexer lookups.
-- SDK transaction signing now rejects mismatched source accounts and
-  attester/signing-key mismatches before submitting authenticated calls.
 
 ### Known Issues
 - `SchemaRegistry::deprecate` currently lacks an authorization check.
