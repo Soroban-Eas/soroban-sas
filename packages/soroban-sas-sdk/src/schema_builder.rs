@@ -46,8 +46,12 @@ impl SchemaBuilder {
             .ok_or_else(|| SdkError::RpcError("resolver address is required".to_string()))?;
         let resolver = Address::from_string(&SorobanString::from_str(env, &resolver));
 
+        // Must match the on-chain UID derivation in contracts/schema-registry
+        // (schema XDR || resolver XDR || revocable byte).
         let mut payload = Bytes::new(env);
         payload.append(&schema.clone().to_xdr(env));
+        payload.append(&resolver.clone().to_xdr(env));
+        payload.append(&Bytes::from_slice(env, &[self.revocable as u8]));
         let uid = UID(BytesN::from_array(
             env,
             &env.crypto().sha256(&payload).to_array(),

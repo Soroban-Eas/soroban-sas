@@ -20,20 +20,8 @@ const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
 const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
 
-/// Index status model driven by SAS callbacks / events. Historical UIDs
-/// are never deleted — a revoked or replaced entry remains auditable but
-/// can be filtered out via `include_revoked=false` queries.
-const STATUS_KEY: Symbol = symbol_short!("STATUS");
-const REPLACED_BY_KEY: Symbol = symbol_short!("REPLBY");
-const REPLACES_KEY: Symbol = symbol_short!("REPLACES");
-
-/// On-chain status for a single indexed attestation.
-#[contracttype]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum IndexStatus {
-    Active = 0,
-    Revoked = 1,
-    Replaced = 2,
+fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
 fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
@@ -64,6 +52,7 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
 
     total += 1;
     env.storage().instance().set(&count_key, &total);
+    extend_instance_ttl(env);
 }
 
 fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
@@ -94,6 +83,7 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
 
     total += 1;
     env.storage().instance().set(&count_key, &total);
+    extend_instance_ttl(env);
 }
 
 fn set_index_status(env: &Env, uid: &UID, status: IndexStatus) {
@@ -161,6 +151,7 @@ impl Indexer {
     /// attestations it indexes. Callable exactly once; a second call panics
     /// with `SASError::AlreadyInitialized`.
     pub fn init(env: Env, admin: Address, sas: Address) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&INDEXER_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
@@ -172,17 +163,20 @@ impl Indexer {
         }
         env.storage().instance().set(&INDEXER_ADMIN, &admin);
         env.storage().instance().set(&SAS_CONTRACT, &sas);
+        extend_instance_ttl(&env);
     }
 
     /// Returns the admin address recorded by `init`, if the indexer has been
     /// initialized.
     pub fn get_admin(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
         env.storage().instance().get(&INDEXER_ADMIN)
     }
 
     /// Returns the SAS contract address this indexer is bound to, if the
     /// indexer has been initialized.
     pub fn get_sas(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
         env.storage().instance().get(&SAS_CONTRACT)
     }
 
@@ -193,66 +187,15 @@ impl Indexer {
         schema_uid: UID,
         attester: Address,
     ) {
+        extend_instance_ttl(&env);
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
-        set_index_status(&env, &uid, IndexStatus::Active);
-    }
-
-    /// Callback invoked by the bound SAS contract when `uid` is revoked.
-    /// Retains the UID in history but marks it `Revoked` so
-    /// `include_revoked=false` queries filter it out. Anyone may call this
-    /// entry point, but in production only the SAS contract does; off-chain
-    /// indexers additionally verify the matching `REVOKED` event.
-    pub fn handle_revoke(env: Env, uid: UID) {
-        set_index_status(&env, &uid, IndexStatus::Revoked);
-    }
-
-    /// Callback invoked by SAS when `old_uid` is replaced by `new_uid`.
-    /// The old entry becomes `Replaced` and stores a forward link to the
-    /// new UID; the new UID's reverse link (`replaces`) points back. Both
-    /// UIDs remain in the historical index; active-only queries return
-    /// only the new UID.
-    pub fn handle_replace(env: Env, old_uid: UID, new_uid: UID) {
-        set_index_status(&env, &old_uid, IndexStatus::Replaced);
-        let fwd = (REPLACED_BY_KEY, old_uid.clone());
-        env.storage().persistent().set(&fwd, &new_uid);
-        env.storage()
-            .persistent()
-            .extend_ttl(&fwd, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
-        let rev = (REPLACES_KEY, new_uid.clone());
-        env.storage().persistent().set(&rev, &old_uid);
-        env.storage()
-            .persistent()
-            .extend_ttl(&rev, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
-        // New UID is already marked Active via `index_attestation`; ensure it.
-        set_index_status(&env, &new_uid, IndexStatus::Active);
-    }
-
-    /// Returns the indexed status of `uid`, or `None` if the UID was never
-    /// indexed (legacy entry without a status marker reads as `Active` via
-    /// `is_active`).
-    pub fn get_attestation_status(env: Env, uid: UID) -> Option<IndexStatus> {
-        env.storage()
-            .persistent()
-            .get(&(STATUS_KEY, uid))
-    }
-
-    /// Forward link for a replaced attestation: `old_uid` -> `Some(new_uid)`.
-    pub fn get_replacement(env: Env, old_uid: UID) -> Option<UID> {
-        env.storage()
-            .persistent()
-            .get(&(REPLACED_BY_KEY, old_uid))
-    }
-
-    /// Reverse link for a replacement: `new_uid` -> `Some(old_uid)`.
-    pub fn get_replaces(env: Env, new_uid: UID) -> Option<UID> {
-        env.storage()
-            .persistent()
-            .get(&(REPLACES_KEY, new_uid))
+        extend_instance_ttl(&env);
     }
 
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         let chunk_index = 0u32;
         env.storage()
             .persistent()
@@ -261,6 +204,7 @@ impl Indexer {
     }
 
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         let chunk_index = 0u32;
         env.storage()
             .persistent()
@@ -269,6 +213,7 @@ impl Indexer {
     }
 
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         let chunk_index = 0u32;
         env.storage()
             .persistent()
@@ -282,6 +227,7 @@ impl Indexer {
         cursor: u32,
         limit: u32,
     ) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
         if limit == 0 {
             return soroban_sdk::Vec::new(&env);
         }

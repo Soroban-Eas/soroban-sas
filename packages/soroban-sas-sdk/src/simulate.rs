@@ -210,6 +210,21 @@ pub fn sign_transaction(
     tx: Transaction,
     secret_seed: &[u8; 32],
 ) -> Result<String, SdkError> {
+    let public_key = crate::signature::derive_public_key(secret_seed);
+    match tx.source_account {
+        MuxedAccount::Ed25519(Uint256(source)) if source == public_key => {}
+        MuxedAccount::Ed25519(_) => {
+            return Err(SdkError::DecodingError(
+                "transaction source account does not match signing key".to_string(),
+            ));
+        }
+        _ => {
+            return Err(SdkError::DecodingError(
+                "unsupported transaction source account variant".to_string(),
+            ));
+        }
+    }
+
     let payload = TransactionSignaturePayload {
         network_id: Hash(*network_id),
         tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(tx.clone()),
@@ -222,7 +237,6 @@ pub fn sign_transaction(
         .sha256(&Bytes::from_slice(env, &payload_bytes))
         .to_array();
 
-    let public_key = crate::signature::derive_public_key(secret_seed);
     let signature_bytes = crate::signature::generate_delegated_signature(secret_seed, &hash);
     let hint = SignatureHint([
         public_key[28],
@@ -374,6 +388,31 @@ mod tests {
         let verifying_key = VerifyingKey::from_bytes(&public_key).unwrap();
         let signature = DalekSignature::from_slice(sig.signature.0.as_slice()).unwrap();
         assert!(verifying_key.verify(&hash, &signature).is_ok());
+    }
+
+    #[test]
+    fn signing_rejects_mismatched_source_account_before_submission() {
+        let env = Env::default();
+        let seed = [3u8; 32];
+        let contract = stellar_strkey::Contract([0u8; 32]).to_string();
+        let tx = build_invoke_transaction(
+            &[9u8; 32],
+            41,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "attest",
+            vec![],
+        )
+        .unwrap();
+
+        let err = sign_transaction(&env, &[4u8; 32], tx, &seed).unwrap_err();
+        match err {
+            SdkError::DecodingError(msg) => {
+                assert!(msg.contains("source account does not match signing key"));
+            }
+            other => panic!("expected DecodingError, got {other:?}"),
+        }
     }
 
     #[test]
