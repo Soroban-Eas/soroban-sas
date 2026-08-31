@@ -20,6 +20,16 @@ use soroban_sdk::{contracttype, Address, Bytes, String};
 /// Approximate number of ledgers in one year at five seconds per ledger.
 pub const LEDGERS_IN_ONE_YEAR: u32 = 6_307_200;
 
+/// Maximum byte length of `Attestation.data` accepted on-chain.
+///
+/// Large payloads increase hashing, XDR encoding, event emission, storage,
+/// and cross-contract invocation costs. A bounded ceiling keeps these within
+/// the measured Soroban budget envelope and prevents unpredictable budget
+/// exhaustion or ledger-entry size violations. The value is chosen to be
+/// well within Soroban limits while accommodating typical attestation
+/// payloads. (#157)
+pub const MAX_ATTESTATION_DATA_BYTES: u32 = 10_000;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UID(pub soroban_sdk::BytesN<32>);

@@ -45,6 +45,12 @@ fn resolve_network_passphrase(
 /// from the local identity store only when the flag is entirely absent.
 fn resolve_secret_key(explicit: Option<String>, identity: Option<&str>) -> Result<String, String> {
     if let Some(secret) = explicit {
+        eprintln!(
+            "warning: --secret-key / SAS_SECRET_KEY is deprecated and will be removed \
+             in a future release. Use --identity <name> (a file in \
+             ~/.soroban-sas/identities/) instead to keep secrets out of process \
+             arguments and shell history."
+        );
         return Ok(secret);
     }
     match identity {

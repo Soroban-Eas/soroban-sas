@@ -27,14 +27,12 @@
       ]
     ],
     [],
-    [],
-    [],
     []
   ],
   "ledger": {
     "protocol_version": 20,
     "sequence_number": 0,
-    "timestamp": 100,
+    "timestamp": 7777,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -80,7 +78,7 @@
             "key": {
               "vec": [
                 {
-                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                  "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                 }
               ]
             },
@@ -97,7 +95,7 @@
                 "key": {
                   "vec": [
                     {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                      "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                     }
                   ]
                 },
@@ -109,7 +107,7 @@
                         "symbol": "attester"
                       },
                       "val": {
-                        "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                        "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
                       }
                     },
                     {
@@ -117,7 +115,7 @@
                         "symbol": "data"
                       },
                       "val": {
-                        "bytes": "010203"
+                        "bytes": ""
                       }
                     },
                     {
@@ -161,7 +159,7 @@
                         "symbol": "revocation_time"
                       },
                       "val": {
-                        "u64": 100
+                        "u64": 0
                       }
                     },
                     {
@@ -181,7 +179,7 @@
                         "symbol": "time"
                       },
                       "val": {
-                        "u64": 0
+                        "u64": 7777
                       }
                     },
                     {
@@ -191,7 +189,7 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                            "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                           }
                         ]
                       }
@@ -251,12 +249,12 @@
                               "symbol": "DELNONCE"
                             },
                             {
-                              "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                              "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
                             }
                           ]
                         },
                         "val": {
-                          "u64": 2
+                          "u64": 1
                         }
                       }
                     ]
@@ -454,7 +452,7 @@
                         "symbol": "attester"
                       },
                       "val": {
-                        "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                        "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
                       }
                     },
                     {
@@ -462,7 +460,7 @@
                         "symbol": "data"
                       },
                       "val": {
-                        "bytes": "010203"
+                        "bytes": ""
                       }
                     },
                     {
@@ -526,7 +524,7 @@
                         "symbol": "time"
                       },
                       "val": {
-                        "u64": 1000
+                        "u64": 1
                       }
                     },
                     {
@@ -536,7 +534,7 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                            "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                           }
                         ]
                       }
@@ -547,10 +545,10 @@
                   "u64": 1
                 },
                 {
-                  "bytes": "c6e5e75dae7c7c01b3b12dfb4f77b415bbe2c6c82916002b6a03eb76cb7573268ab5e6edb64cb0d47d2456defadc807bbad7c79a5fceea171a5355f233a23104"
+                  "bytes": "6860fd62bae109592b03bbb11136514aea8147fa3b26405e966a2abcf160641c6fe6caeb09d7d23b2673bbe79df2ad7d9d8108c0505187645ae2bce00808da08"
                 },
                 {
-                  "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+                  "bytes": "e28a8970753332bd72fef413e6b0b2ef1b4aadda7aa2c141f233712a6876b351"
                 }
               ]
             }
@@ -674,7 +672,7 @@
                     "symbol": "attester"
                   },
                   "val": {
-                    "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                    "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
                   }
                 },
                 {
@@ -682,7 +680,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": "010203"
+                    "bytes": ""
                   }
                 },
                 {
@@ -746,7 +744,7 @@
                     "symbol": "time"
                   },
                   "val": {
-                    "u64": 1000
+                    "u64": 1
                   }
                 },
                 {
@@ -756,7 +754,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                        "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                       }
                     ]
                   }
@@ -808,7 +806,7 @@
                 ]
               },
               {
-                "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
               }
             ],
             "data": {
@@ -818,7 +816,7 @@
                     "symbol": "attester"
                   },
                   "val": {
-                    "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                    "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
                   }
                 },
                 {
@@ -848,7 +846,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                        "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                       }
                     ]
                   }
@@ -878,349 +876,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
-              },
-              {
-                "symbol": "revoke_by_delegation"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "vec": [
-                    {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                    }
-                  ]
-                },
-                {
-                  "u64": 2
-                },
-                {
-                  "bytes": "c0acf6215cd19f2b549ec90c664818790503298a321423659999c04a54bc0774c73306bc81e493721b31ceb0a366cb4e72343a42b6e0cd9018678a39f60e6009"
-                },
-                {
-                  "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "REVOKED"
-              },
-              {
-                "vec": [
-                  {
-                    "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                  }
-                ]
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "timestamp"
-                  },
-                  "val": {
-                    "u64": 100
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "uid"
-                  },
-                  "val": {
-                    "vec": [
-                      {
-                        "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "revoke_by_delegation"
-              }
-            ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
-              },
-              {
-                "symbol": "verify_attestation"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "verify_attestation"
-              }
-            ],
-            "data": {
-              "bool": false
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
-              },
-              {
-                "symbol": "revoke_by_delegation"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "vec": [
-                    {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                    }
-                  ]
-                },
-                {
-                  "u64": 2
-                },
-                {
-                  "bytes": "c0acf6215cd19f2b549ec90c664818790503298a321423659999c04a54bc0774c73306bc81e493721b31ceb0a366cb4e72343a42b6e0cd9018678a39f60e6009"
-                },
-                {
-                  "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "error"
-              },
-              {
-                "error": {
-                  "contract": 303
-                }
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "string": "failing with contract error"
-                },
-                {
-                  "u32": 303
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "error"
-              },
-              {
-                "error": {
-                  "contract": 303
-                }
-              }
-            ],
-            "data": {
-              "string": "escalating error to panic"
-            }
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "error"
-              },
-              {
-                "error": {
-                  "contract": 303
-                }
-              }
-            ],
-            "data": {
-              "string": "caught error from function"
-            }
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "error"
-              },
-              {
-                "error": {
-                  "contract": 303
-                }
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "string": "contract try_call failed"
-                },
-                {
-                  "symbol": "revoke_by_delegation"
-                },
-                {
-                  "vec": [
-                    {
-                      "vec": [
-                        {
-                          "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
-                        }
-                      ]
-                    },
-                    {
-                      "u64": 2
-                    },
-                    {
-                      "bytes": "c0acf6215cd19f2b549ec90c664818790503298a321423659999c04a54bc0774c73306bc81e493721b31ceb0a366cb4e72343a42b6e0cd9018678a39f60e6009"
-                    },
-                    {
-                      "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
-                    }
-                  ]
+                  "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                 }
               ]
             }

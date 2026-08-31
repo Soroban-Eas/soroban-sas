@@ -42,4 +42,6 @@ pub enum SASError {
     /// A bound Indexer could not be invoked and the contract is configured to
     /// fail closed on indexing errors (#161).
     IndexerUnavailable = 407,
+    /// `Attestation.data` exceeds the maximum allowed payload size (#157).
+    PayloadTooLarge = 408,
 }

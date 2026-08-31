@@ -1,7 +1,9 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 
-use soroban_sas_common::{Attestation, SASError, LEDGERS_IN_ONE_YEAR, UID};
+extern crate alloc;
+
+use soroban_sas_common::{Attestation, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID};
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
 };
@@ -226,12 +228,19 @@ impl SAS {
         Self::attest_internal(env, attestation)
     }
 
-    fn attest_internal(env: Env, attestation: Attestation) -> UID {
+    fn attest_internal(env: Env, mut attestation: Attestation) -> UID {
         extend_instance_ttl(&env);
         // Resolved up front so a missing registry is always reported as the
         // configuration failure it is, instead of being masked by whichever
         // payload check the attestation happens to fail first.
         let registry = require_registry(&env);
+
+        // Bound payload size before any storage, hashing, or cross-contract
+        // calls so oversized attestations fail fast with a typed error. (#157)
+        if attestation.data.len() > MAX_ATTESTATION_DATA_BYTES {
+            panic_with_error!(&env, SASError::PayloadTooLarge);
+        }
+
         if env.storage().persistent().has(&attestation.uid) {
             panic_with_error!(&env, SASError::DuplicateAttestation);
         }
@@ -264,6 +273,11 @@ impl SAS {
             &Symbol::new(&env, "on_attest"),
             soroban_sdk::vec![&env, attestation.clone().into_val(&env)],
         );
+
+        // Normalize the issuance timestamp to the authoritative ledger close
+        // time so that direct, delegated, batch, paid, and replacement paths
+        // all record the same canonical value. (#156)
+        attestation.time = env.ledger().timestamp();
 
         // Store the attestation
         env.storage()

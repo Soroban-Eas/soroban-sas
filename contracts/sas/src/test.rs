@@ -755,11 +755,15 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
     sas_client.set_fee(&token_id, &500);
     let attestation = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
     // Fee is configured but the attester has no balance: the transfer fails
-    // and no attestation is issued.
+    // and no attestation is issued. Use the try_* client API so the host
+    // trap is captured as a deterministic Err rather than aborting the suite.
     let res = sas_client.try_attest_with_value(&attestation, &token_id, &500);
 
-    assert!(res.is_err());
-    assert!(!sas_client.verify_attestation(&attestation.uid));
+    assert!(res.is_err(), "expected host error for insufficient balance");
+    assert!(
+        !sas_client.verify_attestation(&attestation.uid),
+        "no attestation must be stored after a failed fee transfer"
+    );
 }
 
 #[test]
@@ -1859,4 +1863,133 @@ fn test_reindex_attestation_reports_still_unavailable_indexer() {
 
     let res = sas_client.try_reindex_attestation(&uid);
     assert_eq!(res, Err(Ok(SASError::IndexerUnavailable.into())));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #157 — Bound attestation payload size
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_attest_rejects_payload_exceeding_max_size() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [60u8; 32]);
+    // One byte over the limit.
+    let over_limit = soroban_sas_common::MAX_ATTESTATION_DATA_BYTES as usize + 1;
+    let buf = alloc::vec![0u8; over_limit];
+    attestation.data = Bytes::from_slice(&env, &buf);
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::PayloadTooLarge.into())));
+}
+
+#[test]
+fn test_attest_accepts_payload_at_max_size() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [61u8; 32]);
+    let at_limit = soroban_sas_common::MAX_ATTESTATION_DATA_BYTES as usize;
+    let buf = alloc::vec![0u8; at_limit];
+    attestation.data = Bytes::from_slice(&env, &buf);
+    let uid = sas_client.attest(&attestation);
+    assert_eq!(uid, attestation.uid);
+    assert!(sas_client.verify_attestation(&attestation.uid));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #156 — Attestation issuance timestamp normalized to ledger clock
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_attest_normalizes_time_to_ledger_timestamp() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let ledger_ts = 9_999u64;
+    env.ledger().with_mut(|li| li.timestamp = ledger_ts);
+
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [70u8; 32]);
+    attestation.time = 1; // caller-provided, must be overwritten
+    sas_client.attest(&attestation);
+
+    let stored: Attestation = env.as_contract(&sas_client.address, || {
+        env.storage().persistent().get(&attestation.uid).unwrap()
+    });
+    assert_eq!(stored.time, ledger_ts);
+}
+
+#[test]
+fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
+    let seed = [71u8; 32];
+    let signing_key = SigningKey::from_bytes(&seed);
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester_strkey =
+        stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes()).to_string();
+    let attester = Address::from_string(&soroban_sdk::String::from_str(&env, &attester_strkey));
+    let recipient = Address::generate(&env);
+
+    let ledger_ts = 7_777u64;
+    env.ledger().with_mut(|li| li.timestamp = ledger_ts);
+
+    let attestation = Attestation {
+        uid: UID(soroban_sdk::BytesN::from_array(&env, &[71u8; 32])),
+        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        time: 1, // caller-provided, must be overwritten
+        expiration_time: 0,
+        revocation_time: 0,
+        ref_uid: UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32])),
+        recipient,
+        attester: attester.clone(),
+        revocable: true,
+        data: Bytes::new(&env),
+    };
+
+    let nonce = 1u64;
+    let domain = soroban_sas_common::AttestationDomain {
+        network_id: env.ledger().network_id(),
+        contract: sas_id.clone(),
+        nonce,
+    };
+    let payload_hash =
+        soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain);
+    let signature = signing_key.sign(&payload_hash.to_array());
+    let sig_bytes = soroban_sdk::BytesN::from_array(&env, &signature.to_bytes());
+    let pub_bytes = soroban_sdk::BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+
+    env.mock_all_auths();
+    sas_client.attest_by_delegation(&attestation, &nonce, &sig_bytes, &pub_bytes);
+
+    let stored: Attestation = env.as_contract(&sas_id, || {
+        env.storage().persistent().get(&attestation.uid).unwrap()
+    });
+    assert_eq!(stored.time, ledger_ts);
+}
+
+#[test]
+fn test_multi_attest_normalizes_time_to_ledger_timestamp() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let ledger_ts = 5_555u64;
+    env.ledger().with_mut(|li| li.timestamp = ledger_ts);
+
+    let mut att1 = attestation_fixture(&env, &attester, &recipient, [72u8; 32]);
+    att1.time = 1;
+    let mut att2 = attestation_fixture(&env, &attester, &recipient, [73u8; 32]);
+    att2.time = 2;
+
+    let uid1 = att1.uid.clone();
+    let uid2 = att2.uid.clone();
+    let batch = soroban_sdk::vec![&env, att1, att2];
+    sas_client.multi_attest(&batch);
+
+    let stored1: Attestation = env.as_contract(&sas_client.address, || {
+        env.storage().persistent().get(&uid1).unwrap()
+    });
+    let stored2: Attestation = env.as_contract(&sas_client.address, || {
+        env.storage().persistent().get(&uid2).unwrap()
+    });
+    assert_eq!(stored1.time, ledger_ts);
+    assert_eq!(stored2.time, ledger_ts);
 }
