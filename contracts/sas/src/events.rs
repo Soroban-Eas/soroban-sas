@@ -38,6 +38,25 @@ pub fn publish_revoked(env: &Env, uid: &UID, timestamp: u64) {
     );
 }
 
+/// Publishes `IndexFailed` when a bound Indexer could not be notified of a
+/// newly issued attestation under the fail-open policy (#161).
+///
+/// Topic: `(IDXFAIL, uid)`. The data payload repeats `uid` so consumers that
+/// only read data still get it.
+pub fn publish_index_failed(env: &Env, uid: &UID) {
+    env.events()
+        .publish((symbol_short!("IDXFAIL"), uid.clone()), uid.clone());
+}
+
+/// Publishes `Reindexed` after `reindex_attestation` replays a
+/// previously-missed attestation to the Indexer (#161).
+///
+/// Topic: `(REINDEX, uid)`.
+pub fn publish_reindexed(env: &Env, uid: &UID) {
+    env.events()
+        .publish((symbol_short!("REINDEX"), uid.clone()), uid.clone());
+}
+
 pub fn publish_withdrawal(env: &Env, token: &Address, amount: i128, destination: &Address, authorizer: &Address) {
     env.events().publish(
         (symbol_short!("WITHDRAW"), token.clone(), authorizer.clone()),

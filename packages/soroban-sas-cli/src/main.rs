@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
-mod identity;
-mod network;
+mod io_safety;
 mod offchain;
 
 /// Resolves a subcommand's own flag against the global `--network` shorthand
@@ -476,7 +475,18 @@ enum AttestCommands {
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: Option<String>,
+        rpc_url: String,
+        #[arg(
+            long,
+            help = "Use the local system clock if the network ledger time cannot be fetched or is out of range"
+        )]
+        allow_local_time: bool,
+        #[arg(
+            long,
+            help = "Max seconds the network ledger time may disagree with the local clock before it is rejected",
+            default_value_t = 300
+        )]
+        max_ledger_skew: u64,
     },
     /// Create and submit a new on-chain attestation
     Create {
@@ -705,6 +715,8 @@ fn run_attest(
             network_passphrase,
             contract_id,
             rpc_url,
+            allow_local_time,
+            max_ledger_skew,
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let network_passphrase =
@@ -718,22 +730,38 @@ fn run_attest(
             )
             .to_string();
 
-            let now = std::time::SystemTime::now()
+            let local_now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| format!("system clock error: {e}"))?;
+
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+
+            // Issuance time is the network ledger close time, not the local
+            // clock (#172). The local clock is only a fallback the operator
+            // must explicitly opt into with --allow-local-time.
+            let issuance_time = resolve_cli_issuance_time(
+                &rpc,
+                local_now.as_secs(),
+                max_ledger_skew,
+                allow_local_time,
+            )?;
+
+            // UID uniqueness entropy is kept separate from the semantic
+            // timestamp and does not depend solely on wall-clock nanoseconds.
             let uid = offchain::generate_uid(
                 &env,
                 &schema_uid_bytes,
                 &recipient,
                 &attester,
                 &data_bytes,
-                now.as_nanos(),
+                uid_entropy(local_now.as_nanos()),
             );
 
             let input = offchain::AttestationInput {
                 uid: hex::encode(uid),
                 schema_uid: schema_uid.clone(),
-                time: now.as_secs(),
+                time: issuance_time,
                 expiration_time: expiration,
                 ref_uid: hex::encode([0u8; 32]),
                 recipient,
@@ -743,9 +771,6 @@ fn run_attest(
             };
             let attestation = offchain::parse_attestation(&env, &input)?;
 
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            validate_expiration_before_submit(&rpc, &env, expiration)?;
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .attest(&env, &rpc, &network_passphrase, &seed, attestation)
                 .map_err(|e| e.to_string())?;
@@ -775,12 +800,7 @@ fn run_attest(
             contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
-            let network_passphrase =
-                resolve_network_passphrase(network_passphrase, network.as_deref())?;
-            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let raw = std::fs::read_to_string(&data_file)
-                .map_err(|e| format!("cannot read {data_file}: {e}"))?;
+            let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -860,8 +880,7 @@ fn run_attest(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let old_uid = parse_uid(&old_uid)?;
-            let raw = std::fs::read_to_string(&data_file)
-                .map_err(|e| format!("cannot read {data_file}: {e}"))?;
+            let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -887,35 +906,50 @@ fn run_attest(
     }
 }
 
-/// Validates a proposed `expiration_time` against the network's *current*
-/// ledger time before any simulation or submission is attempted (issue
-/// #173) — an already-expired or otherwise invalid expiration always fails
-/// on-chain, so failing here first saves a simulation round trip (and its
-/// fee) on a doomed call.
+/// Resolves the timestamp a new attestation is issued with (#172).
 ///
-/// `0` is the contract's "never expires" sentinel and is always accepted
-/// without a network round trip. Any other value is checked against the
-/// live ledger clock with `soroban_sas_common::validate_ttl` — the exact
-/// rule the contract itself enforces (`expiration_time != 0 &&
-/// expiration_time <= now` is invalid), so boundary behavior matches
-/// on-chain exactly.
-fn validate_expiration_before_submit(
+/// Prefers the network ledger close time via [`RpcClient::get_latest_ledger_clock`],
+/// validated against the local clock by
+/// [`soroban_sas_sdk::rpc::resolve_issuance_time`]. Falls back to the local
+/// clock only when `allow_local` is set; otherwise a fetch failure or an
+/// out-of-range ledger time is a hard error telling the operator to retry or
+/// pass `--allow-local-time`.
+fn resolve_cli_issuance_time(
     rpc: &soroban_sas_sdk::rpc::RpcClient,
-    env: &soroban_sdk::Env,
-    expiration_time: u64,
-) -> Result<(), String> {
-    if expiration_time == 0 {
-        return Ok(());
+    local_now_secs: u64,
+    max_skew_secs: u64,
+    allow_local: bool,
+) -> Result<u64, String> {
+    match rpc.get_latest_ledger_clock() {
+        Ok(clock) => {
+            match soroban_sas_sdk::rpc::resolve_issuance_time(&clock, local_now_secs, max_skew_secs) {
+                Ok(t) => Ok(t),
+                Err(_) if allow_local => Ok(local_now_secs),
+                Err(e) => Err(format!(
+                    "network ledger time rejected ({e:?}); pass --allow-local-time to use the local clock"
+                )),
+            }
+        }
+        Err(_) if allow_local => Ok(local_now_secs),
+        Err(e) => Err(format!(
+            "could not fetch network ledger time ({e:?}); pass --allow-local-time to use the local clock"
+        )),
     }
-    let ledger_time = rpc
-        .fetch_current_ledger_time()
-        .map_err(|e| format!("failed to fetch current ledger time: {e}"))?;
-    soroban_sas_common::validate_ttl(env, ledger_time, expiration_time).map_err(|_| {
-        format!(
-            "expiration_time {expiration_time} is not after the current ledger time \
-             {ledger_time} (pass 0 for an attestation that never expires)"
-        )
-    })
+}
+
+/// UID uniqueness entropy, deliberately independent of the semantic issuance
+/// timestamp (#172). Mixes the local nanosecond reading with the process id
+/// and a per-run counter, so two attestations issued in the same second — or
+/// against a frozen clock — still get distinct UIDs.
+fn uid_entropy(local_nanos: u128) -> u128 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = u128::from(COUNTER.fetch_add(1, Ordering::Relaxed));
+    let pid = u128::from(std::process::id());
+    local_nanos
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(pid.wrapping_shl(64))
+        .wrapping_add(seq.wrapping_mul(0xD1B5_4A32_D192_ED03))
 }
 
 fn parse_uid(value: &str) -> Result<[u8; 32], String> {
@@ -1061,8 +1095,7 @@ fn run_delegate(
                 .map_err(|e| format!("serialization failed: {e}"))?;
             match output_file {
                 Some(path) => {
-                    std::fs::write(&path, &signed_json)
-                        .map_err(|e| format!("cannot write {path}: {e}"))?;
+                    io_safety::write_atomic_private(&path, &signed_json, false)?;
                     emit_ok(
                         output,
                         || println!("wrote signed revocation to {path}"),
@@ -1085,7 +1118,7 @@ fn run_delegate(
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw =
-                std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
+                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
             offchain::verify_offchain_attestation(&signed)?;
@@ -1118,7 +1151,7 @@ fn run_delegate(
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw =
-                std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
+                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedDelegatedRevocation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed revocation JSON: {e}"))?;
 
@@ -1256,11 +1289,7 @@ fn run_offchain(
             contract_id,
             output: output_file,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
-            let network_passphrase =
-                resolve_network_passphrase(network_passphrase, network.as_deref())?;
-            let raw = std::fs::read_to_string(&data_file)
-                .map_err(|e| format!("cannot read {data_file}: {e}"))?;
+            let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -1275,8 +1304,7 @@ fn run_offchain(
                 .map_err(|e| format!("serialization failed: {e}"))?;
             match output_file {
                 Some(path) => {
-                    std::fs::write(&path, &signed_json)
-                        .map_err(|e| format!("cannot write {path}: {e}"))?;
+                    io_safety::write_atomic_private(&path, &signed_json, false)?;
                     emit_ok(
                         output,
                         || println!("wrote signed attestation to {path}"),
@@ -1300,7 +1328,7 @@ fn run_offchain(
             rpc_url,
         } => {
             let raw =
-                std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
+                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
             // Cryptographic checks only: signature, attester binding, payload

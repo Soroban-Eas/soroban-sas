@@ -36,4 +36,10 @@ pub enum SASError {
     IncompatibleDependency = 404,
     /// The requested attestation batch exceeds the protocol limit.
     BatchTooLarge = 405,
+    /// `attest_with_value` was called with a token or amount that does not
+    /// match the fee required by authenticated on-chain configuration (#164).
+    FeeMismatch = 406,
+    /// A bound Indexer could not be invoked and the contract is configured to
+    /// fail closed on indexing errors (#161).
+    IndexerUnavailable = 407,
 }

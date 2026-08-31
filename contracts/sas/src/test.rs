@@ -676,6 +676,7 @@ fn test_attest_with_value_collects_the_fee() {
 
     env.mock_all_auths();
     token_admin.mint(&attester, &1_000);
+    sas_client.set_fee(&token_id, &500);
 
     let attestation = attestation_fixture(&env, &attester, &recipient, [7u8; 32]);
     let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
@@ -751,7 +752,10 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
     let token_id = env.register_stellar_asset_contract(admin.clone());
 
     env.mock_all_auths();
+    sas_client.set_fee(&token_id, &500);
     let attestation = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
+    // Fee is configured but the attester has no balance: the transfer fails
+    // and no attestation is issued.
     let res = sas_client.try_attest_with_value(&attestation, &token_id, &500);
 
     assert!(res.is_err());
@@ -818,6 +822,7 @@ fn test_withdraw_tokens_requires_authorized_balance_and_event_path() {
 
     let attestation = attestation_fixture(&env, &attester, &recipient, [12u8; 32]);
     token_admin.mint(&attester, &1_000);
+    sas_client.set_fee(&token_id, &500);
     let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
     assert_eq!(uid, attestation.uid);
 
@@ -1668,4 +1673,190 @@ fn test_delegation_nonce_storage_bounded_and_describes_concurrent_behavior() {
         .sas_client
         .attest_by_delegation(&other_att, &20, &other_sig, &other_pk);
     assert_eq!(uid, other_att.uid);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #164 — attest_with_value derives payment from on-chain fee configuration
+// #161 — Indexer outage policy (fail-open by default, opt-in fail-closed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Indexer stand-in whose `index_attestation` always traps, modelling an
+/// unavailable / incompatible Indexer.
+pub mod mock_trap_indexer {
+    use super::*;
+    #[contract]
+    pub struct TrappingIndexer;
+
+    #[contractimpl]
+    impl TrappingIndexer {
+        pub fn index_attestation(
+            env: Env,
+            _uid: UID,
+            _recipient: Address,
+            _schema_uid: UID,
+            _attester: Address,
+        ) {
+            soroban_sdk::panic_with_error!(&env, SASError::NotInitialized);
+        }
+    }
+}
+
+fn fee_test_env() -> (Env, SASClient<'static>, Address, Address, Address, Address) {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    (env, sas_client, sas_id, admin, attester, recipient)
+}
+
+#[test]
+fn test_attest_with_value_rejects_unconfigured_payment() {
+    let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
+    let token_id = env.register_stellar_asset_contract(admin.clone());
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_id).mint(&attester, &1_000);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [40u8; 32]);
+    // No fee configured -> a non-zero value is a fee that was never required.
+    let res = sas_client.try_attest_with_value(&attestation, &token_id, &500);
+    assert_eq!(res, Err(Ok(SASError::FeeMismatch.into())));
+    assert!(!sas_client.verify_attestation(&attestation.uid));
+}
+
+#[test]
+fn test_attest_with_value_rejects_wrong_token_and_short_amount() {
+    let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
+    let fee_token = env.register_stellar_asset_contract(admin.clone());
+    let other_token = env.register_stellar_asset_contract(admin.clone());
+    soroban_sdk::token::StellarAssetClient::new(&env, &fee_token).mint(&attester, &1_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &other_token).mint(&attester, &1_000);
+    sas_client.set_fee(&fee_token, &500);
+
+    let a1 = attestation_fixture(&env, &attester, &recipient, [41u8; 32]);
+    assert_eq!(
+        sas_client.try_attest_with_value(&a1, &other_token, &500),
+        Err(Ok(SASError::FeeMismatch.into()))
+    );
+
+    let a2 = attestation_fixture(&env, &attester, &recipient, [42u8; 32]);
+    assert_eq!(
+        sas_client.try_attest_with_value(&a2, &fee_token, &499),
+        Err(Ok(SASError::FeeMismatch.into()))
+    );
+}
+
+#[test]
+fn test_attest_with_value_accepts_exact_configured_fee() {
+    let (env, sas_client, sas_id, admin, attester, recipient) = fee_test_env();
+    let fee_token = env.register_stellar_asset_contract(admin.clone());
+    let token = soroban_sdk::token::Client::new(&env, &fee_token);
+    soroban_sdk::token::StellarAssetClient::new(&env, &fee_token).mint(&attester, &1_000);
+    sas_client.set_fee(&fee_token, &500);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [43u8; 32]);
+    let uid = sas_client.attest_with_value(&attestation, &fee_token, &500);
+    assert_eq!(uid, attestation.uid);
+    assert_eq!(token.balance(&sas_id), 500);
+}
+
+#[test]
+fn test_clear_fee_makes_attestation_fee_free_only_at_zero() {
+    let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
+    let token_id = env.register_stellar_asset_contract(admin.clone());
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_id).mint(&attester, &1_000);
+    sas_client.set_fee(&token_id, &500);
+    sas_client.clear_fee();
+    assert_eq!(sas_client.get_fee(), None);
+
+    let paid = attestation_fixture(&env, &attester, &recipient, [44u8; 32]);
+    assert_eq!(
+        sas_client.try_attest_with_value(&paid, &token_id, &500),
+        Err(Ok(SASError::FeeMismatch.into()))
+    );
+
+    let free = attestation_fixture(&env, &attester, &recipient, [45u8; 32]);
+    assert_eq!(sas_client.attest_with_value(&free, &token_id, &0), free.uid);
+}
+
+#[test]
+fn test_attest_fails_open_when_indexer_traps() {
+    let (env, sas_client, sas_id, _admin, attester, recipient) = fee_test_env();
+    let indexer_id = env.register_contract(None, mock_trap_indexer::TrappingIndexer);
+    sas_client.set_indexer(&indexer_id);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [46u8; 32]);
+    // Issuance still succeeds despite the trapping indexer.
+    let uid = sas_client.attest(&attestation);
+    assert_eq!(uid, attestation.uid);
+    assert!(sas_client.verify_attestation(&attestation.uid));
+
+    // ... and the missed push is observable as an IndexFailed event.
+    let topics: soroban_sdk::Vec<soroban_sdk::Val> =
+        (soroban_sdk::symbol_short!("IDXFAIL"), attestation.uid.clone()).into_val(&env);
+    let expected_event = (
+        sas_id.clone(),
+        topics,
+        attestation.uid.clone().into_val(&env),
+    );
+    assert!(env.events().all().contains(expected_event));
+}
+
+#[test]
+fn test_attest_fails_open_when_indexer_is_incompatible() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    // A contract with no `index_attestation` entry point at all.
+    let indexer_id = env.register_contract(None, mock3::MockResolver);
+    sas_client.set_indexer(&indexer_id);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [47u8; 32]);
+    assert_eq!(sas_client.attest(&attestation), attestation.uid);
+}
+
+#[test]
+fn test_attest_fails_closed_when_strict_and_indexer_traps() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let indexer_id = env.register_contract(None, mock_trap_indexer::TrappingIndexer);
+    sas_client.set_indexer(&indexer_id);
+    sas_client.set_indexer_strict(&true);
+    assert!(sas_client.get_indexer_strict());
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [48u8; 32]);
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::IndexerUnavailable.into())));
+    assert!(!sas_client.verify_attestation(&attestation.uid));
+}
+
+#[test]
+fn test_reindex_attestation_replays_after_indexer_recovers() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let trap_id = env.register_contract(None, mock_trap_indexer::TrappingIndexer);
+    sas_client.set_indexer(&trap_id);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [49u8; 32]);
+    let uid = sas_client.attest(&attestation); // succeeds fail-open, mirror missed it
+
+    // Operator rotates to a healthy indexer and reconciles.
+    let good_id = env.register_contract(None, mock4::MockIndexer);
+    let good = mock4::MockIndexerClient::new(&env, &good_id);
+    sas_client.set_indexer(&good_id);
+    sas_client.reindex_attestation(&uid);
+
+    assert!(good.get_attestations_by_recipient(&recipient).contains(&uid));
+}
+
+#[test]
+fn test_reindex_attestation_reports_still_unavailable_indexer() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let trap_id = env.register_contract(None, mock_trap_indexer::TrappingIndexer);
+    sas_client.set_indexer(&trap_id);
+    let attestation = attestation_fixture(&env, &attester, &recipient, [50u8; 32]);
+    let uid = sas_client.attest(&attestation);
+
+    let res = sas_client.try_reindex_attestation(&uid);
+    assert_eq!(res, Err(Ok(SASError::IndexerUnavailable.into())));
 }

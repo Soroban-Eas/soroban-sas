@@ -8,6 +8,9 @@
 
 use soroban_sdk::xdr::{ContractEvent, ContractEventBody, ScAddress, ScMap, ScVal};
 
+/// A contract's 32-byte identifier, as carried on `ContractEvent::contract_id`.
+pub type ContractId = [u8; 32];
+
 /// First topic of a `SchemaRegistered` event.
 pub const TOPIC_SCHEMA_REGISTERED: &[u8] = b"REGISTER";
 /// First topic of an `AttestationIssued` event.
@@ -105,10 +108,133 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
 
 /// Parses every SAS event from a batch of contract events, silently skipping
 /// events emitted by other contracts or with unknown topics.
+///
+/// This does **not** check the emitting contract ID. Downstream code that
+/// treats parsed events as genuine protocol state should use
+/// [`parse_events_verified`] / [`parse_trusted_events`] with a
+/// [`TrustedContracts`] allowlist instead — any contract can emit
+/// SAS-shaped events (#169).
 pub fn parse_events(events: &[ContractEvent]) -> Vec<SasEvent> {
     events
         .iter()
         .filter_map(|event| parse_contract_event(event).ok())
+        .collect()
+}
+
+/// Allowlist of the contract IDs each SAS protocol role is expected to emit
+/// events from. An unset role means "no trusted source known", so every event
+/// bound to that role is reported [`EventTrust::Untrusted`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrustedContracts {
+    /// The SAS core contract — emits `AttestationIssued` and
+    /// `AttestationRevoked`.
+    pub sas: Option<ContractId>,
+    /// The Schema Registry contract — emits `SchemaRegistered`.
+    pub schema_registry: Option<ContractId>,
+    /// The Indexer contract. Reserved: the Indexer emits no standardized SAS
+    /// event today, but callers can still record its ID in the allowlist.
+    pub indexer: Option<ContractId>,
+}
+
+impl TrustedContracts {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_sas(mut self, id: ContractId) -> Self {
+        self.sas = Some(id);
+        self
+    }
+    pub fn with_schema_registry(mut self, id: ContractId) -> Self {
+        self.schema_registry = Some(id);
+        self
+    }
+    pub fn with_indexer(mut self, id: ContractId) -> Self {
+        self.indexer = Some(id);
+        self
+    }
+
+    /// The `(role_name, expected_contract_id)` an event of this kind must come
+    /// from.
+    fn expected_source(&self, event: &SasEvent) -> (&'static str, Option<ContractId>) {
+        match event {
+            SasEvent::SchemaRegistered(_) => ("schema_registry", self.schema_registry),
+            SasEvent::AttestationIssued(_) | SasEvent::AttestationRevoked(_) => ("sas", self.sas),
+        }
+    }
+}
+
+/// Whether a decoded event actually came from the contract bound to its
+/// protocol role.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EventTrust {
+    /// The emitting contract ID matches the allowlisted ID for this event's
+    /// role.
+    Trusted,
+    /// The topics/payload decoded as a SAS event, but the emitting contract is
+    /// not the one bound to `expected_role` (or no ID was recorded for that
+    /// role, or the event carried no contract ID).
+    Untrusted {
+        expected_role: &'static str,
+        contract_id: Option<ContractId>,
+    },
+}
+
+/// A decoded SAS event paired with its source-verification result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedSasEvent {
+    pub event: SasEvent,
+    pub trust: EventTrust,
+}
+
+/// Like [`parse_contract_event`], but also verifies the emitting contract ID
+/// against `trusted`. The event is still decoded, but a mismatch is reported
+/// as [`EventTrust::Untrusted`] rather than silently accepted, so a spoofed
+/// event can never be mistaken for a genuine attestation or schema change
+/// (#169).
+pub fn parse_contract_event_verified(
+    event: &ContractEvent,
+    trusted: &TrustedContracts,
+) -> Result<VerifiedSasEvent, EventParseError> {
+    let ContractEventBody::V0(body) = &event.body;
+    let parsed = parse_event(body.topics.as_slice(), &body.data)?;
+    let source: Option<ContractId> = event.contract_id.as_ref().map(|h| h.0);
+    let (role, expected) = trusted.expected_source(&parsed);
+    let trust = match (expected, source) {
+        (Some(want), Some(got)) if want == got => EventTrust::Trusted,
+        _ => EventTrust::Untrusted {
+            expected_role: role,
+            contract_id: source,
+        },
+    };
+    Ok(VerifiedSasEvent {
+        event: parsed,
+        trust,
+    })
+}
+
+/// Batch variant of [`parse_contract_event_verified`]. Every returned element
+/// carries its own [`EventTrust`], so trusted and spoofed events in the same
+/// batch cannot be silently mixed — the caller sees the tag on each one.
+pub fn parse_events_verified(
+    events: &[ContractEvent],
+    trusted: &TrustedContracts,
+) -> Vec<VerifiedSasEvent> {
+    events
+        .iter()
+        .filter_map(|event| parse_contract_event_verified(event, trusted).ok())
+        .collect()
+}
+
+/// Convenience over [`parse_events_verified`]: only the events proven to come
+/// from an allowlisted source.
+pub fn parse_trusted_events(
+    events: &[ContractEvent],
+    trusted: &TrustedContracts,
+) -> Vec<SasEvent> {
+    parse_events_verified(events, trusted)
+        .into_iter()
+        .filter(|v| v.trust == EventTrust::Trusted)
+        .map(|v| v.event)
         .collect()
 }
 
@@ -254,6 +380,96 @@ mod tests {
                 timestamp: 4242,
             })
         );
+    }
+
+    fn contract_event(
+        contract_id: [u8; 32],
+        topics: Vec<ScVal>,
+        data: ScVal,
+    ) -> ContractEvent {
+        use soroban_sdk::xdr::{
+            ContractEventType, ContractEventV0, ExtensionPoint, Hash,
+        };
+        ContractEvent {
+            ext: ExtensionPoint::V0,
+            contract_id: Some(Hash(contract_id)),
+            type_: ContractEventType::Contract,
+            body: ContractEventBody::V0(ContractEventV0 {
+                topics: topics.try_into().unwrap(),
+                data,
+            }),
+        }
+    }
+
+    fn revoked_event(env: &Env, seed: u8) -> (Vec<ScVal>, ScVal) {
+        let uid = UID(BytesN::from_array(env, &[seed; 32]));
+        let payload = AttestationRevokedEvent {
+            uid: uid.clone(),
+            timestamp: 7,
+        };
+        (
+            vec![
+                to_scval(env, soroban_sas_common::events::REVOKED.into_val(env)),
+                to_scval(env, uid.into_val(env)),
+            ],
+            to_scval(env, payload.into_val(env)),
+        )
+    }
+
+    #[test]
+    fn verified_parse_accepts_events_from_the_trusted_sas_contract() {
+        let env = Env::default();
+        let (topics, data) = revoked_event(&env, 1);
+        let sas_id = [9u8; 32];
+        let trusted = TrustedContracts::new().with_sas(sas_id);
+
+        let verified =
+            parse_contract_event_verified(&contract_event(sas_id, topics, data), &trusted).unwrap();
+        assert_eq!(verified.trust, EventTrust::Trusted);
+        assert!(matches!(verified.event, SasEvent::AttestationRevoked(_)));
+    }
+
+    #[test]
+    fn verified_parse_flags_the_same_payload_from_an_attacker_contract() {
+        let env = Env::default();
+        let trusted = TrustedContracts::new().with_sas([9u8; 32]);
+
+        let (t1, d1) = revoked_event(&env, 2);
+        let honest = parse_contract_event_verified(&contract_event([9u8; 32], t1, d1), &trusted)
+            .unwrap();
+        let (t2, d2) = revoked_event(&env, 2);
+        let spoofed = parse_contract_event_verified(&contract_event([0xAAu8; 32], t2, d2), &trusted)
+            .unwrap();
+
+        assert_eq!(honest.event, spoofed.event);
+        assert_eq!(honest.trust, EventTrust::Trusted);
+        assert_eq!(
+            spoofed.trust,
+            EventTrust::Untrusted {
+                expected_role: "sas",
+                contract_id: Some([0xAAu8; 32]),
+            }
+        );
+    }
+
+    #[test]
+    fn batch_parse_tags_each_event_and_trusted_filter_drops_spoofed() {
+        let env = Env::default();
+        let trusted = TrustedContracts::new().with_sas([9u8; 32]);
+        let (t1, d1) = revoked_event(&env, 3);
+        let (t2, d2) = revoked_event(&env, 4);
+        let events = [
+            contract_event([9u8; 32], t1, d1),
+            contract_event([1u8; 32], t2, d2),
+        ];
+
+        let verified = parse_events_verified(&events, &trusted);
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].trust, EventTrust::Trusted);
+        assert!(matches!(verified[1].trust, EventTrust::Untrusted { .. }));
+
+        let trusted_only = parse_trusted_events(&events, &trusted);
+        assert_eq!(trusted_only.len(), 1);
     }
 
     #[test]

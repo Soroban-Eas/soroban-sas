@@ -10,6 +10,48 @@ mod tests {
     }
 
     #[test]
+    fn attest_flags_default_to_network_time_with_local_fallback_off() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "attest",
+            "attest",
+            "--schema-uid",
+            &hex::encode([2u8; 32]),
+            "--recipient",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--secret-key",
+            "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY2",
+            "--network-passphrase",
+            "Test SDF Network ; September 2015",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        let Some(Commands::Attest {
+            action: AttestCommands::Attest {
+                allow_local_time,
+                max_ledger_skew,
+                ..
+            },
+        }) = cli.command
+        else {
+            panic!("expected attest attest command");
+        };
+        assert!(!allow_local_time);
+        assert_eq!(max_ledger_skew, 300);
+    }
+
+    #[test]
+    fn uid_entropy_is_distinct_across_calls_with_a_frozen_clock() {
+        let a = crate::uid_entropy(1_000);
+        let b = crate::uid_entropy(1_000);
+        assert_ne!(a, b, "entropy must not depend solely on the wall clock");
+    }
+
+    #[test]
     fn rejects_empty_and_oversized_schemas_locally() {
         // #26 — an empty (or whitespace-only) schema is rejected before any
         // transaction is built, and so is one past the 1024-byte limit.
@@ -227,6 +269,68 @@ mod tests {
             vec![0xde, 0xad, 0xbe, 0xef]
         );
         assert!(decode_hex_or_base64("not valid at all!!").is_err());
+    }
+
+    #[test]
+    fn verify_clap_cli_structure() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_schema_get_flags() {
+        let uid = hex::encode([3u8; 32]);
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--output",
+            "json",
+            "schema",
+            "get",
+            "--uid",
+            &uid,
+            "--registry-contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Schema {
+            action: crate::SchemaCommands::Get { uid: parsed_uid, .. },
+        }) = cli.command
+        else {
+            panic!("expected schema get command");
+        };
+        assert_eq!(parsed_uid, uid);
+    }
+
+    #[test]
+    fn parses_query_by_recipient_flags() {
+        let recipient = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBAAA6XKZW3";
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--output",
+            "json",
+            "query",
+            "by-recipient",
+            "--address",
+            recipient,
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Query {
+            action: crate::QueryCommands::ByRecipient { address, .. },
+        }) = cli.command
+        else {
+            panic!("expected query by-recipient command");
+        };
+        assert_eq!(address, recipient);
     }
 }
 
