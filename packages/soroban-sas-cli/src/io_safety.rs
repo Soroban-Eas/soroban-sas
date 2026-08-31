@@ -45,27 +45,26 @@ pub fn read_bounded(path: &str, max_bytes: u64) -> Result<String, String> {
 /// overwritten.
 pub fn write_atomic_private(path: &str, contents: &str, force: bool) -> Result<(), String> {
     let dest = Path::new(path);
-    if dest.exists() && !force {
-        return Err(format!(
-            "cannot write {path}: destination already exists (remove it first, or pass the force option, before retrying)"
-        ));
-    }
-
     let parent = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     let file_name = dest
         .file_name()
         .ok_or_else(|| format!("cannot write {path}: invalid file name"))?
         .to_string_lossy();
-    let tmp_path = parent.join(format!(".{file_name}.tmp"));
+    // A random suffix (rather than a fixed ".<name>.tmp") stops a second
+    // concurrent invocation, or an attacker who can predict the fixed name,
+    // from pre-planting a symlink at the temp path before we create it.
+    let tmp_path = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
 
     {
+        // create_new (not create) refuses to open an existing path at all —
+        // including a symlink planted there ahead of time — instead of
+        // following it, closing the classic temp-file symlink race.
         #[cfg(unix)]
         let mut tmp_file = {
             use std::os::unix::fs::OpenOptionsExt;
             fs::OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
+                .create_new(true)
                 .mode(0o600)
                 .open(&tmp_path)
                 .map_err(|e| format!("cannot create temp file for {path}: {e}"))?
@@ -73,8 +72,7 @@ pub fn write_atomic_private(path: &str, contents: &str, force: bool) -> Result<(
         #[cfg(not(unix))]
         let mut tmp_file = fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(&tmp_path)
             .map_err(|e| format!("cannot create temp file for {path}: {e}"))?;
 
@@ -87,8 +85,31 @@ pub fn write_atomic_private(path: &str, contents: &str, force: bool) -> Result<(
         }
     }
 
-    fs::rename(&tmp_path, dest).map_err(|e| {
-        let _ = fs::remove_file(&tmp_path);
-        format!("cannot write {path}: {e}")
-    })
+    if force {
+        return fs::rename(&tmp_path, dest).map_err(|e| {
+            let _ = fs::remove_file(&tmp_path);
+            format!("cannot write {path}: {e}")
+        });
+    }
+
+    // Without --force: hard_link fails atomically with AlreadyExists if
+    // `dest` is present at link time, rather than checking existence and
+    // renaming as two separate steps — closing the TOCTOU window where a
+    // file (or attacker-planted symlink) could appear at `dest` in between.
+    match fs::hard_link(&tmp_path, dest) {
+        Ok(()) => {
+            let _ = fs::remove_file(&tmp_path);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tmp_path);
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                Err(format!(
+                    "cannot write {path}: destination already exists (remove it first, or pass the force option, before retrying)"
+                ))
+            } else {
+                Err(format!("cannot write {path}: {e}"))
+            }
+        }
+    }
 }
