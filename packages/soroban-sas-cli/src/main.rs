@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod io_safety;
 mod offchain;
 
 /// Output format shared by every subcommand (issue #27).
@@ -673,8 +674,7 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             contract_id,
             rpc_url,
         } => {
-            let raw = std::fs::read_to_string(&data_file)
-                .map_err(|e| format!("cannot read {data_file}: {e}"))?;
+            let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -744,8 +744,7 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             rpc_url,
         } => {
             let old_uid = parse_uid(&old_uid)?;
-            let raw = std::fs::read_to_string(&data_file)
-                .map_err(|e| format!("cannot read {data_file}: {e}"))?;
+            let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -945,8 +944,7 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
                 .map_err(|e| format!("serialization failed: {e}"))?;
             match output_file {
                 Some(path) => {
-                    std::fs::write(&path, &signed_json)
-                        .map_err(|e| format!("cannot write {path}: {e}"))?;
+                    io_safety::write_atomic_private(&path, &signed_json, false)?;
                     emit_ok(
                         output,
                         || println!("wrote signed revocation to {path}"),
@@ -967,7 +965,7 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
             rpc_url,
         } => {
             let raw =
-                std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
+                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
             offchain::verify_offchain_attestation(&signed)?;
@@ -998,7 +996,7 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
             rpc_url,
         } => {
             let raw =
-                std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
+                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedDelegatedRevocation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed revocation JSON: {e}"))?;
 
@@ -1121,8 +1119,7 @@ fn run_offchain(action: OffchainCommands, output: OutputFormat) -> Result<(), St
             contract_id,
             output: output_file,
         } => {
-            let raw = std::fs::read_to_string(&data_file)
-                .map_err(|e| format!("cannot read {data_file}: {e}"))?;
+            let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -1137,8 +1134,7 @@ fn run_offchain(action: OffchainCommands, output: OutputFormat) -> Result<(), St
                 .map_err(|e| format!("serialization failed: {e}"))?;
             match output_file {
                 Some(path) => {
-                    std::fs::write(&path, &signed_json)
-                        .map_err(|e| format!("cannot write {path}: {e}"))?;
+                    io_safety::write_atomic_private(&path, &signed_json, false)?;
                     emit_ok(
                         output,
                         || println!("wrote signed attestation to {path}"),
@@ -1155,7 +1151,7 @@ fn run_offchain(action: OffchainCommands, output: OutputFormat) -> Result<(), St
         }
         OffchainCommands::Verify { file } => {
             let raw =
-                std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
+                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
             offchain::verify_offchain_attestation(&signed)?;
