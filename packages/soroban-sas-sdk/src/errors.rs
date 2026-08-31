@@ -69,6 +69,22 @@ pub enum SdkError {
         /// or the number of bytes read before the limit tripped).
         observed: Option<usize>,
     },
+    /// The RPC endpoint returned HTTP 429 Too Many Requests, signalling that
+    /// the caller has exceeded its rate limit.
+    ///
+    /// When the node supplied a `Retry-After` header the value is preserved in
+    /// `retry_after_secs` so callers can back off exactly as long as the node
+    /// requests. `retry_after_secs` is `None` when the header was absent or
+    /// unparseable (treat it as "back off at your discretion").
+    ///
+    /// This is intentionally distinct from [`SdkError::TransportError`] so
+    /// callers can branch on it and apply a bounded retry loop without
+    /// catching unrelated network failures.
+    RateLimited {
+        /// Parsed value of the `Retry-After` header (integer seconds), if
+        /// the server sent one and it was a valid non-negative integer.
+        retry_after_secs: Option<u64>,
+    },
 }
 
 impl std::fmt::Display for SdkError {
@@ -109,6 +125,16 @@ impl std::fmt::Display for SdkError {
                     "RPC response of {size} bytes exceeds the {limit}-byte limit"
                 ),
                 None => write!(f, "RPC response exceeds the {limit}-byte limit"),
+            },
+            SdkError::RateLimited { retry_after_secs } => match retry_after_secs {
+                Some(secs) => write!(
+                    f,
+                    "RPC endpoint returned 429 Too Many Requests; retry after {secs}s"
+                ),
+                None => write!(
+                    f,
+                    "RPC endpoint returned 429 Too Many Requests; no Retry-After provided"
+                ),
             },
         }
     }

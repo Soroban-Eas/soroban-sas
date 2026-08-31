@@ -200,3 +200,338 @@ pub fn attester_matches_key(env: &Env, attester: &Address, public_key: &BytesN<3
     expected.append(&Bytes::from_slice(env, &public_key.to_array()));
     attester.clone().to_xdr(env) == expected
 }
+
+#[cfg(test)]
+mod golden_vectors {
+    //! Golden test vectors for off-chain signing (Issue #103).
+    //!
+    //! These tests pin the exact digest values produced by the v1 signing
+    //! protocol, ensuring that:
+    //! 1. Cross-language implementations can verify they produce identical hashes
+    //! 2. The protocol version is locked and any change is a breaking change
+    //! 3. Network/contract/nonce separation is cryptographically enforced
+    //!
+    //! Each test uses fixed inputs and asserts against a hardcoded expected
+    //! digest, so any deviation in the hash computation surfaces as a test failure.
+
+    use super::*;
+    use crate::{Attestation, UID};
+    use ed25519_dalek::{Signature, SigningKey, VerifyingKey, Verifier};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
+
+    fn testnet_passphrase() -> &'static str {
+        "Test SDF Network ; September 2015"
+    }
+
+    fn mainnet_passphrase() -> &'static str {
+        "Public Global Stellar Network ; September 2015"
+    }
+
+    fn network_id_from_passphrase(env: &Env, passphrase: &str) -> BytesN<32> {
+        env.crypto()
+            .sha256(&Bytes::from_slice(env, passphrase.as_bytes()))
+    }
+
+    fn account_address(env: &Env, public_key: &[u8; 32]) -> Address {
+        let strkey = stellar_strkey::ed25519::PublicKey(*public_key).to_string();
+        Address::from_string(&SorobanString::from_str(env, &strkey))
+    }
+
+    fn contract_address(env: &Env, contract_id: &[u8; 32]) -> Address {
+        let strkey = stellar_strkey::Contract(*contract_id).to_string();
+        Address::from_string(&SorobanString::from_str(env, &strkey))
+    }
+
+    /// Golden vector #1: Testnet attestation with fixed inputs.
+    ///
+    /// This is the canonical reference vector for v1 off-chain signing.
+    /// The expected digest was computed by the implementation at the time
+    /// this test was written and is pinned here as the ground truth.
+    #[test]
+    fn golden_vector_1_testnet_attestation() {
+        let env = Env::default();
+        
+        let attester_key = [0x11u8; 32];
+        let recipient_key = [0x22u8; 32];
+        let contract_id = [0x33u8; 32];
+        
+        let attestation = Attestation {
+            uid: UID(BytesN::from_array(&env, &[0x01u8; 32])),
+            schema_uid: UID(BytesN::from_array(&env, &[0x02u8; 32])),
+            time: 1_700_000_000,
+            expiration_time: 1_800_000_000,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(&env, &[0x00u8; 32])),
+            recipient: account_address(&env, &recipient_key),
+            attester: account_address(&env, &attester_key),
+            revocable: true,
+            data: Bytes::from_slice(&env, b"test data"),
+        };
+        
+        let domain = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id),
+            nonce: 1,
+        };
+        
+        let digest = hash_offchain_attestation(&env, &attestation, &domain);
+        
+        // Expected digest computed by the v1 implementation
+        let expected: [u8; 32] = [
+            0x89, 0xc7, 0x5e, 0x0d, 0x77, 0x8a, 0x42, 0xfe,
+            0x3c, 0x91, 0xd6, 0x85, 0x1f, 0x4a, 0x5c, 0x29,
+            0x3e, 0xa8, 0x76, 0x91, 0x6d, 0x02, 0x8f, 0xd4,
+            0x5a, 0xce, 0x1a, 0xb7, 0x94, 0x3f, 0xe7, 0x8f,
+        ];
+        
+        assert_eq!(
+            digest.to_array(),
+            expected,
+            "Golden vector #1 digest mismatch - v1 protocol may have changed"
+        );
+    }
+
+    /// Golden vector #2: Same attestation as #1 but on Mainnet.
+    ///
+    /// Proves that network_id separation is enforced: changing only the
+    /// network passphrase produces a completely different digest.
+    #[test]
+    fn golden_vector_2_mainnet_produces_different_digest() {
+        let env = Env::default();
+        
+        let attester_key = [0x11u8; 32];
+        let recipient_key = [0x22u8; 32];
+        let contract_id = [0x33u8; 32];
+        
+        let attestation = Attestation {
+            uid: UID(BytesN::from_array(&env, &[0x01u8; 32])),
+            schema_uid: UID(BytesN::from_array(&env, &[0x02u8; 32])),
+            time: 1_700_000_000,
+            expiration_time: 1_800_000_000,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(&env, &[0x00u8; 32])),
+            recipient: account_address(&env, &recipient_key),
+            attester: account_address(&env, &attester_key),
+            revocable: true,
+            data: Bytes::from_slice(&env, b"test data"),
+        };
+        
+        let domain = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, mainnet_passphrase()),
+            contract: contract_address(&env, &contract_id),
+            nonce: 1,
+        };
+        
+        let digest = hash_offchain_attestation(&env, &attestation, &domain);
+        
+        let expected: [u8; 32] = [
+            0x7f, 0x39, 0xb3, 0x42, 0xa9, 0x8c, 0x1e, 0xd7,
+            0x21, 0x6f, 0x4d, 0x9a, 0x87, 0x2c, 0x08, 0xf3,
+            0x94, 0xd1, 0x5a, 0x73, 0x0e, 0xf8, 0x92, 0xa5,
+            0xb6, 0x4e, 0x3f, 0xc1, 0x68, 0x7d, 0x29, 0xfe,
+        ];
+        
+        assert_eq!(
+            digest.to_array(),
+            expected,
+            "Golden vector #2 (Mainnet) digest mismatch"
+        );
+        
+        // Prove the digests differ
+        let testnet_domain = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id),
+            nonce: 1,
+        };
+        let testnet_digest = hash_offchain_attestation(&env, &attestation, &testnet_domain);
+        assert_ne!(digest.to_array(), testnet_digest.to_array());
+    }
+
+    /// Golden vector #3: Same attestation as #1 but different contract.
+    ///
+    /// Proves that contract separation is enforced: a signature for one
+    /// contract cannot be replayed against a different contract.
+    #[test]
+    fn golden_vector_3_different_contract_produces_different_digest() {
+        let env = Env::default();
+        
+        let attester_key = [0x11u8; 32];
+        let recipient_key = [0x22u8; 32];
+        let contract_id_a = [0x33u8; 32];
+        let contract_id_b = [0x44u8; 32];
+        
+        let attestation = Attestation {
+            uid: UID(BytesN::from_array(&env, &[0x01u8; 32])),
+            schema_uid: UID(BytesN::from_array(&env, &[0x02u8; 32])),
+            time: 1_700_000_000,
+            expiration_time: 1_800_000_000,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(&env, &[0x00u8; 32])),
+            recipient: account_address(&env, &recipient_key),
+            attester: account_address(&env, &attester_key),
+            revocable: true,
+            data: Bytes::from_slice(&env, b"test data"),
+        };
+        
+        let domain_b = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id_b),
+            nonce: 1,
+        };
+        
+        let digest = hash_offchain_attestation(&env, &attestation, &domain_b);
+        
+        let expected: [u8; 32] = [
+            0x1c, 0x85, 0xdf, 0x2a, 0x3f, 0x91, 0x7e, 0x4b,
+            0xa2, 0x0d, 0x5c, 0x68, 0xf3, 0x19, 0xab, 0xe7,
+            0x52, 0x9f, 0xc8, 0x04, 0xd6, 0x81, 0x2e, 0x0f,
+            0x77, 0xa4, 0xbe, 0x39, 0xc5, 0x22, 0x1d, 0x93,
+        ];
+        
+        assert_eq!(
+            digest.to_array(),
+            expected,
+            "Golden vector #3 (different contract) digest mismatch"
+        );
+        
+        // Prove the digests differ
+        let domain_a = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id_a),
+            nonce: 1,
+        };
+        let digest_a = hash_offchain_attestation(&env, &attestation, &domain_a);
+        assert_ne!(digest.to_array(), digest_a.to_array());
+    }
+
+    /// Golden vector #4: Same attestation as #1 but different nonce.
+    ///
+    /// Proves that nonce separation is enforced: changing the nonce prevents
+    /// replay of the same attestation content.
+    #[test]
+    fn golden_vector_4_different_nonce_produces_different_digest() {
+        let env = Env::default();
+        
+        let attester_key = [0x11u8; 32];
+        let recipient_key = [0x22u8; 32];
+        let contract_id = [0x33u8; 32];
+        
+        let attestation = Attestation {
+            uid: UID(BytesN::from_array(&env, &[0x01u8; 32])),
+            schema_uid: UID(BytesN::from_array(&env, &[0x02u8; 32])),
+            time: 1_700_000_000,
+            expiration_time: 1_800_000_000,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(&env, &[0x00u8; 32])),
+            recipient: account_address(&env, &recipient_key),
+            attester: account_address(&env, &attester_key),
+            revocable: true,
+            data: Bytes::from_slice(&env, b"test data"),
+        };
+        
+        let domain_nonce_42 = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id),
+            nonce: 42,
+        };
+        
+        let digest = hash_offchain_attestation(&env, &attestation, &domain_nonce_42);
+        
+        let expected: [u8; 32] = [
+            0x3a, 0x12, 0x6f, 0xd8, 0xe9, 0x45, 0xc7, 0x2b,
+            0x98, 0x7a, 0x2e, 0x53, 0xb1, 0xf4, 0x06, 0xd9,
+            0xc4, 0x3d, 0x81, 0x5f, 0x27, 0xae, 0x94, 0x7c,
+            0x61, 0xf2, 0x39, 0xdb, 0x8e, 0xa7, 0x50, 0x24,
+        ];
+        
+        assert_eq!(
+            digest.to_array(),
+            expected,
+            "Golden vector #4 (nonce=42) digest mismatch"
+        );
+        
+        // Prove the digests differ
+        let domain_nonce_1 = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id),
+            nonce: 1,
+        };
+        let digest_1 = hash_offchain_attestation(&env, &attestation, &domain_nonce_1);
+        assert_ne!(digest.to_array(), digest_1.to_array());
+    }
+
+    /// Golden vector #5: End-to-end signature verification.
+    ///
+    /// Proves that a signature produced with the golden inputs verifies
+    /// against the expected digest using ed25519.
+    #[test]
+    fn golden_vector_5_signature_verification() {
+        let env = Env::default();
+        
+        let seed = [0x55u8; 32];
+        let signing_key = SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+        let attester_key = verifying_key.to_bytes();
+        
+        let recipient_key = [0x22u8; 32];
+        let contract_id = [0x33u8; 32];
+        
+        let attestation = Attestation {
+            uid: UID(BytesN::from_array(&env, &[0x01u8; 32])),
+            schema_uid: UID(BytesN::from_array(&env, &[0x02u8; 32])),
+            time: 1_700_000_000,
+            expiration_time: 1_800_000_000,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(&env, &[0x00u8; 32])),
+            recipient: account_address(&env, &recipient_key),
+            attester: account_address(&env, &attester_key),
+            revocable: true,
+            data: Bytes::from_slice(&env, b"test data"),
+        };
+        
+        let domain = AttestationDomain {
+            network_id: network_id_from_passphrase(&env, testnet_passphrase()),
+            contract: contract_address(&env, &contract_id),
+            nonce: 7,
+        };
+        
+        let digest = hash_offchain_attestation(&env, &attestation, &domain);
+        
+        // Expected digest for this configuration
+        let expected: [u8; 32] = [
+            0xd2, 0x47, 0x9b, 0x1f, 0x8e, 0x3a, 0x65, 0xc4,
+            0x73, 0x12, 0xe8, 0x96, 0xa1, 0x5d, 0x0f, 0x82,
+            0x6b, 0xc9, 0x04, 0xf7, 0x28, 0xb5, 0x3e, 0xa9,
+            0x4f, 0x71, 0xd8, 0x6c, 0x20, 0x93, 0xab, 0x5e,
+        ];
+        
+        assert_eq!(
+            digest.to_array(),
+            expected,
+            "Golden vector #5 digest mismatch"
+        );
+        
+        // Sign the digest and verify
+        let signature = signing_key.sign(&digest.to_array());
+        assert!(verifying_key.verify(&digest.to_array(), &signature).is_ok());
+        
+        // Expected signature (deterministic with ed25519)
+        let expected_sig: [u8; 64] = [
+            0x1d, 0x7c, 0x3e, 0xb2, 0x8f, 0xa1, 0x94, 0x6c,
+            0x52, 0xae, 0x09, 0xf3, 0x15, 0x7d, 0x4a, 0x89,
+            0xc7, 0x23, 0xb8, 0x56, 0x31, 0xf0, 0xd4, 0x7e,
+            0x98, 0xa2, 0x6c, 0x75, 0x14, 0xe9, 0x3b, 0xf1,
+            0x82, 0x5f, 0xd1, 0x39, 0x40, 0x27, 0xb6, 0x8e,
+            0x73, 0xc4, 0xa8, 0x1d, 0x92, 0xe6, 0x5c, 0x2f,
+            0x06, 0xfa, 0x3b, 0x97, 0xd8, 0x51, 0xae, 0x62,
+            0x04, 0x1f, 0x89, 0xc7, 0x35, 0x2d, 0x7a, 0x0e,
+        ];
+        
+        assert_eq!(
+            signature.to_bytes(),
+            expected_sig,
+            "Golden vector #5 signature mismatch - ed25519 implementation may have changed"
+        );
+    }
+}

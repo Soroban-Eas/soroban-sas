@@ -499,4 +499,234 @@ mod tests {
             Err(EventParseError::MalformedPayload("payload is not a map"))
         );
     }
+
+    // ─── Issue #99: Adversarial event parsing resilience tests ──────────────
+
+    #[test]
+    fn malformed_known_event_with_wrong_payload_type_returns_error() {
+        let env = Env::default();
+        
+        // REVOKED topic with non-map payload
+        let topics = [to_scval(
+            &env,
+            soroban_sas_common::events::REVOKED.into_val(&env),
+        )];
+        
+        assert_eq!(
+            parse_event(&topics, &ScVal::Bool(true)),
+            Err(EventParseError::MalformedPayload("payload is not a map"))
+        );
+        
+        assert_eq!(
+            parse_event(&topics, &ScVal::U32(123)),
+            Err(EventParseError::MalformedPayload("payload is not a map"))
+        );
+    }
+
+    #[test]
+    fn malformed_known_event_with_missing_required_field_returns_error() {
+        let env = Env::default();
+        
+        let topics = [to_scval(
+            &env,
+            soroban_sas_common::events::REVOKED.into_val(&env),
+        )];
+        
+        // Empty map - missing uid and timestamp
+        let empty_map = ScVal::Map(Some(ScMap(vec![].try_into().unwrap())));
+        assert_eq!(
+            parse_event(&topics, &empty_map),
+            Err(EventParseError::MalformedPayload("missing payload field"))
+        );
+    }
+
+    #[test]
+    fn malformed_known_event_with_wrong_field_type_returns_error() {
+        let env = Env::default();
+        
+        let topics = [to_scval(
+            &env,
+            soroban_sas_common::events::REVOKED.into_val(&env),
+        )];
+        
+        // Map with uid as string instead of bytes
+        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM};
+        let bad_uid_entry = ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
+            val: ScVal::String(StringM::try_from(b"not-bytes".to_vec()).unwrap()),
+        };
+        let bad_timestamp_entry = ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::try_from(b"timestamp".to_vec()).unwrap())),
+            val: ScVal::U64(100),
+        };
+        let bad_map = ScVal::Map(Some(ScMap(vec![bad_uid_entry, bad_timestamp_entry].try_into().unwrap())));
+        
+        assert_eq!(
+            parse_event(&topics, &bad_map),
+            Err(EventParseError::MalformedPayload("uid is not a bytes value"))
+        );
+    }
+
+    #[test]
+    fn malformed_known_event_with_wrong_uid_length_returns_error() {
+        let env = Env::default();
+        
+        let topics = [to_scval(
+            &env,
+            soroban_sas_common::events::ATTESTED.into_val(&env),
+        )];
+        
+        // UID with wrong byte length (not 32 bytes)
+        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM, ScBytes};
+        let bad_uid = ScVal::Vec(Some(vec![ScVal::Bytes(ScBytes(vec![1, 2, 3].try_into().unwrap()))].try_into().unwrap()));
+        let entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
+                val: bad_uid,
+            },
+        ];
+        let bad_map = ScVal::Map(Some(ScMap(entries.try_into().unwrap())));
+        
+        assert_eq!(
+            parse_event(&topics, &bad_map),
+            Err(EventParseError::MalformedPayload("uid is not 32 bytes"))
+        );
+    }
+
+    #[test]
+    fn malformed_known_event_with_non_address_field_returns_error() {
+        let env = Env::default();
+        let uid = UID(BytesN::from_array(&env, &[1u8; 32]));
+        let schema_uid = UID(BytesN::from_array(&env, &[2u8; 32]));
+        
+        let topics = [
+            to_scval(&env, soroban_sas_common::events::ATTESTED.into_val(&env)),
+            to_scval(&env, schema_uid.into_val(&env)),
+        ];
+        
+        // Build payload with uid and schema_uid correct, but attester as U32 instead of Address
+        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM};
+        let entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
+                val: to_scval(&env, uid.into_val(&env)),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"schema_uid".to_vec()).unwrap())),
+                val: to_scval(&env, schema_uid.into_val(&env)),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"attester".to_vec()).unwrap())),
+                val: ScVal::U32(999), // Wrong type - should be Address
+            },
+        ];
+        let bad_map = ScVal::Map(Some(ScMap(entries.try_into().unwrap())));
+        
+        assert_eq!(
+            parse_event(&topics, &bad_map),
+            Err(EventParseError::MalformedPayload("field is not an address"))
+        );
+    }
+
+    #[test]
+    fn unknown_event_types_are_skipped_without_losing_valid_events() {
+        let env = Env::default();
+        
+        // Create three events: valid, unknown, valid
+        let (topics1, data1) = revoked_event(&env, 1);
+        let event1 = contract_event([9u8; 32], topics1, data1);
+        
+        let unknown_topics = vec![to_scval(
+            &env,
+            soroban_sdk::symbol_short!("TRANSFER").into_val(&env),
+        )];
+        let event2 = contract_event([9u8; 32], unknown_topics, ScVal::Void);
+        
+        let (topics3, data3) = revoked_event(&env, 2);
+        let event3 = contract_event([9u8; 32], topics3, data3);
+        
+        let events = [event1, event2, event3];
+        let parsed = parse_events(&events);
+        
+        // Should get exactly 2 valid events (the unknown one is skipped)
+        assert_eq!(parsed.len(), 2);
+        assert!(matches!(parsed[0], SasEvent::AttestationRevoked(_)));
+        assert!(matches!(parsed[1], SasEvent::AttestationRevoked(_)));
+    }
+
+    #[test]
+    fn malformed_known_event_is_skipped_in_batch_without_panicking() {
+        let env = Env::default();
+        
+        // Create three events: valid, malformed (but recognized topic), valid
+        let (topics1, data1) = revoked_event(&env, 3);
+        let event1 = contract_event([9u8; 32], topics1, data1);
+        
+        let malformed_topics = vec![to_scval(
+            &env,
+            soroban_sas_common::events::REVOKED.into_val(&env),
+        )];
+        let event2 = contract_event([9u8; 32], malformed_topics, ScVal::U32(999)); // Wrong payload type
+        
+        let (topics3, data3) = revoked_event(&env, 4);
+        let event3 = contract_event([9u8; 32], topics3, data3);
+        
+        let events = [event1, event2, event3];
+        let parsed = parse_events(&events);
+        
+        // Should get exactly 2 valid events (the malformed one is skipped)
+        assert_eq!(parsed.len(), 2);
+        assert!(matches!(parsed[0], SasEvent::AttestationRevoked(_)));
+        assert!(matches!(parsed[1], SasEvent::AttestationRevoked(_)));
+    }
+
+    #[test]
+    fn non_symbol_first_topic_returns_not_sas_event() {
+        let env = Env::default();
+        
+        // First topic is U32 instead of Symbol
+        let topics = [ScVal::U32(123)];
+        assert_eq!(
+            parse_event(&topics, &ScVal::Void),
+            Err(EventParseError::NotSasEvent)
+        );
+        
+        // First topic is Bytes instead of Symbol
+        use soroban_sdk::xdr::ScBytes;
+        let topics = [ScVal::Bytes(ScBytes(vec![1, 2, 3].try_into().unwrap()))];
+        assert_eq!(
+            parse_event(&topics, &ScVal::Void),
+            Err(EventParseError::NotSasEvent)
+        );
+    }
+
+    #[test]
+    fn timestamp_field_with_wrong_type_returns_error() {
+        let env = Env::default();
+        let uid = UID(BytesN::from_array(&env, &[5u8; 32]));
+        
+        let topics = [
+            to_scval(&env, soroban_sas_common::events::REVOKED.into_val(&env)),
+            to_scval(&env, uid.clone().into_val(&env)),
+        ];
+        
+        // Build payload with timestamp as String instead of U64
+        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM};
+        let entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
+                val: to_scval(&env, uid.into_val(&env)),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"timestamp".to_vec()).unwrap())),
+                val: ScVal::String(StringM::try_from(b"not-a-number".to_vec()).unwrap()),
+            },
+        ];
+        let bad_map = ScVal::Map(Some(ScMap(entries.try_into().unwrap())));
+        
+        assert_eq!(
+            parse_event(&topics, &bad_map),
+            Err(EventParseError::MalformedPayload("timestamp is not a u64"))
+        );
+    }
 }
