@@ -224,7 +224,19 @@ impl SchemaRegistry {
             LEDGERS_IN_ONE_YEAR,
         );
 
-        let mut count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        let mut count: u32 = if let Some(c) = env.storage().persistent().get(&SCHEMA_COUNT) {
+            env.storage().persistent().extend_ttl(
+                &SCHEMA_COUNT,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            c
+        } else if env.storage().persistent().has::<u32>(&0u32) {
+            // Count is missing but a record exists at index 0 — metadata expired.
+            panic_with_error!(&env, SASError::CountMetadataExpired);
+        } else {
+            0
+        };
         env.storage().persistent().set(&count, &uid);
         env.storage()
             .persistent()
@@ -282,6 +294,13 @@ impl SchemaRegistry {
             return soroban_sdk::Vec::new(&env);
         }
         let count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        if count > 0 {
+            env.storage().persistent().extend_ttl(
+                &SCHEMA_COUNT,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
         if start >= count {
             return soroban_sdk::Vec::new(&env);
         }
@@ -290,6 +309,11 @@ impl SchemaRegistry {
         let mut scanned: u32 = 0;
         while index < count && schemas.len() < limit && scanned < MAX_SCAN_BUDGET {
             if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
+                env.storage().persistent().extend_ttl(
+                    &index,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
                 let is_deprecated: bool = env
                     .storage()
                     .persistent()
@@ -298,6 +322,11 @@ impl SchemaRegistry {
                 if !is_deprecated {
                     if let Some(record) = env.storage().persistent().get::<UID, SchemaRecord>(&uid)
                     {
+                        env.storage().persistent().extend_ttl(
+                            &uid,
+                            LEDGERS_IN_ONE_YEAR,
+                            LEDGERS_IN_ONE_YEAR,
+                        );
                         schemas.push_back(record);
                     }
                 }
@@ -316,6 +345,13 @@ impl SchemaRegistry {
     ) -> (soroban_sdk::Vec<SchemaRecord>, u32) {
         extend_instance_ttl(&env);
         let count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        if count > 0 {
+            env.storage().persistent().extend_ttl(
+                &SCHEMA_COUNT,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
         if limit == 0 || start >= count {
             return (
                 soroban_sdk::Vec::new(&env),
@@ -327,6 +363,11 @@ impl SchemaRegistry {
         let mut scanned: u32 = 0;
         while index < count && schemas.len() < limit && scanned < MAX_SCAN_BUDGET {
             if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
+                env.storage().persistent().extend_ttl(
+                    &index,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
                 let is_deprecated: bool = env
                     .storage()
                     .persistent()
@@ -335,6 +376,11 @@ impl SchemaRegistry {
                 if !is_deprecated {
                     if let Some(record) = env.storage().persistent().get::<UID, SchemaRecord>(&uid)
                     {
+                        env.storage().persistent().extend_ttl(
+                            &uid,
+                            LEDGERS_IN_ONE_YEAR,
+                            LEDGERS_IN_ONE_YEAR,
+                        );
                         schemas.push_back(record);
                     }
                 }

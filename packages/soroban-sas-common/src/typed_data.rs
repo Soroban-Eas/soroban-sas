@@ -15,6 +15,50 @@
 use crate::Attestation;
 use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env};
 
+/// # Off-chain verification example
+///
+/// An off-chain verifier can reproduce the exact digest an issuer signed
+/// without calling the on-chain contract. This is useful for wallets,
+/// relayers, and indexers that need to validate attestations before
+/// or without interacting with the ledger.
+///
+/// ```rust,no_run
+/// use soroban_sas_common::{
+///     hash_offchain_attestation, Attestation, AttestationDomain, UID,
+/// };
+/// use soroban_sdk::{Address, BytesN, Env};
+///
+/// let env = Env::default();
+///
+/// // Build the domain separator binding this signature to one network,
+/// // one SAS contract, and one caller-chosen nonce.
+/// let domain = AttestationDomain {
+///     network_id: BytesN::from_array(&env, &[0u8; 32]), // SHA-256 of passphrase
+///     contract: Address::generate(&env),
+///     nonce: 42,
+/// };
+///
+/// // Construct the attestation (fields must match what the issuer signed).
+/// let attestation = Attestation {
+///     uid: UID(BytesN::from_array(&env, &[1u8; 32])),
+///     schema_uid: UID(BytesN::from_array(&env, &[2u8; 32])),
+///     time: 1_700_000_000,
+///     expiration_time: 0,
+///     revocation_time: 0,
+///     ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+///     recipient: Address::generate(&env),
+///     attester: Address::generate(&env),
+///     revocable: true,
+///     data: soroban_sdk::Bytes::new(&env),
+/// };
+///
+/// // Reproduce the deterministic digest the issuer signed.
+/// let digest = hash_offchain_attestation(&env, &attestation, &domain);
+///
+/// // Verify with the issuer's ed25519 public key and signature.
+/// // verify_offchain_signature(&env, &digest, &public_key, &signature);
+/// ```
+
 /// Prefix distinguishing SAS off-chain payloads from other signed messages
 /// (analogous to EIP-191's `\x19\x01` prefix).
 pub const PAYLOAD_PREFIX: &[u8] = b"\x19SorobanSAS\x01";
