@@ -17,6 +17,21 @@ fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
+/// Pushes a schema record's archival horizon back out to the shared
+/// retention window ([`LEDGERS_IN_ONE_YEAR`], used as both the renewal
+/// threshold and the extend-to target, matching every other persistent
+/// write in this contract).
+///
+/// Call this only once `uid` is known to exist: read views renew an active
+/// record so that a schema which is heavily read but never rewritten is not
+/// archived, breaking downstream validation and discovery. The missing-UID
+/// path must stay side-effect free.
+fn renew_schema_record(env: &Env, uid: &UID) {
+    env.storage()
+        .persistent()
+        .extend_ttl(uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
 fn require_registry_admin(env: &Env) -> Address {
     let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
     match admin {
@@ -260,6 +275,9 @@ impl SchemaRegistry {
         uid
     }
 
+    /// Returns the active [`SchemaRecord`] for `uid`, renewing its TTL when it
+    /// exists. An unknown or deprecated UID returns `None` and creates no
+    /// storage.
     pub fn get_schema(env: Env, uid: UID) -> Option<SchemaRecord> {
         extend_instance_ttl(&env);
         if env
@@ -270,9 +288,17 @@ impl SchemaRegistry {
         {
             return None;
         }
-        env.storage().persistent().get(&uid)
+        let record: Option<SchemaRecord> = env.storage().persistent().get(&uid);
+        if record.is_some() {
+            renew_schema_record(&env, &uid);
+        }
+        record
     }
 
+    /// Reports whether `uid` names an active (non-deprecated) schema. SAS
+    /// calls this view during issuance, so a successful check renews the
+    /// record's TTL to keep an actively used schema hot. A missing or
+    /// deprecated UID returns `false` without creating or extending an entry.
     pub fn validate_schema(env: Env, uid: UID) -> bool {
         extend_instance_ttl(&env);
         if env
@@ -283,7 +309,12 @@ impl SchemaRegistry {
         {
             return false;
         }
-        env.storage().persistent().has(&uid)
+        if env.storage().persistent().has(&uid) {
+            renew_schema_record(&env, &uid);
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns up to `limit` active schemas from `start`, skipping deprecated.

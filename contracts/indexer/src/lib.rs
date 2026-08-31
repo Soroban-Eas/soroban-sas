@@ -63,10 +63,16 @@ where
 
 /// Reads one index chunk, renewing the entry's TTL when it exists.
 ///
-/// Index chunks are persistent entries that a frequently queried but rarely
-/// updated key may never rewrite, so without renewal on read an actively used
-/// lookup can still be archived out from under its callers. A missing chunk
-/// yields `None` without writing anything, so a gap in the chunk sequence
+/// Retention policy for index data: every chunk read through this helper —
+/// for any lookup dimension (recipient, schema, attester), whether via a
+/// complete read, a filtered read, or a paginated read — extends the
+/// touched chunk's TTL by [`LEDGERS_IN_ONE_YEAR`]. Index chunks are
+/// persistent entries that a frequently queried but rarely updated key may
+/// never rewrite, so without renewal on read an actively used lookup can
+/// still be archived out from under its callers. All lookup dimensions route
+/// through this one helper so the three indexes cannot drift into subtly
+/// different retention behavior. A missing chunk yields `None` without
+/// writing anything, so a gap in the chunk sequence — or an empty lookup —
 /// neither creates storage nor traps.
 fn read_chunk<K>(env: &Env, chunk_key: &K) -> Option<soroban_sdk::Vec<UID>>
 where
@@ -318,7 +324,10 @@ impl Indexer {
     }
 
     /// Complete schema history, oldest first. See
-    /// [`Indexer::get_attestations_by_recipient`] for the chunking contract.
+    /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
+    /// and [`read_chunk`] for the read-path retention policy: every schema
+    /// chunk this walks has its TTL renewed, and an empty lookup stays
+    /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
         let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
@@ -331,7 +340,10 @@ impl Indexer {
     }
 
     /// Complete attester history, oldest first. See
-    /// [`Indexer::get_attestations_by_recipient`] for the chunking contract.
+    /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
+    /// and [`read_chunk`] for the read-path retention policy: every attester
+    /// chunk this walks has its TTL renewed, and an empty lookup stays
+    /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
         let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));

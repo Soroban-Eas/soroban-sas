@@ -506,6 +506,79 @@ fn test_recipient_read_preserves_hot_index_ttl() {
     assert_eq!(chunk_live_until(&env, &chunk_key), Some(expected));
 }
 
+/// Issue #80: reading a schema index renews the TTL of the chunks it touches,
+/// so a widely queried but static schema is not archived out from under
+/// callers.
+#[test]
+fn test_schema_read_preserves_hot_index_ttl() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[21u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[22u8; 32]));
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+
+    let chunk_key = (schema_uid.clone(), 0u32);
+    let at_write = chunk_live_until(&env, &chunk_key).expect("chunk written");
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    assert_eq!(chunk_live_until(&env, &chunk_key), Some(at_write));
+
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert_eq!(client.get_attestations_by_schema(&schema_uid).len(), 1);
+    assert_eq!(chunk_live_until(&env, &chunk_key), Some(expected));
+
+    // The filtered view renews too.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert_eq!(client.get_schema_filtered(&schema_uid, &true).len(), 1);
+    assert_eq!(chunk_live_until(&env, &chunk_key), Some(expected));
+}
+
+/// Issue #81: reading an attester index renews the TTL of the chunks it
+/// touches, so issuer history is not archived while consumers actively query
+/// it.
+#[test]
+fn test_attester_read_preserves_hot_index_ttl() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::default();
+    let indexer_id = env.register_contract(None, Indexer);
+    let client = IndexerClient::new(&env, &indexer_id);
+
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[23u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[24u8; 32]));
+    client.index_attestation(&uid, &recipient, &schema_uid, &attester);
+
+    let chunk_key = (attester.clone(), 0u32);
+    let at_write = chunk_live_until(&env, &chunk_key).expect("chunk written");
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    assert_eq!(chunk_live_until(&env, &chunk_key), Some(at_write));
+
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert_eq!(client.get_attestations_by_attester(&attester).len(), 1);
+    assert_eq!(chunk_live_until(&env, &chunk_key), Some(expected));
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert_eq!(client.get_attester_filtered(&attester, &true).len(), 1);
+    assert_eq!(chunk_live_until(&env, &chunk_key), Some(expected));
+}
+
 /// Issue #79: a lookup key with no chunks reads as empty. The read must not
 /// trap and must not materialize the chunk it failed to find.
 #[test]
