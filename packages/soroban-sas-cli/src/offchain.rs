@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use soroban_sas_common::{
     hash_delegated_revocation, hash_offchain_attestation, Attestation, AttestationDomain, UID,
 };
-use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
+use soroban_sas_sdk::strkey::{parse_address, AddressKind};
+use soroban_sdk::{Bytes, BytesN, Env};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationInput {
@@ -73,8 +74,10 @@ pub fn parse_attestation(env: &Env, input: &AttestationInput) -> Result<Attestat
             env,
             &decode_hex32("ref_uid", &input.ref_uid)?,
         )),
-        recipient: Address::from_string(&SorobanString::from_str(env, &input.recipient)),
-        attester: Address::from_string(&SorobanString::from_str(env, &input.attester)),
+        recipient: parse_address(env, &input.recipient, AddressKind::Either, "recipient")
+            .map_err(|e| e.to_string())?,
+        attester: parse_address(env, &input.attester, AddressKind::Either, "attester")
+            .map_err(|e| e.to_string())?,
         revocable: input.revocable,
         data: Bytes::from_slice(env, &data),
     })
@@ -120,7 +123,8 @@ pub fn compute_payload_hash(
         .sha256(&Bytes::from_slice(&env, network_passphrase.as_bytes()));
     let domain = AttestationDomain {
         network_id,
-        contract: Address::from_string(&SorobanString::from_str(&env, contract_id)),
+        contract: parse_address(&env, contract_id, AddressKind::Contract, "contract_id")
+            .map_err(|e| e.to_string())?,
         nonce,
     };
     let hash: BytesN<32> = hash_offchain_attestation(&env, &attestation, &domain);
@@ -234,13 +238,15 @@ pub fn sign_delegated_revocation(
 
     let env = Env::default();
     let uid = UID(BytesN::from_array(&env, &decode_hex32("uid", uid_hex)?));
-    let attester_address = Address::from_string(&SorobanString::from_str(&env, attester));
+    let attester_address = parse_address(&env, attester, AddressKind::Either, "attester")
+        .map_err(|e| e.to_string())?;
     let network_id = env
         .crypto()
         .sha256(&Bytes::from_slice(&env, network_passphrase.as_bytes()));
     let domain = AttestationDomain {
         network_id,
-        contract: Address::from_string(&SorobanString::from_str(&env, contract_id)),
+        contract: parse_address(&env, contract_id, AddressKind::Contract, "contract_id")
+            .map_err(|e| e.to_string())?,
         nonce,
     };
     let payload_hash = hash_delegated_revocation(&env, &uid, &attester_address, &domain);

@@ -70,3 +70,48 @@ pub enum SdkError {
         observed: Option<usize>,
     },
 }
+
+impl std::fmt::Display for SdkError {
+    /// Renders a human-readable, single-line message for CLI output. Unlike
+    /// `{:?}`, this doesn't leak the enum variant's Rust name — every
+    /// variant's message is written to stand on its own (issue #171 /
+    /// #175: "CLI prints actionable messages").
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SdkError::TransportError(msg) => write!(f, "network error: {msg}"),
+            SdkError::SimulationError(msg) => write!(f, "simulation failed: {msg}"),
+            SdkError::ContractError(code) => write!(f, "contract rejected the call (error {code})"),
+            SdkError::DecodingError(msg) => write!(f, "{msg}"),
+            SdkError::RpcError(msg) => write!(f, "RPC error: {msg}"),
+            SdkError::ValidationError(msg) => write!(f, "{msg}"),
+            SdkError::Archived(msg) => write!(f, "entry is archived and needs restoration: {msg}"),
+            SdkError::RestorationRequired { message, .. } => {
+                write!(f, "entry is archived and needs restoration: {message}")
+            }
+            SdkError::SubmissionRejected {
+                status,
+                error_result_xdr,
+            } => match error_result_xdr {
+                Some(xdr) => write!(f, "transaction submission rejected ({status}): {xdr}"),
+                None => write!(f, "transaction submission rejected ({status})"),
+            },
+            SdkError::SettlementTimeout {
+                hash,
+                last_status,
+                polls,
+            } => write!(
+                f,
+                "transaction {hash} did not settle after {polls} polls (last status: {last_status})"
+            ),
+            SdkError::ResponseTooLarge { limit, observed } => match observed {
+                Some(size) => write!(
+                    f,
+                    "RPC response of {size} bytes exceeds the {limit}-byte limit"
+                ),
+                None => write!(f, "RPC response exceeds the {limit}-byte limit"),
+            },
+        }
+    }
+}
+
+impl std::error::Error for SdkError {}

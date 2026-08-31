@@ -15,6 +15,7 @@ pub mod rpc;
 pub mod sequence;
 pub mod signature;
 pub mod simulate;
+pub mod strkey;
 pub mod transaction;
 
 pub mod errors;

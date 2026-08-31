@@ -1,6 +1,61 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod identity;
+mod network;
 mod offchain;
+
+/// Resolves a subcommand's own flag against the global `--network` shorthand
+/// (issue #174): an explicit flag (already merged with its environment
+/// variable fallback by clap's `env = "..."`) always wins; `--network`
+/// supplies the value only when the flag is entirely absent.
+fn resolve_rpc_url(explicit: Option<String>, network: Option<&str>) -> Result<String, String> {
+    if let Some(url) = explicit {
+        return Ok(url);
+    }
+    match network {
+        Some(name) => Ok(network::resolve_network(name)?.rpc_url),
+        None => Err(
+            "missing --rpc-url: pass it directly, set SOROBAN_RPC_URL, or pass --network"
+                .to_string(),
+        ),
+    }
+}
+
+/// Same precedence as [`resolve_rpc_url`], for the network passphrase half
+/// of a `--network` shorthand.
+fn resolve_network_passphrase(
+    explicit: Option<String>,
+    network: Option<&str>,
+) -> Result<String, String> {
+    if let Some(passphrase) = explicit {
+        return Ok(passphrase);
+    }
+    match network {
+        Some(name) => Ok(network::resolve_network(name)?.network_passphrase),
+        None => Err(
+            "missing --network-passphrase: pass it directly, set \
+             SOROBAN_NETWORK_PASSPHRASE, or pass --network"
+                .to_string(),
+        ),
+    }
+}
+
+/// Resolves a subcommand's own `--secret-key` (already merged with
+/// `SAS_SECRET_KEY` by clap) against the global `--identity` shorthand
+/// (issue #174): an explicit flag always wins; `--identity` looks the key up
+/// from the local identity store only when the flag is entirely absent.
+fn resolve_secret_key(explicit: Option<String>, identity: Option<&str>) -> Result<String, String> {
+    if let Some(secret) = explicit {
+        return Ok(secret);
+    }
+    match identity {
+        Some(name) => identity::resolve_identity_secret(name),
+        None => Err(
+            "missing --secret-key: pass it directly, set SAS_SECRET_KEY, or pass --identity"
+                .to_string(),
+        ),
+    }
+}
 
 /// Output format shared by every subcommand (issue #27).
 ///
@@ -186,10 +241,23 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
 #[command(name = "soroban-sas")]
 #[command(about = "CLI for Soroban Attestation Service")]
 struct Cli {
-    #[arg(long, global = true, help = "RPC Network to connect to")]
+    #[arg(
+        long,
+        global = true,
+        help = "Named network (testnet, futurenet, mainnet/pubnet, local/standalone). \
+                Supplies --rpc-url / --network-passphrase for any subcommand that \
+                doesn't set them directly or via their SOROBAN_* env vars (issue #174)."
+    )]
     network: Option<String>,
 
-    #[arg(long, global = true, help = "Identity to use for signing")]
+    #[arg(
+        long,
+        global = true,
+        help = "Named identity to sign with, looked up from \
+                ~/.soroban-sas/identities/<name> (or $SAS_IDENTITY_DIR/<name>). \
+                Supplies --secret-key for any subcommand that doesn't set it directly \
+                or via SAS_SECRET_KEY (issue #174)."
+    )]
     identity: Option<String>,
 
     #[arg(
@@ -249,11 +317,11 @@ enum OffchainCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(long, help = "Replay-protection nonce bound into the signature")]
         nonce: u64,
         #[arg(long, help = "Network passphrase the signature is bound to")]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...) the signature is bound to")]
         contract_id: String,
         #[arg(
@@ -262,10 +330,58 @@ enum OffchainCommands {
         )]
         output: Option<String>,
     },
-    /// Verify a signed off-chain attestation
+    /// Verify a signed off-chain attestation.
+    ///
+    /// By default this performs *only* cryptographic checks (issue #175):
+    /// the ed25519 signature, that its public key belongs to the declared
+    /// attester, and that the payload hash matches the attestation
+    /// contents. It does **not** confirm the attestation is still valid —
+    /// pass `--online` to additionally check expiration, revocation, schema
+    /// availability, and that the file's embedded network/contract match
+    /// the network/contract you actually trust.
     Verify {
         #[arg(long, help = "JSON file containing the signed attestation")]
         file: String,
+        #[arg(
+            long,
+            help = "Also check current on-chain status: expiration, revocation, schema \
+                    availability, and that the embedded network/contract match the \
+                    trusted target given via --contract-id/--network-passphrase (or \
+                    --network). Without this flag only the cryptographic signature is \
+                    checked."
+        )]
+        online: bool,
+        #[arg(
+            long,
+            env = "SAS_CONTRACT_ID",
+            help = "Trusted SAS contract address (C...) to verify against when --online \
+                    is set. Required for --online: the contract_id embedded in the \
+                    signed file is untrusted input and is only ever *compared* against \
+                    this, never used to pick the verification target itself."
+        )]
+        contract_id: Option<String>,
+        #[arg(
+            long,
+            env = "SOROBAN_NETWORK_PASSPHRASE",
+            help = "Trusted network passphrase to verify against when --online is set \
+                    (or supply --network). Same non-negotiable-trust-target rule as \
+                    --contract-id."
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            env = "SCHEMA_REGISTRY_CONTRACT_ID",
+            help = "Schema Registry contract address (C...), to check schema \
+                    availability when --online is set. Skipped (reported as \
+                    \"not_checked\") if omitted."
+        )]
+        registry_contract_id: Option<String>,
+        #[arg(
+            long,
+            env = "SOROBAN_RPC_URL",
+            help = "Soroban RPC endpoint URL; required for --online (or supply --network)"
+        )]
+        rpc_url: Option<String>,
     },
 }
 
@@ -289,13 +405,13 @@ enum SchemaCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(
             long,
             help = "Network passphrase to sign against",
             env = "SOROBAN_NETWORK_PASSPHRASE"
         )]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(
             long,
             help = "Schema Registry contract address (C...)",
@@ -303,7 +419,7 @@ enum SchemaCommands {
         )]
         registry_contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Get an existing schema by UID
     Get {
@@ -316,7 +432,7 @@ enum SchemaCommands {
         )]
         registry_contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
 }
 
@@ -350,17 +466,17 @@ enum AttestCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(
             long,
             help = "Network passphrase to sign against",
             env = "SOROBAN_NETWORK_PASSPHRASE"
         )]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Create and submit a new on-chain attestation
     Create {
@@ -372,17 +488,17 @@ enum AttestCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(
             long,
             help = "Network passphrase to sign against",
             env = "SOROBAN_NETWORK_PASSPHRASE"
         )]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Revoke an existing on-chain attestation
     Revoke {
@@ -394,17 +510,17 @@ enum AttestCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(
             long,
             help = "Network passphrase to sign against",
             env = "SOROBAN_NETWORK_PASSPHRASE"
         )]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Verify an on-chain attestation's current validity
     Verify {
@@ -413,7 +529,7 @@ enum AttestCommands {
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Atomically revoke an attestation and issue a replacement linked to
     /// it via ref_uid. The replacement's attester/recipient must match the
@@ -432,17 +548,17 @@ enum AttestCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(
             long,
             help = "Network passphrase to sign against",
             env = "SOROBAN_NETWORK_PASSPHRASE"
         )]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
 }
 
@@ -459,7 +575,7 @@ enum QueryCommands {
         )]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Query attestations by schema UID
     BySchema {
@@ -472,7 +588,7 @@ enum QueryCommands {
         )]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
 }
 
@@ -492,7 +608,7 @@ enum DelegateCommands {
         #[arg(long, help = "Replay-protection nonce bound into the signature")]
         nonce: u64,
         #[arg(long, help = "Network passphrase the signature is bound to")]
-        network_passphrase: String,
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...) the signature is bound to")]
         contract_id: String,
         #[arg(
@@ -501,7 +617,7 @@ enum DelegateCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(
             long,
             help = "Write the signed revocation to this file instead of stdout"
@@ -523,9 +639,9 @@ enum DelegateCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     /// Submit an already-signed delegated revocation on-chain via
     /// `revoke_by_delegation`, same relayer model as `submit-attest`.
@@ -541,21 +657,24 @@ enum DelegateCommands {
             env = "SAS_SECRET_KEY",
             hide_env_values = true
         )]
-        secret_key: String,
+        secret_key: Option<String>,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
 }
 
 fn main() {
     let cli = Cli::parse();
     let output = cli.output;
+    // Taken before matching on `cli.command`, which moves it.
+    let network = cli.network;
+    let identity = cli.identity;
     let result = match cli.command {
-        Some(Commands::Offchain { action }) => run_offchain(action, output),
-        Some(Commands::Schema { action }) => run_schema(action, output),
-        Some(Commands::Attest { action }) => run_attest(action, output),
-        Some(Commands::Query { action }) => run_query(action, output),
-        Some(Commands::Delegate { action }) => run_delegate(action, output),
+        Some(Commands::Offchain { action }) => run_offchain(action, output, network, identity),
+        Some(Commands::Schema { action }) => run_schema(action, output, network, identity),
+        Some(Commands::Attest { action }) => run_attest(action, output, network, identity),
+        Some(Commands::Query { action }) => run_query(action, output, network),
+        Some(Commands::Delegate { action }) => run_delegate(action, output, network, identity),
         _ => emit_ok(
             output,
             || println!("CLI initialized"),
@@ -568,7 +687,12 @@ fn main() {
     }
 }
 
-fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String> {
+fn run_attest(
+    action: AttestCommands,
+    output: OutputFormat,
+    network: Option<String>,
+    identity: Option<String>,
+) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
         AttestCommands::Attest {
@@ -582,6 +706,10 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             contract_id,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let schema_uid_bytes = parse_uid(&schema_uid)?;
             let data_bytes = decode_hex_or_base64(&data)?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -616,10 +744,11 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             let attestation = offchain::parse_attestation(&env, &input)?;
 
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            validate_expiration_before_submit(&rpc, &env, expiration)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .attest(&env, &rpc, &network_passphrase, &seed, attestation)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
 
             if result.status != "SUCCESS" {
                 return Err(format!("attest failed with status {}", result.status));
@@ -646,6 +775,10 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             contract_id,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw = std::fs::read_to_string(&data_file)
                 .map_err(|e| format!("cannot read {data_file}: {e}"))?;
             let input: offchain::AttestationInput =
@@ -663,10 +796,11 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             }
             let attestation = offchain::parse_attestation(&env, &input)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .attest(&env, &rpc, &network_passphrase, &seed, attestation)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
         AttestCommands::Revoke {
@@ -676,13 +810,17 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             contract_id,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid = parse_uid(&uid)?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .revoke(&env, &rpc, &network_passphrase, &seed, &uid)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
         AttestCommands::Verify {
@@ -690,12 +828,13 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             contract_id,
             rpc_url,
         } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let valid = client
                 .verify_attestation(&env, &rpc, &uid)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             emit_ok(
                 output,
                 || {
@@ -716,6 +855,10 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             contract_id,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let old_uid = parse_uid(&old_uid)?;
             let raw = std::fs::read_to_string(&data_file)
                 .map_err(|e| format!("cannot read {data_file}: {e}"))?;
@@ -734,13 +877,45 @@ fn run_attest(action: AttestCommands, output: OutputFormat) -> Result<(), String
             }
             let new_data = offchain::parse_attestation(&env, &input)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .replace_attestation(&env, &rpc, &network_passphrase, &seed, &old_uid, new_data)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
     }
+}
+
+/// Validates a proposed `expiration_time` against the network's *current*
+/// ledger time before any simulation or submission is attempted (issue
+/// #173) — an already-expired or otherwise invalid expiration always fails
+/// on-chain, so failing here first saves a simulation round trip (and its
+/// fee) on a doomed call.
+///
+/// `0` is the contract's "never expires" sentinel and is always accepted
+/// without a network round trip. Any other value is checked against the
+/// live ledger clock with `soroban_sas_common::validate_ttl` — the exact
+/// rule the contract itself enforces (`expiration_time != 0 &&
+/// expiration_time <= now` is invalid), so boundary behavior matches
+/// on-chain exactly.
+fn validate_expiration_before_submit(
+    rpc: &soroban_sas_sdk::rpc::RpcClient,
+    env: &soroban_sdk::Env,
+    expiration_time: u64,
+) -> Result<(), String> {
+    if expiration_time == 0 {
+        return Ok(());
+    }
+    let ledger_time = rpc
+        .fetch_current_ledger_time()
+        .map_err(|e| format!("failed to fetch current ledger time: {e}"))?;
+    soroban_sas_common::validate_ttl(env, ledger_time, expiration_time).map_err(|_| {
+        format!(
+            "expiration_time {expiration_time} is not after the current ledger time \
+             {ledger_time} (pass 0 for an attestation that never expires)"
+        )
+    })
 }
 
 fn parse_uid(value: &str) -> Result<[u8; 32], String> {
@@ -786,7 +961,11 @@ fn print_transaction_result(
     emit_ok(output, || println!("{human_text}"), data.clone())
 }
 
-fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> {
+fn run_query(
+    action: QueryCommands,
+    output: OutputFormat,
+    network: Option<String>,
+) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
         QueryCommands::ByRecipient {
@@ -794,11 +973,12 @@ fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> 
             contract_id,
             rpc_url,
         } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let uids = client
                 .get_attestations_by_recipient(&env, &rpc, &address)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_uids(&uids, output)
         }
         QueryCommands::BySchema {
@@ -806,12 +986,13 @@ fn run_query(action: QueryCommands, output: OutputFormat) -> Result<(), String> 
             contract_id,
             rpc_url,
         } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let schema_uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let uids = client
                 .get_attestations_by_schema(&env, &rpc, &schema_uid)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_uids(&uids, output)
         }
     }
@@ -847,7 +1028,12 @@ fn decode_hex64(value: &str) -> Result<[u8; 64], String> {
         .map_err(|_| "value must be exactly 64 bytes".to_string())
 }
 
-fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), String> {
+fn run_delegate(
+    action: DelegateCommands,
+    output: OutputFormat,
+    network: Option<String>,
+    identity: Option<String>,
+) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
         DelegateCommands::SignRevoke {
@@ -859,6 +1045,9 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
             secret_key,
             output: output_file,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let signed = offchain::sign_delegated_revocation(
                 &uid,
@@ -893,6 +1082,8 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
             secret_key,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw =
                 std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
@@ -916,7 +1107,7 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
                     &signature,
                     &public_key,
                 )
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
         DelegateCommands::SubmitRevoke {
@@ -924,6 +1115,8 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
             secret_key,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw =
                 std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
             let signed: offchain::SignedDelegatedRevocation = serde_json::from_str(&raw)
@@ -946,13 +1139,18 @@ fn run_delegate(action: DelegateCommands, output: OutputFormat) -> Result<(), St
                     &signature,
                     &public_key,
                 )
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
     }
 }
 
-fn run_schema(action: SchemaCommands, output: OutputFormat) -> Result<(), String> {
+fn run_schema(
+    action: SchemaCommands,
+    output: OutputFormat,
+    network: Option<String>,
+    identity: Option<String>,
+) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
         SchemaCommands::Register {
@@ -968,6 +1166,10 @@ fn run_schema(action: SchemaCommands, output: OutputFormat) -> Result<(), String
             // or oversized schema exits 1 with a clear message and never pays
             // for a simulation.
             validate_schema_syntax(&schema)?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
@@ -982,7 +1184,7 @@ fn run_schema(action: SchemaCommands, output: OutputFormat) -> Result<(), String
                     &resolver,
                     revocable,
                 )
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
         SchemaCommands::Get {
@@ -990,12 +1192,13 @@ fn run_schema(action: SchemaCommands, output: OutputFormat) -> Result<(), String
             registry_contract_id,
             rpc_url,
         } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid_bytes = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let schema = client
                 .get_schema(&env, &rpc, &registry_contract_id, &uid_bytes)
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| e.to_string())?;
 
             match schema {
                 None => emit_ok(
@@ -1038,7 +1241,12 @@ fn soroban_string_to_std(s: &soroban_sdk::String) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-fn run_offchain(action: OffchainCommands, output: OutputFormat) -> Result<(), String> {
+fn run_offchain(
+    action: OffchainCommands,
+    output: OutputFormat,
+    network: Option<String>,
+    identity: Option<String>,
+) -> Result<(), String> {
     match action {
         OffchainCommands::Sign {
             data_file,
@@ -1048,6 +1256,9 @@ fn run_offchain(action: OffchainCommands, output: OutputFormat) -> Result<(), St
             contract_id,
             output: output_file,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let raw = std::fs::read_to_string(&data_file)
                 .map_err(|e| format!("cannot read {data_file}: {e}"))?;
             let input: offchain::AttestationInput =
@@ -1080,19 +1291,190 @@ fn run_offchain(action: OffchainCommands, output: OutputFormat) -> Result<(), St
                 ),
             }
         }
-        OffchainCommands::Verify { file } => {
+        OffchainCommands::Verify {
+            file,
+            online,
+            contract_id,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
             let raw =
                 std::fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
+            // Cryptographic checks only: signature, attester binding, payload
+            // hash. Runs regardless of `--online` — the online checks below
+            // only ever add to this, never replace it.
             offchain::verify_offchain_attestation(&signed)?;
+
+            if !online {
+                return emit_ok(
+                    output,
+                    || {
+                        println!("Cryptographic checks passed: signature, attester binding, and payload hash.");
+                        println!(
+                            "This does NOT confirm expiration, revocation, schema availability, \
+                             or on-chain status — pass --online to check those."
+                        );
+                    },
+                    serde_json::json!({
+                        "signature_valid": true,
+                        "online_checks_performed": false,
+                    }),
+                );
+            }
+
+            // Online mode: the trust target is *only* ever the network/rpc
+            // this process was told to use (via these flags or --network) —
+            // the file's embedded `network_passphrase`/`contract_id` are
+            // untrusted input, compared against that target below, never
+            // used to select it (issue #175's "embedded values cannot
+            // silently choose the verifier's trust target").
+            let trusted_network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let trusted_rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let trusted_contract_id = contract_id.ok_or_else(|| {
+                "--online requires --contract-id (or SAS_CONTRACT_ID) naming the trusted \
+                 SAS contract to verify against"
+                    .to_string()
+            })?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(trusted_rpc_url);
+
+            let report = perform_online_verification(
+                &signed,
+                &trusted_network_passphrase,
+                &trusted_contract_id,
+                registry_contract_id.as_deref(),
+                &rpc,
+            )?;
+
             emit_ok(
                 output,
-                || println!("Signature is valid"),
-                serde_json::json!({ "valid": true }),
+                || {
+                    println!("Cryptographic checks: signature, attester binding, payload hash — valid");
+                    println!(
+                        "Network matches trusted target: {} (trusted: {trusted_network_passphrase})",
+                        report.network_matches_trusted
+                    );
+                    println!(
+                        "Contract matches trusted target: {} (trusted: {trusted_contract_id})",
+                        report.contract_matches_trusted
+                    );
+                    println!(
+                        "On-chain: found={} expired={} revoked={}",
+                        report.on_chain_found, report.expired, report.revoked
+                    );
+                    println!("Schema availability: {}", report.schema_status);
+                    println!(
+                        "Overall: {}",
+                        if report.overall_valid { "VALID" } else { "NOT VALID" }
+                    );
+                },
+                serde_json::json!({
+                    "signature_valid": true,
+                    "online_checks_performed": true,
+                    "network_matches_trusted_target": report.network_matches_trusted,
+                    "contract_matches_trusted_target": report.contract_matches_trusted,
+                    "on_chain_found": report.on_chain_found,
+                    "expired": report.expired,
+                    "revoked": report.revoked,
+                    "schema_status": report.schema_status,
+                    "overall_valid": report.overall_valid,
+                }),
             )
         }
     }
+}
+
+/// Result of `--online` protocol-status verification (issue #175). Every
+/// guarantee is a separate field so callers (and `--output json`) can see
+/// exactly what was and wasn't checked, rather than a single opaque bool.
+struct OnlineVerificationReport {
+    /// Whether the signed file's embedded `network_passphrase` matches the
+    /// caller's trusted target — never the other way around.
+    network_matches_trusted: bool,
+    /// Whether the signed file's embedded `contract_id` matches the
+    /// caller's trusted target — never the other way around.
+    contract_matches_trusted: bool,
+    /// Whether the attestation's UID is currently recorded on the trusted
+    /// contract (as opposed to only ever having been signed off-chain).
+    on_chain_found: bool,
+    expired: bool,
+    revoked: bool,
+    /// `"available"`, `"not_found"`, or `"not_checked"` (no
+    /// `--registry-contract-id` given).
+    schema_status: &'static str,
+    /// Conjunction of every check above — `false` if any one of them is.
+    overall_valid: bool,
+}
+
+/// Performs every `--online` check against `trusted_contract_id` /
+/// `trusted_network_passphrase` / `rpc` — values the caller supplied
+/// directly, never read from `signed` itself. `signed`'s own
+/// `network_passphrase` / `contract_id` are compared against that trusted
+/// target, not used to pick it (issue #175).
+fn perform_online_verification(
+    signed: &offchain::SignedOffchainAttestation,
+    trusted_network_passphrase: &str,
+    trusted_contract_id: &str,
+    registry_contract_id: Option<&str>,
+    rpc: &soroban_sas_sdk::rpc::RpcClient,
+) -> Result<OnlineVerificationReport, String> {
+    let env = soroban_sdk::Env::default();
+    let uid_bytes = parse_uid(&signed.attestation.uid)?;
+    let client = soroban_sas_sdk::client::SASClient::new(trusted_contract_id.to_string());
+
+    let network_matches_trusted = signed.network_passphrase == trusted_network_passphrase;
+    let contract_matches_trusted = signed.contract_id == trusted_contract_id;
+
+    let attestation = client.get_attestation(&env, rpc, &uid_bytes).map_err(|e| {
+        format!("online verification failed while fetching the attestation from the trusted contract: {e}")
+    })?;
+    let (on_chain_found, expired, revoked) = match &attestation {
+        Some(att) => {
+            let ledger_time = rpc.fetch_current_ledger_time().map_err(|e| {
+                format!("online verification failed while fetching ledger time: {e}")
+            })?;
+            let expired = att.expiration_time != 0 && ledger_time >= att.expiration_time;
+            let revoked = att.revocation_time != 0;
+            (true, expired, revoked)
+        }
+        None => (false, false, false),
+    };
+
+    let schema_status = match registry_contract_id {
+        Some(registry_id) => {
+            let schema_uid = parse_uid(&signed.attestation.schema_uid)?;
+            match client.get_schema(&env, rpc, registry_id, &schema_uid) {
+                Ok(Some(_)) => "available",
+                Ok(None) => "not_found",
+                Err(e) => {
+                    return Err(format!(
+                        "online verification failed while fetching the schema: {e}"
+                    ))
+                }
+            }
+        }
+        None => "not_checked",
+    };
+
+    let overall_valid = network_matches_trusted
+        && contract_matches_trusted
+        && on_chain_found
+        && !expired
+        && !revoked
+        && schema_status != "not_found";
+
+    Ok(OnlineVerificationReport {
+        network_matches_trusted,
+        contract_matches_trusted,
+        on_chain_found,
+        expired,
+        revoked,
+        schema_status,
+        overall_valid,
+    })
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! SDK needs to submit and track transactions, sends them over HTTP via
 //! `ureq`, and parses the matching JSON-RPC responses.
 
+use std::io::Read;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -138,7 +139,7 @@ impl RpcClient {
         expected_id: u32,
     ) -> Result<GetTransactionResult, SdkError> {
         let result = parse_response(body, expected_id)?;
-        validate_supported_transaction_envelope(&result)?;
+        validate_supported_transaction_envelope(&result, self.max_response_bytes)?;
         Ok(result)
     }
 
@@ -235,6 +236,87 @@ impl RpcClient {
         let id = request.id;
         let body = self.post(&request)?;
         self.parse_get_ledger_entries_response(&body, id)
+    }
+
+    /// Builds the JSON-RPC request body for Soroban's `getLatestLedger`.
+    pub fn build_get_latest_ledger_request(&self) -> JsonRpcRequest<GetLatestLedgerParams> {
+        JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+            "getLatestLedger",
+            GetLatestLedgerParams {},
+        )
+    }
+
+    /// Parses a raw `getLatestLedger` JSON-RPC response body.
+    pub fn parse_get_latest_ledger_response(
+        &self,
+        body: &str,
+        expected_id: u32,
+    ) -> Result<GetLatestLedgerResult, SdkError> {
+        parse_response(body, expected_id)
+    }
+
+    /// Fetches the network's latest ledger sequence via `getLatestLedger`.
+    pub fn get_latest_ledger(&self) -> Result<GetLatestLedgerResult, SdkError> {
+        let request = self.build_get_latest_ledger_request();
+        let id = request.id;
+        let body = self.post(&request)?;
+        self.parse_get_latest_ledger_response(&body, id)
+    }
+
+    /// Builds the JSON-RPC request body for Soroban's `getLedgers`, asking
+    /// for a single ledger at `sequence`.
+    pub fn build_get_ledgers_request(&self, sequence: u32) -> JsonRpcRequest<GetLedgersParams> {
+        JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+            "getLedgers",
+            GetLedgersParams {
+                start_ledger: sequence,
+                pagination: Some(LedgerPaginationParams { limit: 1 }),
+            },
+        )
+    }
+
+    /// Parses a raw `getLedgers` JSON-RPC response body.
+    pub fn parse_get_ledgers_response(
+        &self,
+        body: &str,
+        expected_id: u32,
+    ) -> Result<GetLedgersResult, SdkError> {
+        parse_response(body, expected_id)
+    }
+
+    /// Fetches the header of ledger `sequence` via `getLedgers`.
+    pub fn get_ledgers(&self, sequence: u32) -> Result<GetLedgersResult, SdkError> {
+        let request = self.build_get_ledgers_request(sequence);
+        let id = request.id;
+        let body = self.post(&request)?;
+        self.parse_get_ledgers_response(&body, id)
+    }
+
+    /// Fetches the current ledger's close time (Unix seconds) — the same
+    /// clock the contract's `env.ledger().timestamp()` reads from — so
+    /// callers can validate a proposed expiration client-side before
+    /// simulating or submitting a transaction (issue #173).
+    ///
+    /// Two round trips: `getLatestLedger` for the current sequence, then
+    /// `getLedgers` for that sequence's `ledgerCloseTime`. Soroban RPC does
+    /// not expose the close time on `getLatestLedger` itself.
+    pub fn fetch_current_ledger_time(&self) -> Result<u64, SdkError> {
+        let latest = self.get_latest_ledger()?;
+        let ledgers = self.get_ledgers(latest.sequence)?;
+        let header = ledgers.ledgers.first().ok_or_else(|| {
+            SdkError::RpcError(format!(
+                "getLedgers returned no header for sequence {}",
+                latest.sequence
+            ))
+        })?;
+        header.ledger_close_time.parse().map_err(|e| {
+            SdkError::DecodingError(format!(
+                "invalid ledgerCloseTime {:?}: {e}",
+                header.ledger_close_time
+            ))
+        })
     }
 
     /// POSTs a JSON-RPC request body to this client's `network_url` and
@@ -416,7 +498,7 @@ pub struct GetTransactionResult {
     pub hash: Option<String>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct JsonRpcRequest<P: Serialize> {
     pub jsonrpc: &'static str,
     pub id: u32,
@@ -435,17 +517,17 @@ impl<P: Serialize> JsonRpcRequest<P> {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SendTransactionParams {
     pub transaction: String,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct GetTransactionParams {
     pub hash: String,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SimulateTransactionParams {
     pub transaction: String,
 }
@@ -504,7 +586,7 @@ pub struct SimulateHostFunctionResult {
     pub xdr: String,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct GetLedgerEntriesParams {
     pub keys: Vec<String>,
 }
@@ -517,6 +599,53 @@ pub struct GetLedgerEntriesResult {
     pub entries: Vec<LedgerEntryResult>,
     #[serde(rename = "latestLedger")]
     pub latest_ledger: u32,
+}
+
+/// `getLatestLedger` takes no parameters; serializes as `{}`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct GetLatestLedgerParams {}
+
+/// The `result` payload of a Soroban `getLatestLedger` response.
+/// See <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger>.
+/// Notably does *not* include a close time — fetch that ledger's header via
+/// [`RpcClient::get_ledgers`] for [`RpcClient::fetch_current_ledger_time`].
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct GetLatestLedgerResult {
+    pub id: String,
+    #[serde(rename = "protocolVersion")]
+    pub protocol_version: u32,
+    pub sequence: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct LedgerPaginationParams {
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct GetLedgersParams {
+    #[serde(rename = "startLedger")]
+    pub start_ledger: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<LedgerPaginationParams>,
+}
+
+/// The `result` payload of a Soroban `getLedgers` response.
+/// See <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLedgers>.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct GetLedgersResult {
+    #[serde(default)]
+    pub ledgers: Vec<LedgerInfoResult>,
+    #[serde(rename = "latestLedger")]
+    pub latest_ledger: u32,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct LedgerInfoResult {
+    pub sequence: u32,
+    /// Unix timestamp (seconds), as a decimal string on the wire.
+    #[serde(rename = "ledgerCloseTime")]
+    pub ledger_close_time: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -1175,6 +1304,130 @@ mod tests {
             }
             other => panic!("expected RpcError, got {other:?}"),
         }
+    }
+
+    // --- Issue #173: fetching current ledger time for client-side TTL checks ---
+
+    #[test]
+    fn builds_get_latest_ledger_request() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let request = client.build_get_latest_ledger_request();
+        let value = serde_json::to_value(request.clone()).unwrap();
+        assert_eq!(value["method"], "getLatestLedger");
+        assert!(request.id >= 1);
+    }
+
+    #[test]
+    fn parses_get_latest_ledger_response() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"abcd","protocolVersion":21,"sequence":12345}}"#;
+        let result = client.parse_get_latest_ledger_response(body, 1).unwrap();
+        assert_eq!(result.sequence, 12345);
+        assert_eq!(result.protocol_version, 21);
+    }
+
+    #[test]
+    fn builds_get_ledgers_request_with_a_single_ledger_pagination_limit() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let request = client.build_get_ledgers_request(12345);
+        let value = serde_json::to_value(request.clone()).unwrap();
+        assert_eq!(value["method"], "getLedgers");
+        assert_eq!(value["params"]["startLedger"], 12345);
+        assert_eq!(value["params"]["pagination"]["limit"], 1);
+    }
+
+    #[test]
+    fn parses_get_ledgers_response() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"ledgers":[{"sequence":12345,"ledgerCloseTime":"1700000000"}],"latestLedger":12345}}"#;
+        let result = client.parse_get_ledgers_response(body, 1).unwrap();
+        assert_eq!(result.ledgers.len(), 1);
+        assert_eq!(result.ledgers[0].ledger_close_time, "1700000000");
+    }
+
+    /// Spawns a background thread that serially answers up to `responses.len()`
+    /// HTTP requests, matching each incoming request's JSON-RPC `method` field
+    /// (a plain substring search — good enough for a test double) against
+    /// `responses` in order and replying with the paired body. Returns the
+    /// URL an `RpcClient` should target.
+    fn spawn_multi_call_mock_rpc_server(responses: Vec<(&'static str, String)>) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for (expected_method, response_body) in responses {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    let read = reader.read_line(&mut line).unwrap_or(0);
+                    if read == 0 || line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        content_length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut body);
+                let request_body = String::from_utf8_lossy(&body);
+                assert!(
+                    request_body.contains(expected_method),
+                    "expected request for {expected_method:?}, got: {request_body}"
+                );
+
+                let mut stream = stream;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn fetch_current_ledger_time_combines_get_latest_ledger_and_get_ledgers() {
+        let url = spawn_multi_call_mock_rpc_server(vec![
+            (
+                "getLatestLedger",
+                r#"{"jsonrpc":"2.0","id":1,"result":{"id":"abcd","protocolVersion":21,"sequence":555}}"#
+                    .to_string(),
+            ),
+            (
+                "getLedgers",
+                r#"{"jsonrpc":"2.0","id":2,"result":{"ledgers":[{"sequence":555,"ledgerCloseTime":"1700000042"}],"latestLedger":555}}"#
+                    .to_string(),
+            ),
+        ]);
+        let client = RpcClient::new(url);
+        let time = client.fetch_current_ledger_time().unwrap();
+        assert_eq!(time, 1_700_000_042);
+    }
+
+    #[test]
+    fn fetch_current_ledger_time_errors_when_getledgers_returns_no_header() {
+        let url = spawn_multi_call_mock_rpc_server(vec![
+            (
+                "getLatestLedger",
+                r#"{"jsonrpc":"2.0","id":1,"result":{"id":"abcd","protocolVersion":21,"sequence":555}}"#
+                    .to_string(),
+            ),
+            (
+                "getLedgers",
+                r#"{"jsonrpc":"2.0","id":2,"result":{"ledgers":[],"latestLedger":555}}"#
+                    .to_string(),
+            ),
+        ]);
+        let client = RpcClient::new(url);
+        let err = client.fetch_current_ledger_time().unwrap_err();
+        assert!(matches!(err, SdkError::RpcError(_)));
     }
 
     #[test]

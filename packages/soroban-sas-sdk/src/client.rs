@@ -6,6 +6,7 @@ use crate::rpc::{GetTransactionResult, LedgerEntryResult, RpcClient};
 use crate::sequence::SequenceManager;
 use crate::signature;
 use crate::simulate;
+use crate::strkey::{parse_address, AddressKind};
 use crate::transaction::{SubmissionPolicy, TransactionSubmitter};
 use soroban_sas_common::{Attestation, SchemaRecord, UID};
 use soroban_sdk::xdr::{
@@ -323,7 +324,11 @@ impl SASClient {
         let owner_public_key = signature::derive_public_key(secret_seed);
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
-        let resolver = Address::from_string(&SorobanString::from_str(env, resolver));
+        // The resolver is invoked as a contract on attest/revoke (see
+        // `SAS::attest`), so it must decode as a `C...` contract address —
+        // never let a malformed or account (`G...`) value reach the host
+        // conversion below (issue #171).
+        let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
         let schema = SorobanString::from_str(env, schema);
 
         let args = vec![
@@ -361,7 +366,7 @@ impl SASClient {
         let owner_public_key = signature::derive_public_key(secret_seed);
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
-        let resolver = Address::from_string(&SorobanString::from_str(env, resolver));
+        let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
         let schema = SorobanString::from_str(env, schema);
 
         let args = vec![
@@ -766,7 +771,7 @@ impl IndexerClient {
         rpc: &RpcClient,
         recipient: &str,
     ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
-        let recipient = Address::from_string(&SorobanString::from_str(env, recipient));
+        let recipient = parse_address(env, recipient, AddressKind::Either, "recipient")?;
         let arg = simulate::encode_arg(env, &recipient)?;
         invoke_read_only(
             env,
@@ -805,7 +810,7 @@ impl IndexerClient {
         rpc: &RpcClient,
         attester: &str,
     ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
-        let attester = Address::from_string(&SorobanString::from_str(env, attester));
+        let attester = parse_address(env, attester, AddressKind::Either, "attester")?;
         let arg = simulate::encode_arg(env, &attester)?;
         invoke_read_only(
             env,
@@ -827,7 +832,7 @@ impl IndexerClient {
         recipient: &str,
         include_revoked: bool,
     ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
-        let recipient = Address::from_string(&SorobanString::from_str(env, recipient));
+        let recipient = parse_address(env, recipient, AddressKind::Either, "recipient")?;
         let inc = include_revoked;
         let args = vec![
             simulate::encode_arg(env, &recipient)?,
@@ -860,7 +865,7 @@ impl IndexerClient {
         attester: &str,
         include_revoked: bool,
     ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
-        let attester = Address::from_string(&SorobanString::from_str(env, attester));
+        let attester = parse_address(env, attester, AddressKind::Either, "attester")?;
         let args = vec![
             simulate::encode_arg(env, &attester)?,
             simulate::encode_arg(env, &include_revoked)?,
@@ -997,9 +1002,11 @@ where
 
 /// Simulates (for the real resource footprint/fee), builds, and signs a
 /// write call to `function_name` on `contract_id` at sequence `next_seq`,
-/// returning the submission-ready envelope XDR. Contains no submission or
-/// sequence logic so it can be re-run verbatim under a fresh sequence
-/// number on a bad-sequence retry.
+/// returning the submission-ready envelope XDR (base64). Contains no
+/// submission or sequence-*fetching* logic — `public_key`/`next_seq` are
+/// taken as given, so this can be re-run verbatim under a fresh sequence
+/// number on a bad-sequence retry, or against a [`SequenceManager`]'s
+/// reserved sequence rather than a value fetched fresh from RPC.
 #[allow(clippy::too_many_arguments)]
 fn build_signed_write(
     env: &Env,
@@ -1009,13 +1016,16 @@ fn build_signed_write(
     public_key: &[u8; 32],
     contract_id: &str,
     function_name: &str,
-    args: Vec<ScVal>,
-) -> Result<GetTransactionResult, SdkError> {
-    invoke_write_with_fee_policy(
+    args: &[ScVal],
+    next_seq: i64,
+) -> Result<String, SdkError> {
+    build_signed_write_at_sequence(
         env,
         rpc,
         network_passphrase,
         secret_seed,
+        public_key,
+        next_seq,
         contract_id,
         function_name,
         args,
@@ -1023,21 +1033,24 @@ fn build_signed_write(
     )
 }
 
-/// Like [`invoke_write`] but allows the caller to specify a
-/// [`FeePolicy`] that adds a safety margin or caps the total fee.
-fn invoke_write_with_fee_policy(
+/// Shared core of [`build_signed_write`] and [`invoke_write_with_fee_policy`]:
+/// simulates a draft call to get the real resource footprint/fee, builds the
+/// final transaction at the given `public_key`/`next_seq` with `fee_policy`
+/// applied, validates it matches the original invocation, and signs it.
+/// Returns the signed envelope XDR (base64) — not yet submitted.
+#[allow(clippy::too_many_arguments)]
+fn build_signed_write_at_sequence(
     env: &Env,
     rpc: &RpcClient,
     network_passphrase: &str,
     secret_seed: &[u8; 32],
+    public_key: &[u8; 32],
+    next_seq: i64,
     contract_id: &str,
     function_name: &str,
-    args: Vec<ScVal>,
+    args: &[ScVal],
     fee_policy: &FeePolicy,
-) -> Result<GetTransactionResult, SdkError> {
-    let public_key = signature::derive_public_key(secret_seed);
-    let next_seq = account::fetch_sequence_number(rpc, &public_key)? + 1;
-
+) -> Result<String, SdkError> {
     // 1. Simulate a draft (V0, base-fee) transaction to get the real
     //    resource footprint and fee a submittable one needs to carry.
     let draft_tx = simulate::build_invoke_transaction(
@@ -1096,6 +1109,37 @@ fn invoke_write_with_fee_policy(
         .sha256(&Bytes::from_slice(env, network_passphrase.as_bytes()))
         .to_array();
     simulate::sign_transaction(env, &network_id, final_tx, secret_seed)
+}
+
+/// Like [`invoke_write`] but allows the caller to specify a
+/// [`FeePolicy`] that adds a safety margin or caps the total fee. Fetches
+/// its own sequence number fresh from RPC — see [`build_signed_write`] for
+/// the variant that takes one already reserved by a [`SequenceManager`].
+fn invoke_write_with_fee_policy(
+    env: &Env,
+    rpc: &RpcClient,
+    network_passphrase: &str,
+    secret_seed: &[u8; 32],
+    contract_id: &str,
+    function_name: &str,
+    args: Vec<ScVal>,
+    fee_policy: &FeePolicy,
+) -> Result<GetTransactionResult, SdkError> {
+    let public_key = signature::derive_public_key(secret_seed);
+    let next_seq = account::fetch_sequence_number(rpc, &public_key)? + 1;
+    let signed = build_signed_write_at_sequence(
+        env,
+        rpc,
+        network_passphrase,
+        secret_seed,
+        &public_key,
+        next_seq,
+        contract_id,
+        function_name,
+        &args,
+        fee_policy,
+    )?;
+    TransactionSubmitter::submit_with_policy(rpc, &signed, &SubmissionPolicy::default())
 }
 
 /// Whether a `sendTransaction` rejection was a bad/`!contiguous` sequence
@@ -1543,5 +1587,61 @@ mod tests {
     fn fee_policy_zero_resource_fee() {
         let fee = apply_fee_policy(100, 0, &FeePolicy::PercentageMargin { percent: 10 }).unwrap();
         assert_eq!(fee, 100);
+    }
+
+    // --- Issue #171: malformed address strings never panic, and never even
+    // reach the network, they fail before any RPC request is built. ---
+
+    /// `RpcClient` pointed at a port nothing listens on: any code path that
+    /// actually tries to make a request will hang or error, not just return
+    /// cleanly. Used to prove the address-validating client methods below
+    /// return before ever touching the network.
+    fn unreachable_rpc() -> RpcClient {
+        RpcClient::new("http://127.0.0.1:1")
+    }
+
+    #[test]
+    fn indexer_queries_reject_malformed_addresses_without_panicking_or_calling_rpc() {
+        let env = Env::default();
+        let rpc = unreachable_rpc();
+        let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+        let client = IndexerClient::new(contract_id);
+
+        let bad_inputs = ["", "not-a-strkey", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWH"];
+        for bad in bad_inputs {
+            match client.get_attestations_by_recipient(&env, &rpc, bad) {
+                Err(SdkError::DecodingError(_)) => {}
+                other => panic!("get_attestations_by_recipient({bad:?}) = {other:?}"),
+            }
+            match client.get_attestations_by_attester(&env, &rpc, bad) {
+                Err(SdkError::DecodingError(_)) => {}
+                other => panic!("get_attestations_by_attester({bad:?}) = {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn register_schema_rejects_a_resolver_that_is_not_a_contract_address() {
+        let env = Env::default();
+        let rpc = unreachable_rpc();
+        let client = SASClient::new(stellar_strkey::Contract([1u8; 32]).to_string());
+        let seed = [7u8; 32];
+        // A well-formed account (G...) strkey is not a valid resolver: the
+        // resolver must decode as a contract address.
+        let account_strkey = stellar_strkey::ed25519::PublicKey([9u8; 32]).to_string();
+
+        let err = client
+            .register_schema(
+                &env,
+                &rpc,
+                "Test SDF Network ; September 2015",
+                &seed,
+                &stellar_strkey::Contract([2u8; 32]).to_string(),
+                "name String",
+                &account_strkey,
+                true,
+            )
+            .expect_err("an account strkey must not satisfy the resolver field");
+        assert!(matches!(err, SdkError::DecodingError(_)));
     }
 }
