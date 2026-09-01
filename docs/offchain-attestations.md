@@ -1,10 +1,33 @@
 # Off-Chain Attestations
 
+## Version 1 Protocol Specification
+
+**Version:** v1  
+**Status:** Stable  
+**Breaking Changes:** Any change to the byte layout, hash order, type tags, or XDR encoding is a major version bump.
+
 Off-chain attestations let an issuer sign an `Attestation` payload without
 submitting a transaction. Holders can store the signed payload locally (for
 example in a mobile wallet) and selectively reveal it; any verifier — a
 Soroban contract or an off-chain service — can check it against the issuer's
 ed25519 public key.
+
+## Versioning and Compatibility
+
+The v1 protocol is locked by golden test vectors in
+`packages/soroban-sas-common/src/typed_data.rs` (`golden_vectors` module).
+These tests pin the exact digest values for canonical inputs covering:
+
+- Testnet vs. Mainnet network ID separation
+- Different contract addresses
+- Different nonce values
+- End-to-end signature verification
+
+Any implementation change that alters the computed digest for these inputs
+**must** be treated as a breaking change and released as v2 with a new type tag.
+
+Cross-language implementations (JavaScript, Python, Go, etc.) should verify
+their hash outputs against the golden vectors to ensure interoperability.
 
 ## Typed-data hashing
 

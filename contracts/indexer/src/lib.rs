@@ -2,7 +2,8 @@
 #![no_std]
 use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, IntoVal,
+    Symbol, Val,
 };
 
 // v1.0.0 Indexer logic frozen
@@ -19,14 +20,76 @@ const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
 const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
+/// Persistent key prefix for a UID's [`IndexStatus`]: `(STATUS_KEY, uid)`.
+const STATUS_KEY: Symbol = symbol_short!("IDXSTAT");
+/// Persistent key prefix for a UID's idempotency record: `(INDEXED_KEY, uid)`
+/// stores the `(recipient, schema_uid, attester)` triple the UID was first
+/// indexed with. Its presence marks the UID as already indexed and pins the
+/// metadata a retry must match.
+const INDEXED_KEY: Symbol = symbol_short!("INDEXED");
+
+/// The `(recipient, schema_uid, attester)` triple a UID was first indexed
+/// with. A later `index_attestation` for the same UID must supply an
+/// identical triple (idempotent retry) or it is rejected. Stored as a plain
+/// tuple rather than a `#[contracttype]` struct so no `arbitrary`/testutils
+/// bound is imposed on `UID` in downstream test builds.
+type IndexRecord = (Address, UID, Address);
+
+/// Lifecycle state the indexer tracks per attestation UID so filtered
+/// queries can hide revoked / replaced entries without deleting history.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexStatus {
+    Active,
+    Revoked,
+    Replaced,
+}
 
 fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
+/// Number of UIDs recorded under one lookup key, across every chunk.
+///
+/// The counter is the authoritative length of the index; the chunk vectors
+/// only carry the payload. Reads derive their chunk cursor from it so the
+/// write and read paths share one model.
+fn index_total<K>(env: &Env, count_key: &K) -> u32
+where
+    K: IntoVal<Env, Val>,
+{
+    env.storage().instance().get(count_key).unwrap_or(0)
+}
+
+/// Reads one index chunk, renewing the entry's TTL when it exists.
+///
+/// Retention policy for index data: every chunk read through this helper —
+/// for any lookup dimension (recipient, schema, attester), whether via a
+/// complete read, a filtered read, or a paginated read — extends the
+/// touched chunk's TTL by [`LEDGERS_IN_ONE_YEAR`]. Index chunks are
+/// persistent entries that a frequently queried but rarely updated key may
+/// never rewrite, so without renewal on read an actively used lookup can
+/// still be archived out from under its callers. All lookup dimensions route
+/// through this one helper so the three indexes cannot drift into subtly
+/// different retention behavior. A missing chunk yields `None` without
+/// writing anything, so a gap in the chunk sequence — or an empty lookup —
+/// neither creates storage nor traps.
+fn read_chunk<K>(env: &Env, chunk_key: &K) -> Option<soroban_sdk::Vec<UID>>
+where
+    K: IntoVal<Env, Val>,
+{
+    let chunk: Option<soroban_sdk::Vec<UID>> = env.storage().persistent().get(chunk_key);
+    if chunk.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(chunk_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    }
+    chunk
+}
+
 fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
     let count_key = (total_key, key.clone());
-    let mut total: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+    let mut total = index_total(env, &count_key);
     let mut chunk_index = total / MAX_CHUNK_SIZE;
     let mut chunk: soroban_sdk::Vec<UID> = env
         .storage()
@@ -57,7 +120,7 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
 
 fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
     let count_key = (total_key, key.clone());
-    let mut total: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+    let mut total = index_total(env, &count_key);
     let mut chunk_index = total / MAX_CHUNK_SIZE;
     let mut chunk: soroban_sdk::Vec<UID> = env
         .storage()
@@ -86,6 +149,12 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
     extend_instance_ttl(env);
 }
 
+/// Records a non-default lifecycle state for `uid`. Only `Revoked` /
+/// `Replaced` are ever persisted — an unindexed or freshly indexed UID has
+/// no status entry, which [`is_active`] and [`Indexer::get_attestation_status`]
+/// both read as active. Invoked by the SAS `handle_revoke` / `handle_replace`
+/// callbacks (added separately).
+#[allow(dead_code)]
 fn set_index_status(env: &Env, uid: &UID, status: IndexStatus) {
     let key = (STATUS_KEY, uid.clone());
     env.storage().persistent().set(&key, &status);
@@ -96,14 +165,12 @@ fn set_index_status(env: &Env, uid: &UID, status: IndexStatus) {
 
 fn is_active(env: &Env, uid: &UID) -> bool {
     // No status entry means legacy `Active` (issued before status tracking).
-    match env
-        .storage()
-        .persistent()
-        .get::<_, IndexStatus>(&(STATUS_KEY, uid.clone()))
-    {
-        Some(IndexStatus::Active) | None => true,
-        _ => false,
-    }
+    matches!(
+        env.storage()
+            .persistent()
+            .get::<_, IndexStatus>(&(STATUS_KEY, uid.clone())),
+        Some(IndexStatus::Active) | None
+    )
 }
 
 fn collect_filtered(
@@ -155,6 +222,7 @@ impl Indexer {
         if env.storage().instance().has(&INDEXER_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
+        admin.require_auth();
         let compatible: bool = env
             .try_invoke_contract::<bool, soroban_sdk::Error>(&sas, &SAS_INTERFACE_VERSION, soroban_sdk::vec![&env])
             .unwrap_or(Ok(false)).unwrap_or(false);
@@ -180,6 +248,14 @@ impl Indexer {
         env.storage().instance().get(&SAS_CONTRACT)
     }
 
+    /// Records `uid` in the recipient, schema, and attester indexes.
+    ///
+    /// Idempotent: a repeated call with the **same**
+    /// `(recipient, schema_uid, attester)` triple is a no-op (it only
+    /// renews TTLs), so a retried cross-contract call or a migration replay
+    /// can't duplicate query results or inflate storage. A repeated call
+    /// for the same `uid` with a **different** triple is rejected with
+    /// `SASError::DuplicateAttestation`.
     pub fn index_attestation(
         env: Env,
         uid: UID,
@@ -188,37 +264,95 @@ impl Indexer {
         attester: Address,
     ) {
         extend_instance_ttl(&env);
+
+        let record: IndexRecord = (recipient.clone(), schema_uid.clone(), attester.clone());
+        let record_key = (INDEXED_KEY, uid.clone());
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<_, IndexRecord>(&record_key)
+        {
+            if existing != record {
+                panic_with_error!(&env, SASError::DuplicateAttestation);
+            }
+            // Identical retry: renew the idempotency record's TTL and return
+            // without touching the append-only indexes.
+            env.storage().persistent().extend_ttl(
+                &record_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            extend_instance_ttl(&env);
+            return;
+        }
+
+        env.storage().persistent().set(&record_key, &record);
+        env.storage().persistent().extend_ttl(
+            &record_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
         extend_instance_ttl(&env);
     }
 
+    /// Returns the recorded [`IndexStatus`] for `uid`, or `None` when the
+    /// UID was never indexed (or was indexed before status tracking existed).
+    pub fn get_attestation_status(env: Env, uid: UID) -> Option<IndexStatus> {
+        extend_instance_ttl(&env);
+        env.storage().persistent().get(&(STATUS_KEY, uid))
+    }
+
+    /// Complete recipient history, oldest first.
+    ///
+    /// Walks every chunk backing the key: the index rolls over to a new chunk
+    /// every `MAX_CHUNK_SIZE` UIDs, so reading only chunk 0 would silently
+    /// truncate the answer at 100 entries. Revoked and replaced UIDs are
+    /// included; use `get_recipient_filtered` for the active-only view.
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
-        let chunk_index = 0u32;
-        env.storage()
-            .persistent()
-            .get(&(recipient, chunk_index))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
+        let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(recipient.clone(), chunk_index)),
+            true,
+        )
     }
 
+    /// Complete schema history, oldest first. See
+    /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
+    /// and [`read_chunk`] for the read-path retention policy: every schema
+    /// chunk this walks has its TTL renewed, and an empty lookup stays
+    /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
-        let chunk_index = 0u32;
-        env.storage()
-            .persistent()
-            .get(&(schema_uid, chunk_index))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
+        let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(schema_uid.clone(), chunk_index)),
+            true,
+        )
     }
 
+    /// Complete attester history, oldest first. See
+    /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
+    /// and [`read_chunk`] for the read-path retention policy: every attester
+    /// chunk this walks has its TTL renewed, and an empty lookup stays
+    /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
-        let chunk_index = 0u32;
-        env.storage()
-            .persistent()
-            .get(&(attester, chunk_index))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
+        let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(attester.clone(), chunk_index)),
+            true,
+        )
     }
 
     pub fn get_atts_by_recipient_paginated(
@@ -232,8 +366,7 @@ impl Indexer {
             return soroban_sdk::Vec::new(&env);
         }
 
-        let total_key = (RECIPIENT_TOTAL, recipient.clone());
-        let total: u32 = env.storage().instance().get(&total_key).unwrap_or(0);
+        let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
         if cursor >= total {
             return soroban_sdk::Vec::new(&env);
         }
@@ -245,11 +378,7 @@ impl Indexer {
         while index < end {
             let chunk_index = index / MAX_CHUNK_SIZE;
             let chunk_offset = index % MAX_CHUNK_SIZE;
-            let Some(chunk): Option<soroban_sdk::Vec<UID>> = env
-                .storage()
-                .persistent()
-                .get(&(recipient.clone(), chunk_index))
-            else {
+            let Some(chunk) = read_chunk(&env, &(recipient.clone(), chunk_index)) else {
                 break;
             };
 
@@ -289,16 +418,13 @@ impl Indexer {
         recipient: Address,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
-        let total: u32 = env
-            .storage()
-            .instance()
-            .get(&(RECIPIENT_TOTAL, recipient.clone()))
-            .unwrap_or(0);
-        collect_filtered(&env, total, |chunk_index| {
-            env.storage()
-                .persistent()
-                .get(&(recipient.clone(), chunk_index))
-        }, include_revoked)
+        let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(recipient.clone(), chunk_index)),
+            include_revoked,
+        )
     }
 
     pub fn get_schema_filtered(
@@ -306,16 +432,13 @@ impl Indexer {
         schema_uid: UID,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
-        let total: u32 = env
-            .storage()
-            .instance()
-            .get(&(SCHEMA_TOTAL, schema_uid.clone()))
-            .unwrap_or(0);
-        collect_filtered(&env, total, |chunk_index| {
-            env.storage()
-                .persistent()
-                .get(&(schema_uid.clone(), chunk_index))
-        }, include_revoked)
+        let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(schema_uid.clone(), chunk_index)),
+            include_revoked,
+        )
     }
 
     pub fn get_attester_filtered(
@@ -323,16 +446,13 @@ impl Indexer {
         attester: Address,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
-        let total: u32 = env
-            .storage()
-            .instance()
-            .get(&(ATTESTER_TOTAL, attester.clone()))
-            .unwrap_or(0);
-        collect_filtered(&env, total, |chunk_index| {
-            env.storage()
-                .persistent()
-                .get(&(attester.clone(), chunk_index))
-        }, include_revoked)
+        let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(attester.clone(), chunk_index)),
+            include_revoked,
+        )
     }
 
     /// Paginated active-only view: walks the underlying chunks and
@@ -351,26 +471,28 @@ impl Indexer {
         if limit == 0 {
             return soroban_sdk::Vec::new(&env);
         }
-        let total: u32 = env
-            .storage()
-            .instance()
-            .get(&(RECIPIENT_TOTAL, recipient.clone()))
-            .unwrap_or(0);
+        let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
         if cursor >= total {
             return soroban_sdk::Vec::new(&env);
         }
         let mut out = soroban_sdk::Vec::new(&env);
         let mut index = cursor;
+        // This scan advances one entry at a time so it can skip filtered-out
+        // UIDs, so the chunk in hand is held across iterations: loading it per
+        // entry would cost one storage read and one TTL renewal per UID
+        // instead of per chunk.
+        let mut loaded: Option<u32> = None;
+        let mut chunk = soroban_sdk::Vec::new(&env);
         while index < total && out.len() < limit {
             let chunk_index = index / MAX_CHUNK_SIZE;
             let chunk_offset = index % MAX_CHUNK_SIZE;
-            let Some(chunk): Option<soroban_sdk::Vec<UID>> = env
-                .storage()
-                .persistent()
-                .get(&(recipient.clone(), chunk_index))
-            else {
-                break;
-            };
+            if loaded != Some(chunk_index) {
+                let Some(next) = read_chunk(&env, &(recipient.clone(), chunk_index)) else {
+                    break;
+                };
+                chunk = next;
+                loaded = Some(chunk_index);
+            }
             if chunk_offset >= chunk.len() {
                 index = (chunk_index + 1) * MAX_CHUNK_SIZE;
                 continue;

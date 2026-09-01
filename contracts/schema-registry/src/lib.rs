@@ -17,6 +17,21 @@ fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
+/// Pushes a schema record's archival horizon back out to the shared
+/// retention window ([`LEDGERS_IN_ONE_YEAR`], used as both the renewal
+/// threshold and the extend-to target, matching every other persistent
+/// write in this contract).
+///
+/// Call this only once `uid` is known to exist: read views renew an active
+/// record so that a schema which is heavily read but never rewritten is not
+/// archived, breaking downstream validation and discovery. The missing-UID
+/// path must stay side-effect free.
+fn renew_schema_record(env: &Env, uid: &UID) {
+    env.storage()
+        .persistent()
+        .extend_ttl(uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
 fn require_registry_admin(env: &Env) -> Address {
     let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
     match admin {
@@ -39,6 +54,7 @@ impl SchemaRegistry {
         if env.storage().instance().has(&REGISTRY_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
+        admin.require_auth();
         env.storage().instance().set(&REGISTRY_ADMIN, &admin);
         // Genesis version = 1. Stored so upgrades can enforce monotonic
         // version increments and storage-migration gates.
@@ -172,6 +188,9 @@ impl SchemaRegistry {
         );
     }
 
+    /// Registers a new schema in the registry.
+    ///
+    /// See `docs/schemas.md` for the schema syntax specification.
     pub fn register(
         env: Env,
         owner: Address,
@@ -223,7 +242,19 @@ impl SchemaRegistry {
             LEDGERS_IN_ONE_YEAR,
         );
 
-        let mut count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        let mut count: u32 = if let Some(c) = env.storage().persistent().get(&SCHEMA_COUNT) {
+            env.storage().persistent().extend_ttl(
+                &SCHEMA_COUNT,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            c
+        } else if env.storage().persistent().has::<u32>(&0u32) {
+            // Count is missing but a record exists at index 0 — metadata expired.
+            panic_with_error!(&env, SASError::CountMetadataExpired);
+        } else {
+            0
+        };
         env.storage().persistent().set(&count, &uid);
         env.storage()
             .persistent()
@@ -247,6 +278,9 @@ impl SchemaRegistry {
         uid
     }
 
+    /// Returns the active [`SchemaRecord`] for `uid`, renewing its TTL when it
+    /// exists. An unknown or deprecated UID returns `None` and creates no
+    /// storage.
     pub fn get_schema(env: Env, uid: UID) -> Option<SchemaRecord> {
         extend_instance_ttl(&env);
         if env
@@ -257,9 +291,17 @@ impl SchemaRegistry {
         {
             return None;
         }
-        env.storage().persistent().get(&uid)
+        let record: Option<SchemaRecord> = env.storage().persistent().get(&uid);
+        if record.is_some() {
+            renew_schema_record(&env, &uid);
+        }
+        record
     }
 
+    /// Reports whether `uid` names an active (non-deprecated) schema. SAS
+    /// calls this view during issuance, so a successful check renews the
+    /// record's TTL to keep an actively used schema hot. A missing or
+    /// deprecated UID returns `false` without creating or extending an entry.
     pub fn validate_schema(env: Env, uid: UID) -> bool {
         extend_instance_ttl(&env);
         if env
@@ -270,7 +312,12 @@ impl SchemaRegistry {
         {
             return false;
         }
-        env.storage().persistent().has(&uid)
+        if env.storage().persistent().has(&uid) {
+            renew_schema_record(&env, &uid);
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns up to `limit` active schemas from `start`, skipping deprecated.
@@ -281,6 +328,13 @@ impl SchemaRegistry {
             return soroban_sdk::Vec::new(&env);
         }
         let count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        if count > 0 {
+            env.storage().persistent().extend_ttl(
+                &SCHEMA_COUNT,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
         if start >= count {
             return soroban_sdk::Vec::new(&env);
         }
@@ -289,6 +343,11 @@ impl SchemaRegistry {
         let mut scanned: u32 = 0;
         while index < count && schemas.len() < limit && scanned < MAX_SCAN_BUDGET {
             if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
+                env.storage().persistent().extend_ttl(
+                    &index,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
                 let is_deprecated: bool = env
                     .storage()
                     .persistent()
@@ -297,6 +356,11 @@ impl SchemaRegistry {
                 if !is_deprecated {
                     if let Some(record) = env.storage().persistent().get::<UID, SchemaRecord>(&uid)
                     {
+                        env.storage().persistent().extend_ttl(
+                            &uid,
+                            LEDGERS_IN_ONE_YEAR,
+                            LEDGERS_IN_ONE_YEAR,
+                        );
                         schemas.push_back(record);
                     }
                 }
@@ -315,6 +379,13 @@ impl SchemaRegistry {
     ) -> (soroban_sdk::Vec<SchemaRecord>, u32) {
         extend_instance_ttl(&env);
         let count: u32 = env.storage().persistent().get(&SCHEMA_COUNT).unwrap_or(0);
+        if count > 0 {
+            env.storage().persistent().extend_ttl(
+                &SCHEMA_COUNT,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
         if limit == 0 || start >= count {
             return (
                 soroban_sdk::Vec::new(&env),
@@ -326,6 +397,11 @@ impl SchemaRegistry {
         let mut scanned: u32 = 0;
         while index < count && schemas.len() < limit && scanned < MAX_SCAN_BUDGET {
             if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
+                env.storage().persistent().extend_ttl(
+                    &index,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
                 let is_deprecated: bool = env
                     .storage()
                     .persistent()
@@ -334,6 +410,11 @@ impl SchemaRegistry {
                 if !is_deprecated {
                     if let Some(record) = env.storage().persistent().get::<UID, SchemaRecord>(&uid)
                     {
+                        env.storage().persistent().extend_ttl(
+                            &uid,
+                            LEDGERS_IN_ONE_YEAR,
+                            LEDGERS_IN_ONE_YEAR,
+                        );
                         schemas.push_back(record);
                     }
                 }

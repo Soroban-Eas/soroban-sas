@@ -171,7 +171,7 @@ pub(crate) fn validate_simulated_transaction(
     if invoke_args.function_name.0.to_string() != function_name {
         return Err(SdkError::ValidationError(format!(
             "function name mismatch: expected {function_name}, got {}",
-            invoke_args.function_name.0.to_string()
+            invoke_args.function_name.0
         )));
     }
 
@@ -289,8 +289,12 @@ pub fn decode_result<T>(env: &Env, result_xdr_base64: &str) -> Result<T, SdkErro
 where
     T: TryFromVal<Env, Val>,
 {
-    let sc_val = ScVal::from_xdr_base64(result_xdr_base64, Limits::none())
-        .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))?;
+    // RPC-supplied payload: bound recursion depth and size (issue #136).
+    let sc_val = ScVal::from_xdr_base64(
+        result_xdr_base64,
+        crate::limits::default_rpc_response_limits(),
+    )
+    .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))?;
     let val: Val = Val::try_from_val(env, &sc_val)
         .map_err(|_| SdkError::DecodingError("failed to convert ScVal to host Val".to_string()))?;
     T::try_from_val(env, &val)
@@ -605,5 +609,181 @@ mod tests {
 
         let result = validate_simulated_transaction(&tx, &contract, "test_func", &[ScVal::Void]);
         assert!(matches!(result, Err(SdkError::ValidationError(_))));
+    }
+
+    // ─── Issue #97: Comprehensive envelope verification tests ───────────────
+
+    #[test]
+    fn signed_envelope_fails_verification_with_wrong_network_id() {
+        use ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
+
+        let env = Env::default();
+        let seed = [5u8; 32];
+        let correct_network_id = [6u8; 32];
+        let wrong_network_id = [7u8; 32];
+        let contract = stellar_strkey::Contract([0u8; 32]).to_string();
+
+        let public_key = crate::signature::derive_public_key(&seed);
+        let tx = build_invoke_transaction(
+            &public_key,
+            42,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "attest",
+            vec![],
+        )
+        .unwrap();
+
+        // Sign with correct network ID
+        let signed_xdr = sign_transaction(&env, &correct_network_id, tx.clone(), &seed).unwrap();
+        let envelope = TransactionEnvelope::from_xdr_base64(signed_xdr, XdrLimits::none()).unwrap();
+        let TransactionEnvelope::Tx(v1) = envelope else {
+            panic!("expected a V1 transaction envelope");
+        };
+        assert_eq!(v1.signatures.len(), 1);
+
+        let sig = &v1.signatures[0];
+        let verifying_key = VerifyingKey::from_bytes(&public_key).unwrap();
+        let signature = DalekSignature::from_slice(sig.signature.0.as_slice()).unwrap();
+
+        // Verify signature fails when computed over wrong network ID
+        let wrong_payload = TransactionSignaturePayload {
+            network_id: Hash(wrong_network_id),
+            tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(tx.clone()),
+        };
+        let wrong_payload_bytes = wrong_payload.to_xdr(Limits::none()).unwrap();
+        let wrong_hash: [u8; 32] = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, &wrong_payload_bytes))
+            .to_array();
+
+        assert!(verifying_key.verify(&wrong_hash, &signature).is_err());
+
+        // Verify signature succeeds when computed over correct network ID
+        let correct_payload = TransactionSignaturePayload {
+            network_id: Hash(correct_network_id),
+            tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(tx),
+        };
+        let correct_payload_bytes = correct_payload.to_xdr(Limits::none()).unwrap();
+        let correct_hash: [u8; 32] = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, &correct_payload_bytes))
+            .to_array();
+
+        assert!(verifying_key.verify(&correct_hash, &signature).is_ok());
+    }
+
+    #[test]
+    fn signed_envelope_fails_verification_when_transaction_is_tampered() {
+        use ed25519_dalek::{Signature as DalekSignature, Verifier, VerifyingKey};
+
+        let env = Env::default();
+        let seed = [8u8; 32];
+        let network_id = [9u8; 32];
+        let contract = stellar_strkey::Contract([0u8; 32]).to_string();
+
+        let public_key = crate::signature::derive_public_key(&seed);
+        let tx = build_invoke_transaction(
+            &public_key,
+            43,
+            100,
+            TransactionExt::V0,
+            &contract,
+            "attest",
+            vec![],
+        )
+        .unwrap();
+
+        let signed_xdr = sign_transaction(&env, &network_id, tx.clone(), &seed).unwrap();
+        let envelope = TransactionEnvelope::from_xdr_base64(signed_xdr, XdrLimits::none()).unwrap();
+        let TransactionEnvelope::Tx(v1) = envelope else {
+            panic!("expected a V1 transaction envelope");
+        };
+        assert_eq!(v1.signatures.len(), 1);
+
+        let sig = &v1.signatures[0];
+        let verifying_key = VerifyingKey::from_bytes(&public_key).unwrap();
+        let signature = DalekSignature::from_slice(sig.signature.0.as_slice()).unwrap();
+
+        // Tamper with the transaction: change the fee
+        let mut tampered_tx = tx.clone();
+        tampered_tx.fee = 200;
+
+        let tampered_payload = TransactionSignaturePayload {
+            network_id: Hash(network_id),
+            tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(tampered_tx),
+        };
+        let tampered_payload_bytes = tampered_payload.to_xdr(Limits::none()).unwrap();
+        let tampered_hash: [u8; 32] = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, &tampered_payload_bytes))
+            .to_array();
+
+        // Signature must fail verification over tampered transaction
+        assert!(verifying_key.verify(&tampered_hash, &signature).is_err());
+
+        // Signature succeeds over original transaction
+        let original_payload = TransactionSignaturePayload {
+            network_id: Hash(network_id),
+            tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(tx),
+        };
+        let original_payload_bytes = original_payload.to_xdr(Limits::none()).unwrap();
+        let original_hash: [u8; 32] = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, &original_payload_bytes))
+            .to_array();
+
+        assert!(verifying_key.verify(&original_hash, &signature).is_ok());
+    }
+
+    #[test]
+    fn signed_envelope_retains_all_transaction_fields_unchanged() {
+        let env = Env::default();
+        let seed = [10u8; 32];
+        let network_id = [11u8; 32];
+        let contract = stellar_strkey::Contract([2u8; 32]).to_string();
+
+        let public_key = crate::signature::derive_public_key(&seed);
+        let original_tx = build_invoke_transaction(
+            &public_key,
+            999,
+            250,
+            TransactionExt::V0,
+            &contract,
+            "register_schema",
+            vec![ScVal::Bool(true), ScVal::U32(42)],
+        )
+        .unwrap();
+
+        let signed_xdr = sign_transaction(&env, &network_id, original_tx.clone(), &seed).unwrap();
+        let envelope = TransactionEnvelope::from_xdr_base64(signed_xdr, XdrLimits::none()).unwrap();
+        let TransactionEnvelope::Tx(v1) = envelope else {
+            panic!("expected a V1 transaction envelope");
+        };
+
+        // All fields except signatures must be byte-for-byte identical
+        assert_eq!(v1.tx.source_account, original_tx.source_account);
+        assert_eq!(v1.tx.fee, original_tx.fee);
+        assert_eq!(v1.tx.seq_num, original_tx.seq_num);
+        assert_eq!(v1.tx.cond, original_tx.cond);
+        assert_eq!(v1.tx.memo, original_tx.memo);
+        assert_eq!(v1.tx.operations.len(), original_tx.operations.len());
+        assert_eq!(v1.tx.operations[0], original_tx.operations[0]);
+        assert_eq!(v1.tx.ext, original_tx.ext);
+
+        // Signatures vector must contain exactly one signature
+        assert_eq!(v1.signatures.len(), 1);
+
+        // Signature hint must be the last 4 bytes of the public key
+        assert_eq!(
+            v1.signatures[0].hint.0,
+            [
+                public_key[28],
+                public_key[29],
+                public_key[30],
+                public_key[31]
+            ]
+        );
     }
 }

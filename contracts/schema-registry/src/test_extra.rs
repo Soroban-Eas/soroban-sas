@@ -3,7 +3,33 @@ use crate::{SchemaRegistry, SchemaRegistryClient};
 use alloc::format;
 use alloc::vec::Vec;
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
-use soroban_sas_common::{SASError, UID};
+use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
+
+/// `live_until_ledger` recorded for one persistent contract-data entry, or
+/// `None` when no such entry exists. The SDK 20 test host neither exposes
+/// `get_ttl` nor evicts lapsed entries, so reading the ledger snapshot is the
+/// only way to observe a TTL extension directly.
+fn persistent_live_until<K>(env: &Env, key: &K) -> Option<u32>
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+{
+    use soroban_sdk::xdr::{ContractDataDurability, LedgerKey, ScVal};
+    use soroban_sdk::TryFromVal;
+
+    let target = ScVal::try_from_val(env, &key.into_val(env)).unwrap();
+    env.to_ledger_snapshot()
+        .ledger_entries
+        .iter()
+        .find_map(|(k, (_, live_until))| match &**k {
+            LedgerKey::ContractData(data)
+                if data.durability == ContractDataDurability::Persistent
+                    && data.key == target =>
+            {
+                *live_until
+            }
+            _ => None,
+        })
+}
 
 #[test]
 fn test_pre_init_admin_endpoints_return_not_initialized() {
@@ -12,7 +38,7 @@ fn test_pre_init_admin_endpoints_return_not_initialized() {
     let client = SchemaRegistryClient::new(&env, &cid);
     env.mock_all_auths();
     let hash = BytesN::from_array(&env, &[0u8; 32]);
-    assert_eq!(client.try_upgrade(&hash), Err(Ok(SASError::NotInitialized.into())));
+    assert_eq!(client.try_upgrade(&hash, &2u32), Err(Ok(SASError::NotInitialized.into())));
     assert_eq!(client.try_set_fee(&100), Err(Ok(SASError::NotInitialized.into())));
     let treasury = Address::generate(&env);
     assert_eq!(client.try_set_treasury(&treasury), Err(Ok(SASError::NotInitialized.into())));
@@ -73,6 +99,78 @@ fn test_deprecate_unknown_and_idempotent() {
     assert!(client.get_schema(&uid).is_none());
     let res2 = client.try_deprecate(&uid, &admin);
     assert!(res2.is_ok());
+}
+
+/// Issue #82: `get_schema` renews an existing record's TTL, and an unknown
+/// UID returns `None` without creating storage.
+#[test]
+fn test_get_schema_renews_active_record_and_missing_uid_is_read_only() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let schema = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+    let uid = client.register(&owner, &schema, &resolver, &true);
+
+    let at_write = persistent_live_until(&env, &uid).expect("record written");
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    assert_eq!(persistent_live_until(&env, &uid), Some(at_write));
+
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert!(client.get_schema(&uid).is_some());
+    assert_eq!(persistent_live_until(&env, &uid), Some(expected));
+
+    // Unknown UID: None, no storage created.
+    let unknown = UID(BytesN::from_array(&env, &[0xAB; 32]));
+    assert!(client.get_schema(&unknown).is_none());
+    assert_eq!(persistent_live_until(&env, &unknown), None);
+    let has: bool = env.as_contract(&cid, || env.storage().persistent().has(&unknown));
+    assert!(!has);
+}
+
+/// Issue #83: successful `validate_schema` extends the record's TTL; a
+/// missing or deprecated UID returns `false` without touching storage.
+#[test]
+fn test_validate_schema_renews_on_success_and_missing_is_read_only() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let schema = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+    let uid = client.register(&owner, &schema, &resolver, &true);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert!(client.validate_schema(&uid));
+    assert_eq!(persistent_live_until(&env, &uid), Some(expected));
+
+    // Unknown UID: false, no storage created.
+    let unknown = UID(BytesN::from_array(&env, &[0xCD; 32]));
+    assert!(!client.validate_schema(&unknown));
+    assert_eq!(persistent_live_until(&env, &unknown), None);
+    let has: bool = env.as_contract(&cid, || env.storage().persistent().has(&unknown));
+    assert!(!has);
+
+    // Deprecated schema: false, and no further TTL extension past deprecation.
+    client.deprecate(&uid, &admin);
+    assert!(!client.validate_schema(&uid));
 }
 
 #[test]

@@ -38,4 +38,106 @@ pub enum SdkError {
         min_resource_fee: Option<String>,
         transaction_data: Option<String>,
     },
+    /// `sendTransaction` rejected the transaction outright (status `ERROR`,
+    /// or `DUPLICATE` where that is fatal) before it ever entered the
+    /// mempool. `error_result_xdr` is the base64 `TransactionResult` the
+    /// node returned, when present.
+    SubmissionRejected {
+        status: String,
+        error_result_xdr: Option<String>,
+    },
+    /// A blocking submission's poll cap or wall-clock deadline elapsed while
+    /// the transaction was still `PENDING` / `NOT_FOUND`. Distinct from an
+    /// RPC failure (the polling calls all succeeded) and from a terminal
+    /// on-chain failure (which is an `Ok` result with a `FAILED` status).
+    /// The transaction may still settle later — poll `hash` to find out.
+    SettlementTimeout {
+        hash: String,
+        /// The last status seen before giving up.
+        last_status: String,
+        /// How many polls were performed.
+        polls: u32,
+    },
+    /// An RPC endpoint returned (or announced via `Content-Length`) a
+    /// response body larger than the client's configured limit. The reply
+    /// is refused before it is fully buffered or decoded, so a hostile or
+    /// misconfigured node cannot force unbounded allocation in the caller.
+    ResponseTooLarge {
+        /// The configured maximum, in bytes.
+        limit: usize,
+        /// The observed or announced size when known (from `Content-Length`
+        /// or the number of bytes read before the limit tripped).
+        observed: Option<usize>,
+    },
+    /// The RPC endpoint returned HTTP 429 Too Many Requests, signalling that
+    /// the caller has exceeded its rate limit.
+    ///
+    /// When the node supplied a `Retry-After` header the value is preserved in
+    /// `retry_after_secs` so callers can back off exactly as long as the node
+    /// requests. `retry_after_secs` is `None` when the header was absent or
+    /// unparseable (treat it as "back off at your discretion").
+    ///
+    /// This is intentionally distinct from [`SdkError::TransportError`] so
+    /// callers can branch on it and apply a bounded retry loop without
+    /// catching unrelated network failures.
+    RateLimited {
+        /// Parsed value of the `Retry-After` header (integer seconds), if
+        /// the server sent one and it was a valid non-negative integer.
+        retry_after_secs: Option<u64>,
+    },
 }
+
+impl std::fmt::Display for SdkError {
+    /// Renders a human-readable, single-line message for CLI output. Unlike
+    /// `{:?}`, this doesn't leak the enum variant's Rust name — every
+    /// variant's message is written to stand on its own (issue #171 /
+    /// #175: "CLI prints actionable messages").
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SdkError::TransportError(msg) => write!(f, "network error: {msg}"),
+            SdkError::SimulationError(msg) => write!(f, "simulation failed: {msg}"),
+            SdkError::ContractError(code) => write!(f, "contract rejected the call (error {code})"),
+            SdkError::DecodingError(msg) => write!(f, "{msg}"),
+            SdkError::RpcError(msg) => write!(f, "RPC error: {msg}"),
+            SdkError::ValidationError(msg) => write!(f, "{msg}"),
+            SdkError::Archived(msg) => write!(f, "entry is archived and needs restoration: {msg}"),
+            SdkError::RestorationRequired { message, .. } => {
+                write!(f, "entry is archived and needs restoration: {message}")
+            }
+            SdkError::SubmissionRejected {
+                status,
+                error_result_xdr,
+            } => match error_result_xdr {
+                Some(xdr) => write!(f, "transaction submission rejected ({status}): {xdr}"),
+                None => write!(f, "transaction submission rejected ({status})"),
+            },
+            SdkError::SettlementTimeout {
+                hash,
+                last_status,
+                polls,
+            } => write!(
+                f,
+                "transaction {hash} did not settle after {polls} polls (last status: {last_status})"
+            ),
+            SdkError::ResponseTooLarge { limit, observed } => match observed {
+                Some(size) => write!(
+                    f,
+                    "RPC response of {size} bytes exceeds the {limit}-byte limit"
+                ),
+                None => write!(f, "RPC response exceeds the {limit}-byte limit"),
+            },
+            SdkError::RateLimited { retry_after_secs } => match retry_after_secs {
+                Some(secs) => write!(
+                    f,
+                    "RPC endpoint returned 429 Too Many Requests; retry after {secs}s"
+                ),
+                None => write!(
+                    f,
+                    "RPC endpoint returned 429 Too Many Requests; no Retry-After provided"
+                ),
+            },
+        }
+    }
+}
+
+impl std::error::Error for SdkError {}

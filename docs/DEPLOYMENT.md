@@ -95,6 +95,58 @@ contracts — depending on version it can enable features the Soroban VM rejects
 If you must use raw Binaryen, pin the same version the CLI bundles and test the
 output on Testnet before trusting it.
 
+## Local Development (LocalNet & Docker Quickstart)
+
+For local development and integration testing, a standalone Stellar node with Soroban RPC is provided via `docker-compose.yml`.
+
+### Protocol and Toolchain Compatibility Matrix
+
+| Component | Pinned Version / Digest |
+| --- | --- |
+| Stellar Quickstart Image | `stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784` |
+| Soroban SDK | `20.0.0` (workspace dependency) |
+| Stellar Protocol | Protocol 20 / 21 |
+| Rust Toolchain | `1.79.0` (`rust-toolchain.toml`) |
+| Stellar CLI | v23+ (`stellar`) |
+
+### Starting LocalNet and Verifying RPC Readiness
+
+Start the Quickstart container:
+
+```bash
+docker compose up -d
+```
+
+The container health check actively probes Soroban JSON-RPC (`getHealth` and `getLatestLedger`). To wait for full node readiness in tests or CI scripts, run:
+
+```bash
+./scripts/wait_for_localnet.sh
+```
+
+This reusable script verifies that:
+1. `getHealth` reports `"status": "healthy"`.
+2. `getNetwork` returns the network passphrase and protocol version.
+3. `getLatestLedger` returns an advancing ledger sequence (`sequence >= 1`).
+
+If Soroban RPC fails to become ready within the timeout window, the script prints actionable container and RPC diagnostics and exits with a non-zero status.
+
+### Quickstart Image Update Procedure
+
+To update the pinned Quickstart container:
+
+1. Query the remote repository for the current digest of the target release or testing tag:
+   ```bash
+   docker buildx imagetools inspect docker.io/stellar/quickstart:testing
+   ```
+2. Update `docker-compose.yml` with the new immutable digest (`image: stellar/quickstart:<tag>@sha256:<digest>`).
+3. Start LocalNet and verify RPC readiness and contract deployment:
+   ```bash
+   docker compose up -d
+   ./scripts/wait_for_localnet.sh
+   ./scripts/deploy.sh --network testnet --rpc-url http://localhost:8000/soroban/rpc --secret-key S...
+   ```
+4. Update the compatibility matrix in this documentation and submit an upgrade pull request containing LocalNet verification evidence.
+
 ## Deploying to Testnet
 
 The three contracts must be deployed **and initialized in dependency order**:
@@ -104,15 +156,26 @@ The three contracts must be deployed **and initialized in dependency order**:
 3. `indexer` — needs the sas address → `init(admin, sas)`
 
 Each `init` can only succeed once (`AlreadyInitialized` error afterwards), so
-get the addresses right the first time.
+get the addresses right the first time. The intended admin must sign each
+`init` call with `require_auth()`, which binds the configuration to the same
+account that pays for deployment rather than letting an unrelated account claim
+an uninitialized contract instance. This is the protection against
+front-running: even if a deployment emits a deterministic contract ID, the
+contract's initialization is still gated by the signer and cannot be stolen by
+another account that simply replays the same deploy transaction. In other words,
+contract constructors are not a security fabric by themselves when deployment and
+initialization are independent transactions; the authorization check is the
+decisive guarantee.
 
 ### One-shot deploy with `scripts/deploy.sh` (recommended)
 
 [`scripts/deploy.sh`](../scripts/deploy.sh) performs every step in this section
-for you:
+for you (or use [`scripts/deploy_testnet.sh`](../scripts/deploy_testnet.sh) as a convenient Testnet wrapper):
 
 ```bash
 ./scripts/deploy.sh --network testnet --secret-key SABC...
+# or via the testnet convenience entry point:
+./scripts/deploy_testnet.sh --secret-key SABC...
 ```
 
 To keep the key out of your shell history, export it instead:
@@ -140,7 +203,7 @@ Concretely, the script:
    then `chmod 600`) using exactly the key names from
    [`.env.example`](../.env.example): `SOROBAN_RPC_URL`,
    `SOROBAN_NETWORK_PASSPHRASE`, `SAS_CONTRACT_ID`,
-   `SCHEMA_REGISTRY_CONTRACT_ID`, `INDEXER_CONTRACT_ID`, `ADMIN_SECRET_KEY`.
+   `SCHEMA_REGISTRY_CONTRACT_ID`, `INDEXER_CONTRACT_ID`, `ADMIN_PUBLIC_ADDRESS`.
 7. Prints a summary of the three contract IDs, the admin address and network.
 
 | Flag | Meaning |
@@ -150,6 +213,7 @@ Concretely, the script:
 | `--rpc-url URL` | Override the network's default RPC endpoint |
 | `--env-file FILE` | Where to write results (default `.env`) |
 | `--skip-build` | Reuse previously built WASM artifacts |
+| `--export-secret` | Opt-in: write `ADMIN_SECRET_KEY` to `.env` (default: only stores `ADMIN_PUBLIC_ADDRESS`) |
 
 When it finishes, load the environment for the verification section:
 
@@ -167,8 +231,8 @@ Prefer doing it by hand (or need custom RPC settings)? The script performs
 exactly this — follow it top to bottom with your own values:
 
 ```bash
-export ADMIN_SECRET_KEY="$(stellar keys show deploy-admin)"   # S...
-export ADMIN_ADDRESS="$(stellar keys address deploy-admin)"   # G...
+IDENTITY="deploy-admin"
+ADMIN_ADDRESS="$(stellar keys address "$IDENTITY")"   # G...
 export RPC_URL="https://soroban-testnet.stellar.org:443"
 export PASSPHRASE="Test SDF Network ; September 2015"
 ```
@@ -181,13 +245,13 @@ export PASSPHRASE="Test SDF Network ; September 2015"
 ```bash
 stellar contract deploy \
     --wasm target/wasm32-unknown-unknown/release/schema_registry.wasm \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
 # → prints C... — save as SCHEMA_REGISTRY_CONTRACT_ID
 
 stellar contract invoke \
     --id "$SCHEMA_REGISTRY_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS"
 ```
@@ -197,13 +261,13 @@ stellar contract invoke \
 ```bash
 stellar contract deploy \
     --wasm target/wasm32-unknown-unknown/release/sas.wasm \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
 # → prints C... — save as SAS_CONTRACT_ID
 
 stellar contract invoke \
     --id "$SAS_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS" --registry "$SCHEMA_REGISTRY_CONTRACT_ID"
 ```
@@ -213,16 +277,35 @@ stellar contract invoke \
 ```bash
 stellar contract deploy \
     --wasm target/wasm32-unknown-unknown/release/soroban_sas_indexer.wasm \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
 # → prints C... — save as INDEXER_CONTRACT_ID
 
 stellar contract invoke \
     --id "$INDEXER_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- init --admin "$ADMIN_ADDRESS" --sas "$SAS_CONTRACT_ID"
+
+stellar contract invoke \
+    --id "$SAS_CONTRACT_ID" \
+    --source-account "$IDENTITY" \
+    --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
+    -- set_indexer --indexer "$INDEXER_CONTRACT_ID"
 ```
+
+After that, verify both ends of the pair are consistent:
+
+```bash
+stellar contract invoke --id "$SAS_CONTRACT_ID" --source-account "$IDENTITY" \
+    --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" -- get_indexer
+stellar contract invoke --id "$INDEXER_CONTRACT_ID" --source-account "$IDENTITY" \
+    --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" -- get_sas
+```
+
+The script does this automatically and aborts with a recovery hint if the two
+values disagree; this catches partial binding failures immediately instead of
+writing a stale `.env` file.
 
 **Record the results** in a `.env` file using the same key names as
 [`.env.example`](../.env.example) — the rest of this guide and the SDK/CLI
@@ -235,8 +318,9 @@ SOROBAN_NETWORK_PASSPHRASE="$PASSPHRASE"
 SAS_CONTRACT_ID=$SAS_CONTRACT_ID
 SCHEMA_REGISTRY_CONTRACT_ID=$SCHEMA_REGISTRY_CONTRACT_ID
 INDEXER_CONTRACT_ID=$INDEXER_CONTRACT_ID
+ADMIN_PUBLIC_ADDRESS=$ADMIN_ADDRESS
 EOF
-chmod 600 .env   # it contains no secrets itself, but sibling files might
+chmod 600 .env   # no secret keys stored — signing uses the CLI identity
 ```
 
 ## Post-deploy verification
@@ -254,7 +338,6 @@ set -a; source .env; set +a
 IDENTITY="deploy-admin"
 
 ADMIN_ADDRESS="$(stellar keys address "$IDENTITY")"    # G...
-ADMIN_SECRET_KEY="$(stellar keys show "$IDENTITY")"    # S...
 RPC_URL="$SOROBAN_RPC_URL"
 PASSPHRASE="$SOROBAN_NETWORK_PASSPHRASE"
 ```
@@ -267,7 +350,7 @@ the `register` call returns it:
 ```bash
 SCHEMA_UID="$(stellar contract invoke \
     --id "$SCHEMA_REGISTRY_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- register \
         --owner "$ADMIN_ADDRESS" \
@@ -311,7 +394,7 @@ revocable: true
 schema:    {"first_name":"String","last_name":"String"}
 ```
 
-Add `--json` to get the same record as pretty-printed JSON. A missing UID
+Add `--output json` to get the same record as pretty-printed JSON. A missing UID
 prints `Schema not found`.
 
 ### 3. Issue an attestation
@@ -341,7 +424,7 @@ EOF
 
 stellar contract invoke \
     --id "$SAS_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- attest --attestation "$(cat /tmp/attestation.json)"
 ```
@@ -376,7 +459,7 @@ address — do this **before** issuing attestations you want discoverable:
 ```bash
 stellar contract invoke \
     --id "$SAS_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- set_indexer --indexer "$INDEXER_CONTRACT_ID"
 ```
@@ -399,7 +482,7 @@ Expected output:
 Attestation is valid
 ```
 
-(`--json` prints `{"valid": true}` instead. An unknown, revoked or expired
+(`--output json` prints `{"valid": true}` instead. An unknown, revoked or expired
 UID prints `Attestation is invalid or not found` / `{"valid": false}`.)
 
 ### 6. Cross-check the indexer
@@ -417,7 +500,7 @@ cargo run -p soroban-sas-cli -- query by-recipient \
 ```
 
 Expected output: one line per indexed attestation containing
-`$ATTESTATION_UID` (`--json` prints a JSON array instead). If this works, your
+`$ATTESTATION_UID` (`--output json` prints a JSON array instead). If this works, your
 end-to-end deployment is healthy.
 
 **If you did not bind an indexer** — `index_attestation` is permissionless, so
@@ -427,7 +510,7 @@ shape for `UID` arguments):
 ```bash
 stellar contract invoke \
     --id "$INDEXER_CONTRACT_ID" \
-    --source-account "$ADMIN_SECRET_KEY" \
+    --source-account "$IDENTITY" \
     --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" \
     -- index_attestation \
         --uid "[\"$ATTESTATION_UID\"]" \

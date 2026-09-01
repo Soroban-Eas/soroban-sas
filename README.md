@@ -74,7 +74,7 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
 
 ### CLI and Operations
 
-- `cli/`
+- `packages/soroban-sas-cli`
   A straightforward command-line interface for tasks such as registering new schemas, issuing claims, and revoking existing ones.
 
 - `scripts/`
@@ -82,42 +82,40 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
 
 ## Command-Line Interface
 
-Most read commands support `--json` for machine-readable output; `attest attest` supports `--output human` (default) or `--output json`.
+All commands support `--output human` (default) or `--output json` for machine-readable output.
 
 Usage examples:
 
 ```bash
-cargo run -p soroban-sas-cli -- schema get --uid UID... --registry-contract-id C... --rpc-url URL --json
-cargo run -p soroban-sas-cli -- attest verify --uid UID... --contract-id C... --rpc-url URL --json
-cargo run -p soroban-sas-cli -- attest attest \
+cargo run -p soroban-sas-cli -- --output json schema get --uid UID... --registry-contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json attest verify --uid UID... --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json attest attest \
   --schema-uid UID... --recipient G... --data 0xdeadbeef \
   --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
-  --contract-id C... --rpc-url URL --output json
-cargo run -p soroban-sas-cli -- query by-recipient --address G... --contract-id C... --rpc-url URL --json
+  --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json query by-recipient --address G... --contract-id C... --rpc-url URL
 ```
 
-## Shell Auto-Completion
-
-You can generate shell completion scripts on the fly:
-
-- **Bash**: `cargo run -p soroban-sas-cli -- completions bash > ~/.local/share/bash-completion/completions/soroban-sas`
-- **Zsh**: `cargo run -p soroban-sas-cli -- completions zsh > ~/.local/share/zsh/site-functions/_soroban-sas`
-- **Fish**: `cargo run -p soroban-sas-cli -- completions fish > ~/.config/fish/completions/soroban-sas.fish`
-
-Alternatively, have the tool install them automatically based on your current shell:
+Detailed usage and flags for every subcommand are available via:
 
 ```bash
-cargo run -p soroban-sas-cli -- completions install
+cargo run -p soroban-sas-cli -- --help
 ```
 
-Detailed usage instructions are also available via `soroban-sas --help`.
+## Local Development Network
 
-## Continuous Integration Artifacts
+A local standalone Stellar node with Soroban RPC is available via Docker Compose using a pinned Stellar Quickstart image (`stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784`):
 
-Our CI pipeline automatically compiles the contracts and generates a `soroban-contract-artifacts` package, which includes the WASM binaries and JSON specifications.
+```bash
+docker compose up -d
+./scripts/wait_for_localnet.sh
+```
 
-- `tests/`
-  This directory holds shared test fixtures and frameworks for integration testing across the workspace.
+The health check ensures JSON-RPC is healthy and the local ledger is advancing before tests or deployment scripts run.
+
+## Continuous Integration
+
+Our CI pipeline automatically validates formatting (`cargo fmt`), executes linter checks (`cargo clippy`), runs workspace tests (`cargo test`), compiles optimized WASM artifacts (`wasm32-unknown-unknown`), and checks documentation consistency.
 
 ## Core Data Structures
 
@@ -178,9 +176,9 @@ The shared validation libraries enforce several key constraints:
 
 ### System Requirements
 
-- A recent stable version of the Rust toolchain.
+- A recent stable version of the Rust toolchain (pinned to `1.79.0` via `rust-toolchain.toml`).
 - WebAssembly compilation target: `rustup target add wasm32-unknown-unknown`
-- The Soroban CLI suite: `cargo install --locked soroban-cli`
+- The Stellar CLI suite: `cargo install --locked stellar-cli`
 
 ### Automated Setup (Recommended)
 
@@ -195,7 +193,7 @@ To automatically install or verify your toolchain environment, use the provided 
 Clone the repository and format the source code:
 
 ```bash
-git clone https://github.com/0xVida/soroban-sas.git
+git clone https://github.com/Soroban-Eas/soroban-sas.git
 cd soroban-sas
 cargo fmt --all
 ```
@@ -213,8 +211,8 @@ TMPDIR=/tmp cargo test --workspace
 - Documentation on Schema Syntax and Payloads: `docs/schemas.md`
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
-  the Stellar CLI), verify the deployment, and a Mainnet operational checklist.
-
+  `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
+- [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and recovery procedures for `schema-registry`.
 ## Project Roadmap
 
 `soroban-sas` is under active development. Our roadmap to a production-ready release is structured as follows:

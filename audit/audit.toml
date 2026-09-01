@@ -1,0 +1,11 @@
+# Audit configuration for cargo-audit
+# See: https://github.com/rustsec/rustsec/blob/main/cargo-audit/README.md
+
+# Ignore advisories that have been reviewed and deemed acceptable for this project.
+# Each entry should include a reason for the exception.
+
+[advisories]
+# Example:
+# ignore = [
+#   "RUSTSEC-2023-0001",  # Reason: Not applicable to our usage pattern
+# ]

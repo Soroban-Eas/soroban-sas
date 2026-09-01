@@ -4,10 +4,31 @@ use std::time::Duration;
 
 use soroban_sdk::xdr::{
     AccountEntry, AccountEntryExt, AccountId, ExtensionPoint, LedgerEntryData, LedgerFootprint,
-    Limits, PublicKey, SequenceNumber, SorobanResources, SorobanTransactionData, String32,
-    Thresholds, Uint256, VecM, WriteXdr,
+    Limits, Memo, MuxedAccount, Preconditions, PublicKey, SequenceNumber, SorobanResources,
+    SorobanTransactionData, String32, Thresholds, Transaction, TransactionEnvelope, TransactionExt,
+    TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
 use soroban_sdk::{Bytes, Env};
+
+/// Base64 XDR of a well-formed, empty V1 `TransactionEnvelope`, used by the
+/// mock RPC's `getTransaction` reply so the SDK's envelope-variant check
+/// (which rejects V0 / fee-bump envelopes) has something real to decode.
+fn sample_v1_envelope_xdr() -> String {
+    TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx: Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256([0u8; 32])),
+            fee: 100,
+            seq_num: SequenceNumber(0),
+            cond: Preconditions::None,
+            memo: Memo::None,
+            operations: VecM::default(),
+            ext: TransactionExt::V0,
+        },
+        signatures: VecM::default(),
+    })
+    .to_xdr_base64(Limits::none())
+    .unwrap()
+}
 
 /// Strkey `G...` address of the account derived from `seed`.
 fn strkey_account(seed: [u8; 32]) -> String {
@@ -241,7 +262,7 @@ fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &
             "jsonrpc": "2.0", "id": 1, "result": {
                 "status": "SUCCESS",
                 "latestLedger": 1,
-                "envelopeXdr": "AAAAAgAAAAA=",
+                "envelopeXdr": sample_v1_envelope_xdr(),
                 "resultXdr": "AAAAAQAAAAA="
             }
         }),
@@ -345,5 +366,67 @@ fn test_attestation_builder_attestation_is_accepted_by_sas_client_attest() {
     assert!(
         result.is_ok(),
         "SASClient::attest rejected a builder-produced attestation: {result:?}"
+    );
+}
+
+/// Issue #132 acceptance criterion: two writes for the same account, built
+/// concurrently while sharing one [`SequenceManager`], are handed **distinct**
+/// sequence numbers instead of both reading the same on-chain value and
+/// racing. Exercises the real RPC sequence fetch under the manager's lock.
+#[test]
+fn concurrent_reservations_via_the_manager_get_distinct_sequences() {
+    use crate::sequence::SequenceManager;
+    use std::sync::{Arc, Barrier};
+
+    let public_key = crate::signature::derive_public_key(&[5u8; 32]);
+    let account_entry = AccountEntry {
+        account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(public_key))),
+        balance: 100_000_000,
+        seq_num: SequenceNumber(500),
+        num_sub_entries: 0,
+        inflation_dest: None,
+        flags: 0,
+        home_domain: String32::default(),
+        thresholds: Thresholds([1, 0, 0, 0]),
+        signers: Default::default(),
+        ext: AccountEntryExt::V0,
+    };
+    let account_entry_xdr = LedgerEntryData::Account(account_entry)
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+
+    // Mock RPC: every getLedgerEntries reports the same sequence, 500.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => serve_rpc(stream, &account_entry_xdr, ""),
+                Err(_) => break,
+            }
+        }
+    });
+
+    let manager = Arc::new(SequenceManager::new());
+    let threads = 8;
+    let barrier = Arc::new(Barrier::new(threads));
+    let handles: Vec<_> = (0..threads)
+        .map(|_| {
+            let (manager, barrier, url) = (manager.clone(), barrier.clone(), url.clone());
+            std::thread::spawn(move || {
+                let rpc = crate::rpc::RpcClient::new(url).with_timeout(Duration::from_secs(5));
+                barrier.wait();
+                manager.reserve(&rpc, &public_key).unwrap().sequence()
+            })
+        })
+        .collect();
+
+    let mut got: Vec<i64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    drop(server);
+    got.sort_unstable();
+    assert_eq!(
+        got,
+        (501..501 + threads as i64).collect::<Vec<_>>(),
+        "concurrent reservations collided or skipped a sequence number"
     );
 }
