@@ -41,11 +41,26 @@ This is enforced once, inside `attest_internal`, before the attestation is store
 Schemas can optionally specify a `resolver` contract address. If specified, the SAS contract will invoke callbacks on the resolver to enforce schema-specific rules or synchronize dependent state.
 
 ### `on_attest`
-Invoked exactly once when a new attestation is issued using the schema.
+Invoked exactly once, synchronously, when a new attestation is issued using the schema — after the attestation has passed all of `attest_internal`'s own validation (duplicate UID, expiration, recipient, schema-level revocability) but before it is written to storage.
 - **Payload:** The full `Attestation` record (including the assigned UID).
+- **Contract:** `fn on_attest(env: Env, attestation: Attestation)`. No return value is required; a resolver signals rejection by returning a `contracterror` or by trapping (e.g. `panic_with_error!`/`panic!`).
 
 ### `on_revoke`
-Invoked exactly once when an existing attestation using the schema is revoked.
-- **Payload:** The updated `Attestation` record, carrying the revocation timestamp.
+Not currently implemented. `revoke_internal` does not invoke the resolver at all, so registering a resolver has no effect on revocation today; a schema's resolver is consulted only by `attest_internal`. This section is aspirational and tracked as a separate gap — do not rely on `on_revoke` being called.
 
-In both cases, failure of the resolver callback will silently be ignored if it traps, matching the resolver policy where optional resolvers cannot permanently brick issuances or revocations if they fail unexpectedly, though they can enforce requirements if successful. (Note: `try_invoke_contract` is used).
+### Resolver Failure Semantics
+
+Resolvers are **authoritative**, not advisory: `on_attest`'s outcome controls whether the attestation is issued. `attest_internal` invokes `on_attest` via `try_invoke_contract` and inspects the result:
+
+| Resolver outcome | Result |
+| --- | --- |
+| Returns successfully | The attestation is stored and issuance proceeds normally. |
+| Explicitly rejects (returns/panics with a `contracterror`) | The whole `attest` call fails with `SASError::ResolverRejected`. Nothing is stored. |
+| Traps (an unhandled `panic!`, or any other host-level abort) | Same as above — `SASError::ResolverRejected`. The Soroban host does not let a caller distinguish an intentional rejection from an unhandled trap, so both surface identically. |
+| Does not implement `on_attest` | Same as above — an unrecognized function call also traps at the host level, so this is indistinguishable from the trap case and is likewise `SASError::ResolverRejected`. |
+
+Because the whole invocation is one Soroban transaction, a `SASError::ResolverRejected` panic rolls back everything that happened earlier in the same call — including, for `replace_attestation`, the old attestation's revocation. A rejected replacement therefore leaves the original attestation exactly as it was, never partially revoked with no successor.
+
+This applies uniformly to every attestation issuance path — `attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest` (a single resolver rejection fails the entire batch, consistent with its other atomic validation), and `replace_attestation` — since they all funnel through `attest_internal`.
+
+A resolver's failure is a normal, typed contract error (`SASError::ResolverRejected`), the same class of outcome as `SASError::InvalidSchema` or `SASError::NotRevocable` — callers should expect and handle it, not treat it as exceptional. There is deliberately no separate "resolver failed" event: a panic discards any event the same call would have published, so the typed error returned to the caller is the only — and sufficient — signal.

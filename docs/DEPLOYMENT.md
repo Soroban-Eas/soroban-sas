@@ -199,10 +199,17 @@ Concretely, the script:
    missing).
 5. Deploys each contract and calls its `init` in dependency order, aborting at
    the first failure.
-6. Upserts the results into `.env` (backing up any existing file to `.env.bak`,
-   then `chmod 600`) using exactly the key names from
+6. Upserts the results into `.env` atomically (backing up any existing file to
+   `.env.bak`, writing the merged result to a scratch file, then `chmod 600`
+   and renaming it into place) using exactly the key names from
    [`.env.example`](../.env.example): `SOROBAN_RPC_URL`,
    `SOROBAN_NETWORK_PASSPHRASE`, `SAS_CONTRACT_ID`,
+   `SCHEMA_REGISTRY_CONTRACT_ID`, `INDEXER_CONTRACT_ID`, `ADMIN_SECRET_KEY`.
+   Unrelated lines already in `.env` (comments, other variables) are left
+   untouched and managed keys are never duplicated, even across repeated runs.
+7. Prints a summary of the three contract IDs, the admin address and network,
+   plus the exact `source` command to activate the deployment (see below) —
+   or, with `--json`, a single machine-readable JSON object on stdout instead.
    `SCHEMA_REGISTRY_CONTRACT_ID`, `INDEXER_CONTRACT_ID`, `ADMIN_PUBLIC_ADDRESS`.
 7. Prints a summary of the three contract IDs, the admin address and network.
 
@@ -213,12 +220,16 @@ Concretely, the script:
 | `--rpc-url URL` | Override the network's default RPC endpoint |
 | `--env-file FILE` | Where to write results (default `.env`) |
 | `--skip-build` | Reuse previously built WASM artifacts |
+| `--json` | Print a single JSON summary (network, contract IDs, env file path, activation command) on stdout instead of the human-readable report; all progress logging still goes to stderr, so this is safe to pipe: `./scripts/deploy.sh --json > deployment.json` |
 | `--export-secret` | Opt-in: write `ADMIN_SECRET_KEY` to `.env` (default: only stores `ADMIN_PUBLIC_ADDRESS`) |
 
-When it finishes, load the environment for the verification section:
+A child process cannot export variables into the shell that launched it, so
+the script cannot activate the deployment for you — it prints the exact
+command instead. When it finishes, run that command to load the environment
+for the verification section:
 
 ```bash
-set -a; source .env; set +a
+source .env
 ```
 
 > If you re-run the script later (e.g. after code changes), remember that

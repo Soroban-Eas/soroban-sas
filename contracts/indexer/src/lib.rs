@@ -1,5 +1,7 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
+use soroban_sas_common::{extend_instance_ttl, SASError, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Symbol};
 use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, IntoVal,
@@ -248,6 +250,18 @@ impl Indexer {
         env.storage().instance().get(&SAS_CONTRACT)
     }
 
+    /// Records an attestation's UID against its recipient, schema, and
+    /// attester lookup tables.
+    ///
+    /// Trust boundary: only the SAS contract bound at `init` may call this.
+    /// It requires `sas.require_auth()`, which Soroban satisfies without an
+    /// explicit signature when the invocation originates from that
+    /// contract's own execution context (i.e. `SAS::attest_internal`
+    /// invoking this entry point directly) — an arbitrary external account
+    /// or contract cannot produce that authorization. Panics with
+    /// `SASError::AlreadyInitialized`'s sibling, `Unauthorized`, if the
+    /// indexer has not been initialized yet, since there is no trusted SAS
+    /// address to authorize against.
     /// Records `uid` in the recipient, schema, and attester indexes.
     ///
     /// Idempotent: a repeated call with the **same**
@@ -263,6 +277,10 @@ impl Indexer {
         schema_uid: UID,
         attester: Address,
     ) {
+        let Some(sas): Option<Address> = env.storage().instance().get(&SAS_CONTRACT) else {
+            panic_with_error!(&env, SASError::Unauthorized);
+        };
+        sas.require_auth();
         extend_instance_ttl(&env);
 
         let record: IndexRecord = (recipient.clone(), schema_uid.clone(), attester.clone());
@@ -314,6 +332,11 @@ impl Indexer {
     /// included; use `get_recipient_filtered` for the active-only view.
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        let chunk_index = 0u32;
+        env.storage()
+            .persistent()
+            .get(&(recipient, chunk_index))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
         collect_filtered(
             &env,
@@ -330,6 +353,11 @@ impl Indexer {
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        let chunk_index = 0u32;
+        env.storage()
+            .persistent()
+            .get(&(schema_uid, chunk_index))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
         collect_filtered(
             &env,
@@ -346,6 +374,11 @@ impl Indexer {
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        let chunk_index = 0u32;
+        env.storage()
+            .persistent()
+            .get(&(attester, chunk_index))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
         collect_filtered(
             &env,

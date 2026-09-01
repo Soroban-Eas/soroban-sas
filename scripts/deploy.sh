@@ -20,6 +20,7 @@
 #
 # Usage:
 #   ./scripts/deploy.sh [--network testnet|mainnet] [--secret-key S...] \
+#                       [--rpc-url URL] [--env-file FILE] [--skip-build] [--json]
 #                       [--rpc-url URL] [--env-file FILE] [--skip-build] \
 #                       [--export-secret]
 #
@@ -32,11 +33,22 @@
 #                                (e.g. a local validator or custom provider).
 #   --env-file <FILE>            Where to write results (default: .env).
 #   --skip-build                 Reuse previously built WASM artifacts.
+#   --json                       Emit a single machine-readable JSON summary
+#                                on stdout instead of the human-readable
+#                                report. All progress/log output still goes
+#                                to stderr, so `--json` output stays parseable
+#                                even when piped, e.g.:
+#                                  ./scripts/deploy.sh --json > deployment.json
 #   --export-secret              Opt-in: write ADMIN_SECRET_KEY to .env.
 #                                By default only the admin public address is
 #                                stored; use this flag when plaintext export
 #                                is required for local development.
 #   -h, --help                   Show this help.
+#
+# A child process cannot export variables into the shell that launched it, so
+# on success the script prints the exact command to activate the results:
+#
+#   source .env
 #
 # Exit codes: 0 success, 1 any build/deploy/init/env-write failure (the script
 # stops at the first failing step).
@@ -46,13 +58,15 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Pretty logging helpers
 # ---------------------------------------------------------------------------
-info() { printf '\033[1;34m[deploy]\033[0m %s\n' "$*"; }
-step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+# All progress logging goes to stderr — stdout is reserved for --json output
+# so a caller can safely do: ./scripts/deploy.sh --json > deployment.json
+info() { printf '\033[1;34m[deploy]\033[0m %s\n' "$*" >&2; }
+step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*" >&2; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
-usage() { sed -n '2,42p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,55p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -62,6 +76,7 @@ SECRET_KEY="${SOROBAN_SECRET_KEY:-${ADMIN_SECRET_KEY:-}}"
 RPC_URL_OVERRIDE=""
 ENV_FILE=".env"
 SKIP_BUILD=false
+JSON_OUTPUT=false
 EXPORT_SECRET=false
 
 TESTNET_RPC_URL="https://soroban-testnet.stellar.org:443"
@@ -74,6 +89,14 @@ MAINNET_PASSPHRASE="Public Global Stellar Network ; September 2015"
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --network)    NETWORK="${2:?--network requires a value}"; shift 2 ;;
+        --secret-key) SECRET_KEY="${2:?--secret-key requires a value}"; shift 2 ;;
+        --rpc-url)    RPC_URL_OVERRIDE="${2:?--rpc-url requires a value}"; shift 2 ;;
+        --env-file)   ENV_FILE="${2:?--env-file requires a value}"; shift 2 ;;
+        --skip-build) SKIP_BUILD=true; shift ;;
+        --json)       JSON_OUTPUT=true; shift ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            die "unknown argument: $1 (see --help)" ;;
         --network)        NETWORK="${2:?--network requires a value}"; shift 2 ;;
         --secret-key)     SECRET_KEY="${2:?--secret-key requires a value}"; shift 2 ;;
         --rpc-url)        RPC_URL_OVERRIDE="${2:?--rpc-url requires a value}"; shift 2 ;;
@@ -141,8 +164,9 @@ ADMIN_ADDRESS="$("$CLI_BIN" keys address "$IDENTITY_NAME")"
 [[ "$ADMIN_ADDRESS" =~ ^G[A-Z2-7]{55}$ ]] || die "failed to derive admin address from secret key"
 info "admin address: $ADMIN_ADDRESS"
 
+ENV_WORK=""
 cleanup() {
-    rm -f .env.part
+    [[ -n "$ENV_WORK" ]] && rm -f "$ENV_WORK" "$ENV_WORK.next"
 }
 trap cleanup EXIT
 
@@ -257,24 +281,49 @@ info "SAS and Indexer are bidirectionally bound"
 # ---------------------------------------------------------------------------
 # Write .env — merge into any existing file without clobbering unrelated
 # variables. Managed keys use the exact names from .env.example.
+#
+# All managed keys are applied to a single in-memory copy of the file and
+# flushed to disk in one atomic rename, so a reader (or a crash mid-write)
+# never observes a partially-updated file.
 # ---------------------------------------------------------------------------
 step "Writing deployment results to $ENV_FILE"
 
-# upsert KEY VALUE [QUOTED] — replace the key's line in place, or append it
-# when missing. All other lines (comments, unrelated vars) are preserved.
+MANAGED_KEYS=(
+    SOROBAN_RPC_URL
+    SOROBAN_NETWORK_PASSPHRASE
+    SCHEMA_REGISTRY_CONTRACT_ID
+    SAS_CONTRACT_ID
+    INDEXER_CONTRACT_ID
+    ADMIN_SECRET_KEY
+)
+MANAGED_VALUES=(
+    "\"$RPC_URL\""
+    "\"$PASSPHRASE\""
+    "$REGISTRY_ID"
+    "$SAS_ID"
+    "$INDEXER_ID"
+    "$SECRET_KEY"
+)
+
+ENV_WORK="$(mktemp "${ENV_FILE}.XXXXXX")"
+
+if [[ -f "$ENV_FILE" ]]; then
+    cp "$ENV_FILE" "$ENV_FILE.bak"
+    warn "existing $ENV_FILE backed up to $ENV_FILE.bak"
+    cp "$ENV_FILE" "$ENV_WORK"
+else
+    : > "$ENV_WORK"
+fi
+
+# upsert_env KEY VALUE — replace the key's line in place (preserving every
+# other line: comments, blank lines, unrelated vars), or append it when
+# missing. Operates on the local $ENV_WORK scratch copy only.
 upsert_env() {
-    local key="$1" value="$2" quoted="${3:-false}"
-    # `value` stays the logical value (used for equality checks); `written`
-    # is what actually lands in the file (.env.example uses quoted network
-    # strings).
-    local written="$value"
-    if [[ "$quoted" == true ]]; then
-        written="\"$value\""
-    fi
-    if [[ -f "$ENV_FILE" ]] && grep -q "^${key}=" "$ENV_FILE"; then
+    local key="$1" written="$2"
+    if grep -q "^${key}=" "$ENV_WORK"; then
         local current
-        current="$(grep "^${key}=" "$ENV_FILE" | head -n 1 | cut -d= -f2- | tr -d '"')"
-        if [[ -n "$current" && "$current" != "$value" ]]; then
+        current="$(grep "^${key}=" "$ENV_WORK" | head -n 1 | cut -d= -f2-)"
+        if [[ -n "$current" && "$current" != "$written" ]]; then
             warn "overwriting $key in $ENV_FILE:"
             warn "  old: $key=$current"
             warn "  new: $key=$written"
@@ -283,18 +332,21 @@ upsert_env() {
             index($0, k "=") == 1 { print k "=" v; updated = 1; next }
             { print }
             END { if (!updated) print k "=" v }
-        ' "$ENV_FILE" > "$ENV_FILE.part"
-        mv "$ENV_FILE.part" "$ENV_FILE"
+        ' "$ENV_WORK" > "$ENV_WORK.next"
+        mv "$ENV_WORK.next" "$ENV_WORK"
     else
-        printf '%s=%s\n' "$key" "$written" >> "$ENV_FILE"
+        printf '%s=%s\n' "$key" "$written" >> "$ENV_WORK"
     fi
 }
 
-if [[ -f "$ENV_FILE" ]]; then
-    cp "$ENV_FILE" "$ENV_FILE.bak"
-    warn "existing $ENV_FILE backed up to $ENV_FILE.bak"
-fi
+for i in "${!MANAGED_KEYS[@]}"; do
+    upsert_env "${MANAGED_KEYS[$i]}" "${MANAGED_VALUES[$i]}"
+done
 
+chmod 600 "$ENV_WORK" 2>/dev/null || true
+mv "$ENV_WORK" "$ENV_FILE"
+
+ENV_FILE_ABS="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
 upsert_env "SOROBAN_RPC_URL"             "$RPC_URL"    true
 upsert_env "SOROBAN_NETWORK_PASSPHRASE"  "$PASSPHRASE" true
 upsert_env "SCHEMA_REGISTRY_CONTRACT_ID" "$REGISTRY_ID"
@@ -315,8 +367,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Summary
+# Summary — human-readable report on stdout, or a single JSON object on
+# stdout when --json was requested. Progress/log lines always go to stderr
+# (see the logging helpers above), so both modes stay clean when redirected.
 # ---------------------------------------------------------------------------
+if [[ "$JSON_OUTPUT" == true ]]; then
+    printf '{\n'
+    printf '  "network": "%s",\n' "$NETWORK"
+    printf '  "rpcUrl": "%s",\n' "$RPC_URL"
+    printf '  "networkPassphrase": "%s",\n' "$PASSPHRASE"
+    printf '  "admin": "%s",\n' "$ADMIN_ADDRESS"
+    printf '  "contracts": {\n'
+    printf '    "schemaRegistry": "%s",\n' "$REGISTRY_ID"
+    printf '    "sas": "%s",\n' "$SAS_ID"
+    printf '    "indexer": "%s"\n' "$INDEXER_ID"
+    printf '  },\n'
+    printf '  "envFile": "%s",\n' "$ENV_FILE_ABS"
+    printf '  "activationCommand": "source %s"\n' "$ENV_FILE"
+    printf '}\n'
+else
+    step "Deployment complete on $NETWORK"
+    printf '\n'
+    printf '  %-16s %s\n' "schema-registry:" "$REGISTRY_ID"
+    printf '  %-16s %s\n' "sas:" "$SAS_ID"
+    printf '  %-16s %s\n' "indexer:" "$INDEXER_ID"
+    printf '  %-16s %s\n' "admin:" "$ADMIN_ADDRESS"
+    printf '  %-16s %s\n' "network:" "$NETWORK ($RPC_URL)"
+    printf '\n'
+fi
+
+info "results written to: $ENV_FILE_ABS (key names match .env.example)"
+info "this script cannot export variables into your shell — activate the"
+info "deployment yourself by running:"
+info ""
+info "    source $ENV_FILE"
+info ""
+info "next step: use soroban-sas-cli against these contracts,"
 step "Deployment complete on $NETWORK"
 printf '\n'
 printf '  %-16s %s\n' "schema-registry:" "$REGISTRY_ID"

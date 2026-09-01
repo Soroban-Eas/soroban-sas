@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::errors::SdkError;
 use crate::limits::{rpc_response_limits, DEFAULT_MAX_RESPONSE_BYTES};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use soroban_sdk::xdr::{ReadXdr, TransactionEnvelope};
+use soroban_sdk::xdr::{Limits, ReadXdr, TransactionEnvelope};
 use ureq::{Agent, AgentBuilder};
 
 // ─── Rate-limit retry policy ─────────────────────────────────────────────────
@@ -1057,6 +1057,15 @@ mod tests {
             v0_envelope_xdr = serde_json::to_string(&v0_envelope_xdr()).unwrap()
         );
 
+        let err = client.parse_get_transaction_response(&body).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                SdkError::DecodingError(msg)
+                    if msg.contains("unsupported transaction envelope variant: TxV0")
+            ),
+            "expected DecodingError mentioning TxV0, got {err:?}"
+        );
         let err = client.parse_get_transaction_response(&body, 1).unwrap_err();
         match err {
             SdkError::DecodingError(msg) => {
@@ -1082,6 +1091,15 @@ mod tests {
             fee_bump_envelope_xdr = serde_json::to_string(&fee_bump_envelope_xdr()).unwrap()
         );
 
+        let err = client.parse_get_transaction_response(&body).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                SdkError::DecodingError(msg)
+                    if msg.contains("unsupported transaction envelope variant: TxFeeBump")
+            ),
+            "expected DecodingError mentioning TxFeeBump, got {err:?}"
+        );
         let err = client.parse_get_transaction_response(&body, 1).unwrap_err();
         match err {
             SdkError::DecodingError(msg) => {
@@ -1100,6 +1118,11 @@ mod tests {
             "error": { "code": -32602, "message": "Invalid params" }
         }"#;
 
+        let err = client.parse_send_transaction_response(body).unwrap_err();
+        assert!(
+            matches!(&err, SdkError::RpcError(msg) if msg.contains("Invalid params")),
+            "expected RpcError mentioning 'Invalid params', got {err:?}"
+        );
         let err = client.parse_send_transaction_response(body, 1).unwrap_err();
         match err {
             SdkError::RpcError(msg) => assert!(msg.contains("Invalid params")),

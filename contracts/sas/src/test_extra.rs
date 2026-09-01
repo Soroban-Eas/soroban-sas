@@ -139,6 +139,72 @@ fn test_verify_offchain_rejects_unknown_and_deprecated_schema() {
 mod revocability {
     use super::*;
 
+/// Issue #113: resolvers are authoritative. `on_attest`'s outcome must
+/// control whether the attestation is issued, and every outcome the SAS
+/// contract can observe (success, explicit rejection, trap, missing method)
+/// must be specified and covered.
+mod resolver_semantics {
+    use super::*;
+
+    /// A resolver whose `on_attest` always succeeds.
+    pub mod accepting_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contractimpl, Env};
+
+        #[contract]
+        pub struct AcceptingResolver;
+
+        #[contractimpl]
+        impl AcceptingResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        }
+    }
+
+    /// A resolver whose `on_attest` explicitly rejects every attestation by
+    /// returning its own typed contract error, rather than panicking with an
+    /// unstructured message.
+    pub mod rejecting_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contracterror, contractimpl, Env};
+
+        #[contracterror]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+        #[repr(u32)]
+        pub enum RejectingResolverError {
+            AlwaysRejects = 1,
+        }
+
+        #[contract]
+        pub struct RejectingResolver;
+
+        #[contractimpl]
+        impl RejectingResolver {
+            pub fn on_attest(
+                _env: Env,
+                _attestation: Attestation,
+            ) -> Result<(), RejectingResolverError> {
+                Err(RejectingResolverError::AlwaysRejects)
+            }
+        }
+    }
+
+    /// A resolver whose `on_attest` traps with an unhandled panic, simulating
+    /// a resolver that fails unexpectedly rather than rejecting on purpose.
+    pub mod trapping_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contractimpl, Env};
+
+        #[contract]
+        pub struct TrappingResolver;
+
+        #[contractimpl]
+        impl TrappingResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {
+                panic!("resolver misbehaves");
+            }
+        }
+    }
+
     struct Fixture {
         env: Env,
         sas_client_id: Address,
@@ -151,10 +217,23 @@ mod revocability {
     /// fresh `mock_registry::MockRegistry`, wired up to a fresh `SAS`
     /// instance, and returns everything a test needs to attest against it.
     fn setup(schema_revocable: bool) -> (Fixture, UID) {
+    /// Registers `Resolver` on a fresh `Env` as the resolver of a fresh
+    /// schema, wired up to a fresh `SAS` instance, and returns everything a
+    /// test needs to attest against it.
+    ///
+    /// Takes the resolver as a type parameter (rather than a pre-registered
+    /// `Address`) so the resolver contract is registered on the *same* `Env`
+    /// this fixture builds — an `Address` from a different `Env` resolves to
+    /// nothing meaningful once crossed over, so this shape rules that bug
+    /// out at the call site instead of relying on every caller to remember.
+    fn setup<Resolver: soroban_sdk::testutils::ContractFunctionSet + 'static>(
+        resolver: Resolver,
+    ) -> (Fixture, UID) {
         let env = Env::default();
         env.mock_all_auths();
 
         let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+        let resolver_id = env.register_contract(None, resolver);
         let sas_id = env.register_contract(None, SAS);
         let sas_client = SASClient::new(&env, &sas_id);
         let admin = Address::generate(&env);
@@ -169,6 +248,11 @@ mod revocability {
             uid: schema_uid.clone(),
             resolver,
             revocable: schema_revocable,
+        let schema_uid = UID(BytesN::from_array(&env, &[21u8; 32]));
+        let record = SchemaRecord {
+            uid: schema_uid.clone(),
+            resolver: resolver_id,
+            revocable: true,
             schema: SorobanString::from_str(&env, "value String"),
         };
         let mock_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
@@ -192,6 +276,7 @@ mod revocability {
         att_seed: u8,
         revocable: bool,
     ) -> Attestation {
+    fn attestation(fx: &Fixture, schema_uid: &UID, att_seed: u8) -> Attestation {
         Attestation {
             uid: UID(BytesN::from_array(&fx.env, &[att_seed; 32])),
             schema_uid: schema_uid.clone(),
@@ -202,6 +287,7 @@ mod revocability {
             recipient: fx.recipient.clone(),
             attester: fx.attester.clone(),
             revocable,
+            revocable: true,
             data: Bytes::new(&fx.env),
         }
     }
@@ -331,6 +417,103 @@ mod revocability {
 
         let res = sas_client.try_replace_attestation(&old_uid, &new_att);
         assert_eq!(res, Err(Ok(SASError::NotRevocable.into())));
+    fn accepting_resolver_allows_issuance() {
+        let (fx, schema_uid) = setup(accepting_resolver::AcceptingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+        let att = attestation(&fx, &schema_uid, 1);
+        let uid = att.uid.clone();
+
+        let res = sas_client.try_attest(&att);
+        assert!(res.is_ok());
+        assert!(fx
+            .env
+            .as_contract(&fx.sas_client_id, || fx.env.storage().persistent().has(&uid)));
+    }
+
+    #[test]
+    fn rejecting_resolver_aborts_issuance_with_typed_error() {
+        let (fx, schema_uid) = setup(rejecting_resolver::RejectingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+        let att = attestation(&fx, &schema_uid, 2);
+        let uid = att.uid.clone();
+
+        let res = sas_client.try_attest(&att);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+
+        // Nothing was stored: the rejection is all-or-nothing, not a
+        // best-effort warning.
+        assert!(!fx
+            .env
+            .as_contract(&fx.sas_client_id, || fx.env.storage().persistent().has(&uid)));
+    }
+
+    #[test]
+    fn trapping_resolver_aborts_issuance_with_typed_error() {
+        let (fx, schema_uid) = setup(trapping_resolver::TrappingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+        let att = attestation(&fx, &schema_uid, 3);
+        let uid = att.uid.clone();
+
+        let res = sas_client.try_attest(&att);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+        assert!(!fx
+            .env
+            .as_contract(&fx.sas_client_id, || fx.env.storage().persistent().has(&uid)));
+    }
+
+    #[test]
+    fn resolver_missing_on_attest_aborts_issuance_with_typed_error() {
+        // mock_registry::MockRegistry implements get_schema/set_schema but
+        // not on_attest, so pointing a schema's resolver at it exercises
+        // the "resolver doesn't implement the callback" outcome.
+        let (fx, schema_uid) = setup(mock_registry::MockRegistry);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+        let att = attestation(&fx, &schema_uid, 4);
+        let uid = att.uid.clone();
+
+        let res = sas_client.try_attest(&att);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+        assert!(!fx
+            .env
+            .as_contract(&fx.sas_client_id, || fx.env.storage().persistent().has(&uid)));
+    }
+
+    #[test]
+    fn replace_attestation_rejected_by_new_resolver_leaves_old_attestation_untouched() {
+        let (fx, accepting_schema_uid) = setup(accepting_resolver::AcceptingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+
+        let old_att = attestation(&fx, &accepting_schema_uid, 5);
+        let old_uid = old_att.uid.clone();
+        sas_client.attest(&old_att);
+
+        // Point a second schema at a rejecting resolver, and try to replace
+        // the old attestation with one issued under it.
+        let rejecting_id =
+            fx.env
+                .register_contract(None, rejecting_resolver::RejectingResolver);
+        let rejecting_schema_uid = UID(BytesN::from_array(&fx.env, &[22u8; 32]));
+        let rejecting_record = SchemaRecord {
+            uid: rejecting_schema_uid.clone(),
+            resolver: rejecting_id,
+            revocable: true,
+            schema: SorobanString::from_str(&fx.env, "value String"),
+        };
+        let mock_client = mock_registry::MockRegistryClient::new(&fx.env, &fx.registry_id);
+        mock_client.set_schema(&rejecting_schema_uid, &rejecting_record);
+
+        let new_att = attestation(&fx, &rejecting_schema_uid, 6);
+
+        let res = sas_client.try_replace_attestation(&old_uid, &new_att);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+
+        // Atomicity: the whole call rolled back, so `old_uid` was never
+        // actually revoked even though revoke_internal ran before the
+        // rejected attest_internal call within the same invocation.
+        let stored_old: Attestation = fx
+            .env
+            .as_contract(&fx.sas_client_id, || fx.env.storage().persistent().get(&old_uid).unwrap());
+        assert_eq!(stored_old.revocation_time, 0);
     }
 /// Issue #76: `set_indexer` must classify the pre-init case instead of
 /// trapping on a missing admin entry, and must still gate on the configured
