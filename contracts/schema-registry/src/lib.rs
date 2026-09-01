@@ -3,6 +3,7 @@
 #![allow(unused_variables)]
 
 use soroban_sas_common::{
+    extend_instance_ttl, validate_schema_syntax, SASError, SchemaRecord, LEDGERS_IN_ONE_YEAR, UID,
     events::{CONTRACT_UPGRADED, SCHEMA_FEE_UPDATED, TREASURY_UPDATED},
     validate_schema_syntax, ContractUpgradedEvent, SASError, SchemaFeeUpdatedEvent, SchemaRecord,
     TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
@@ -60,6 +61,7 @@ impl SchemaRegistry {
         }
         admin.require_auth();
         env.storage().instance().set(&REGISTRY_ADMIN, &admin);
+        extend_instance_ttl(&env);
         // Genesis version = 1. Stored so upgrades can enforce monotonic
         // version increments and storage-migration gates.
         if !env.storage().instance().has(&REGISTRY_VERSION) {
@@ -104,6 +106,7 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
         let admin = require_registry_admin(&env);
         admin.require_auth();
+        extend_instance_ttl(&env);
 
         let old_version: u32 = env
             .storage()
@@ -184,6 +187,7 @@ impl SchemaRegistry {
 
         let old_fee: Option<i128> = env.storage().instance().get(&SCHEMA_FEE);
         env.storage().instance().set(&SCHEMA_FEE, &fee);
+        extend_instance_ttl(&env);
 
         env.events().publish(
             (SCHEMA_FEE_UPDATED, admin.clone()),
@@ -208,6 +212,7 @@ impl SchemaRegistry {
 
         let old_treasury: Option<Address> = env.storage().instance().get(&TREASURY);
         env.storage().instance().set(&TREASURY, &treasury);
+        extend_instance_ttl(&env);
 
         env.events().publish(
             (TREASURY_UPDATED, admin.clone()),
@@ -223,6 +228,7 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
         let admin = require_registry_admin(&env);
         admin.require_auth();
+        extend_instance_ttl(&env);
         // Native token transfer logic goes here
     }
 
@@ -262,6 +268,7 @@ impl SchemaRegistry {
             LEDGERS_IN_ONE_YEAR,
             LEDGERS_IN_ONE_YEAR,
         );
+        extend_instance_ttl(&env);
     }
 
     /// Registers a new schema in the registry.
@@ -350,6 +357,8 @@ impl SchemaRegistry {
                 owner,
             },
         );
+
+        extend_instance_ttl(&env);
 
         uid
     }

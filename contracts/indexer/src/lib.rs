@@ -1,5 +1,7 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
+use soroban_sas_common::{extend_instance_ttl, SASError, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Symbol};
 use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, IntoVal,
@@ -330,6 +332,11 @@ impl Indexer {
     /// included; use `get_recipient_filtered` for the active-only view.
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        let chunk_index = 0u32;
+        env.storage()
+            .persistent()
+            .get(&(recipient, chunk_index))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
         collect_filtered(
             &env,
@@ -346,6 +353,11 @@ impl Indexer {
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        let chunk_index = 0u32;
+        env.storage()
+            .persistent()
+            .get(&(schema_uid, chunk_index))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
         collect_filtered(
             &env,
@@ -362,6 +374,11 @@ impl Indexer {
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        let chunk_index = 0u32;
+        env.storage()
+            .persistent()
+            .get(&(attester, chunk_index))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
         collect_filtered(
             &env,

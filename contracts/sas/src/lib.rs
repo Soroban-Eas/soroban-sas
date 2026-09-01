@@ -335,6 +335,7 @@ impl SAS {
         }
 
         events::publish_attested(&env, &attestation);
+        extend_instance_ttl(&env);
 
         attestation.uid.clone()
     }

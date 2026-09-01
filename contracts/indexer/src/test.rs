@@ -1,4 +1,6 @@
 use super::*;
+use soroban_sas_common::{INSTANCE_EXTEND_TO_LEDGERS, UID};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, testutils::Ledger, Env};
 use soroban_sas_common::UID;
 use soroban_sdk::{contract, contractimpl, testutils::Address as _, Env, IntoVal};
 
@@ -371,6 +373,14 @@ fn test_cursor_pagination_large_datasets() {
     assert_eq!(paginated.len(), 10);
 }
 
+/// Once the instance TTL (holding INDEXER_ADMIN and SAS_CONTRACT) has
+/// decayed close to expiry, ordinary write traffic (`index_attestation`)
+/// must renew it. Exercised by jumping the ledger forward by nearly the
+/// full renewal window twice in a row, indexing an attestation in between
+/// each jump; if `index_attestation` did not renew the TTL, the second
+/// call would panic on an archived instance.
+#[test]
+fn test_index_attestation_renews_decayed_instance_ttl() {
 #[test]
 fn test_instance_ttl_renewed_by_trusted_write_and_read() {
     use soroban_sdk::testutils::Ledger;
@@ -382,6 +392,26 @@ fn test_instance_ttl_renewed_by_trusted_write_and_read() {
     let sas = env.register_contract(None, mock::MockSas);
     client.init(&admin, &sas);
 
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[7u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += INSTANCE_EXTEND_TO_LEDGERS - 1000;
+    });
+    let uid1 = UID(soroban_sdk::BytesN::from_array(&env, &[8u8; 32]));
+    client.index_attestation(&uid1, &recipient, &schema_uid, &attester);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += INSTANCE_EXTEND_TO_LEDGERS - 1000;
+    });
+    let uid2 = UID(soroban_sdk::BytesN::from_array(&env, &[9u8; 32]));
+    client.index_attestation(&uid2, &recipient, &schema_uid, &attester);
+
+    // get_admin/get_sas read instance storage directly; if the instance
+    // had expired, these would panic rather than returning stale data.
+    assert_eq!(client.get_admin(), Some(admin));
+    assert_eq!(client.get_sas(), Some(sas));
     // Verify initial binding readable
     assert_eq!(client.get_admin(), Some(admin.clone()));
     assert_eq!(client.get_sas(), Some(sas.clone()));
