@@ -7,8 +7,10 @@
 //! hash immediately for the caller to poll on its own schedule. The three
 //! ways a blocking submission can end are distinct:
 //!
-//! * terminal ledger status (`SUCCESS`, `FAILED`, …) — `Ok(result)` with
+//! * terminal ledger status (`SUCCESS`) — `Ok(result)` with
 //!   `result.status` naming it and `result.hash` populated;
+//! * terminal failure status (`FAILED`) — `Err` with structured diagnostic
+//!   data containing the result XDR and ledger context;
 //! * the deadline / poll cap elapsed while still `PENDING`/`NOT_FOUND` —
 //!   `Err(SdkError::SettlementTimeout { .. })`;
 //! * an RPC call failed — `Err` with that call's own `SdkError`.
@@ -197,6 +199,13 @@ impl TransactionSubmitter {
             });
         }
 
+        if sent.status.eq_ignore_ascii_case("FAILED") {
+            return Err(SdkError::TransactionFailed {
+                result_xdr: sent.error_result_xdr.unwrap_or_default(),
+                last_ledger: sent.latest_ledger,
+            });
+        }
+
         if policy.mode == SubmissionMode::Async {
             return Ok(GetTransactionResult {
                 status: sent.status,
@@ -217,7 +226,9 @@ impl TransactionSubmitter {
     /// Polls `fetch` until the transaction leaves `NOT_FOUND`/`PENDING`
     /// (returned as `Ok`), the policy's poll cap or deadline is reached
     /// (`Err(SdkError::SettlementTimeout)`), or `fetch` itself errors
-    /// (that `Err` is propagated unchanged).
+    /// (that `Err` is propagated unchanged). If the transaction settles
+    /// with a `FAILED` status, returns `Err(SdkError::TransactionFailed)`
+    /// containing the result XDR and ledger context.
     fn poll_until_settled<F>(
         policy: &SubmissionPolicy,
         clock: &dyn Clock,
@@ -232,6 +243,12 @@ impl TransactionSubmitter {
         for poll in 0..policy.max_polls {
             let mut result = fetch()?;
             last_status.clone_from(&result.status);
+            if result.status.eq_ignore_ascii_case("FAILED") {
+                return Err(SdkError::TransactionFailed {
+                    result_xdr: result.result_xdr.unwrap_or_default(),
+                    last_ledger: result.latest_ledger,
+                });
+            }
             if !SETTLING_STATUSES.contains(&result.status.as_str()) {
                 result.hash = Some(hash.to_string());
                 return Ok(result);

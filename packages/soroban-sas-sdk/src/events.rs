@@ -77,28 +77,81 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
     match name {
         n if n == TOPIC_SCHEMA_REGISTERED => {
             let map = expect_map(data)?;
+            let schema_uid_from_payload = decode_uid(map_get(map, b"schema_uid")?)?;
+            let schema_uid_from_topic = match topics.get(1) {
+                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
+                    EventParseError::MalformedPayload("topic schema_uid is not 32 bytes")
+                }),
+                _ => Err(EventParseError::MalformedPayload("missing or invalid topic schema_uid")),
+            };
+            if schema_uid_from_topic != Ok(schema_uid_from_payload.clone()) {
+                return Err(EventParseError::MalformedPayload(
+                    "schema_uid topic does not match payload",
+                ));
+            }
             Ok(SasEvent::SchemaRegistered(SchemaRegistered {
-                schema_uid: decode_uid(map_get(map, b"schema_uid")?)?,
+                schema_uid: schema_uid_from_payload,
                 owner: decode_address(map_get(map, b"owner")?)?,
             }))
         }
         n if n == TOPIC_ATTESTATION_ISSUED => {
             let map = expect_map(data)?;
+            let uid_from_payload = decode_uid(map_get(map, b"uid")?)?;
+            let schema_uid_from_payload = decode_uid(map_get(map, b"schema_uid")?)?;
+            let attester_from_payload = decode_address(map_get(map, b"attester")?)?;
+            let map_get_attester = |key: &[u8]| -> Result<ScAddress, EventParseError> {
+                decode_address(map_get(map, key)?)
+            };
+            let uid_from_topic = match topics.get(1) {
+                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
+                    EventParseError::MalformedPayload("topic uid is not 32 bytes")
+                }),
+                _ => Err(EventParseError::MalformedPayload("missing or invalid topic uid")),
+            };
+            let schema_uid_from_topic = match topics.get(2) {
+                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
+                    EventParseError::MalformedPayload("topic schema_uid is not 32 bytes")
+                }),
+                _ => Err(EventParseError::MalformedPayload("missing or invalid topic schema_uid")),
+            };
+            let attester_from_topic = match topics.get(3) {
+                Some(ScVal::Symbol(sym)) => map_get_attester(&sym.0.as_slice().to_vec()),
+                _ => Err(EventParseError::MalformedPayload("missing or invalid topic attester")),
+            };
+            if uid_from_topic != Ok(uid_from_payload.clone()) {
+                return Err(EventParseError::MalformedPayload("uid topic does not match payload"));
+            }
+            if schema_uid_from_topic != Ok(schema_uid_from_payload.clone()) {
+                return Err(EventParseError::MalformedPayload("schema_uid topic does not match payload"));
+            }
+            if attester_from_topic != Ok(attester_from_payload.clone()) {
+                return Err(EventParseError::MalformedPayload("attester topic does not match payload"));
+            }
             Ok(SasEvent::AttestationIssued(AttestationIssued {
-                uid: decode_uid(map_get(map, b"uid")?)?,
-                schema_uid: decode_uid(map_get(map, b"schema_uid")?)?,
-                attester: decode_address(map_get(map, b"attester")?)?,
+                uid: uid_from_payload,
+                schema_uid: schema_uid_from_payload,
+                attester: attester_from_payload,
                 recipient: decode_address(map_get(map, b"recipient")?)?,
             }))
         }
         n if n == TOPIC_ATTESTATION_REVOKED => {
             let map = expect_map(data)?;
+            let uid_from_payload = decode_uid(map_get(map, b"uid")?)?;
             let timestamp = match map_get(map, b"timestamp")? {
                 ScVal::U64(ts) => *ts,
                 _ => return Err(EventParseError::MalformedPayload("timestamp is not a u64")),
             };
+            let uid_from_topic = match topics.get(1) {
+                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
+                    EventParseError::MalformedPayload("topic uid is not 32 bytes")
+                }),
+                _ => Err(EventParseError::MalformedPayload("missing or invalid topic uid")),
+            };
+            if uid_from_topic != Ok(uid_from_payload.clone()) {
+                return Err(EventParseError::MalformedPayload("uid topic does not match payload"));
+            }
             Ok(SasEvent::AttestationRevoked(AttestationRevoked {
-                uid: decode_uid(map_get(map, b"uid")?)?,
+                uid: uid_from_payload,
                 timestamp,
             }))
         }

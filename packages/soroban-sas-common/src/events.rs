@@ -106,6 +106,7 @@ pub struct AttesterKeyRevokedEvent {
     pub attester: Address,
     pub public_key: BytesN<32>,
     pub version: u32,
+}
 /// Payload of the `IndexerUpdated` event.
 ///
 /// Published with topics `(INDEXER_UPDATED, authorizer)` on a successful

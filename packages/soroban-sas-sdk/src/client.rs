@@ -250,6 +250,9 @@ impl SASClient {
         let sim = rpc.simulate_transaction(&tx_xdr)?;
 
         if let Some(err) = sim.error {
+            if let Some(code) = crate::errors::extract_contract_error_code(&err) {
+                return Err(SdkError::ContractError(code));
+            }
             if is_archived_error(&err) {
                 let (fee, data) = sim
                     .restore_preamble
@@ -1002,6 +1005,9 @@ where
     let tx_xdr = simulate::build_simulate_transaction_xdr(contract_id, function_name, args)?;
     let result = rpc.simulate_transaction(&tx_xdr)?;
     if let Some(error) = result.error {
+        if let Some(code) = crate::errors::extract_contract_error_code(&error) {
+            return Err(SdkError::ContractError(code));
+        }
         return Err(SdkError::SimulationError(error));
     }
     let xdr = result
@@ -1078,6 +1084,9 @@ fn build_signed_write_at_sequence(
     let draft_xdr = simulate::unsigned_envelope_xdr(draft_tx)?;
     let sim = rpc.simulate_transaction(&draft_xdr)?;
     if let Some(error) = sim.error {
+        if let Some(code) = crate::errors::extract_contract_error_code(&error) {
+            return Err(SdkError::ContractError(code));
+        }
         return Err(SdkError::SimulationError(error));
     }
 
