@@ -46,6 +46,13 @@ pub enum SdkError {
         status: String,
         error_result_xdr: Option<String>,
     },
+    /// A transaction settled with a `FAILED` status on-chain. Contains the
+    /// base64 `TransactionResult` XDR and ledger context so callers can
+    /// diagnose the failure without having to inspect the raw status string.
+    TransactionFailed {
+        result_xdr: String,
+        last_ledger: u32,
+    },
     /// A blocking submission's poll cap or wall-clock deadline elapsed while
     /// the transaction was still `PENDING` / `NOT_FOUND`. Distinct from an
     /// RPC failure (the polling calls all succeeded) and from a terminal
@@ -136,8 +143,81 @@ impl std::fmt::Display for SdkError {
                     "RPC endpoint returned 429 Too Many Requests; no Retry-After provided"
                 ),
             },
+            SdkError::TransactionFailed {
+                result_xdr,
+                last_ledger,
+            } => write!(
+                f,
+                "transaction failed (ledger {last_ledger}): {result_xdr}"
+            ),
         }
     }
 }
 
 impl std::error::Error for SdkError {}
+
+/// Attempt to extract a SAS error code from a simulation host error string.
+///
+/// Simulation errors from Soroban often follow the format:
+/// `HostError: Error(<code>, <message>)` or contain a numeric code
+/// within the diagnostic text. This function tries to extract that code
+/// so it can be surfaced as a structured `SdkError::ContractError` instead
+/// of an opaque `SdkError::SimulationError`.
+///
+/// Returns `Some(code)` if a known SAS error code was found, `None` otherwise.
+pub fn extract_contract_error_code(error: &str) -> Option<u32> {
+    // Try to find a pattern like "Error(<number>, ...)" in the error string.
+    // Common Soroban host error format: "HostError: Error(<code>, <msg>)"
+    let error_lower = error.to_lowercase();
+
+    // Common SAS error codes and their typical textual representations
+    // These are checked via substring matching on the error message
+    let code_map = [
+        (101, "invalidschema"),
+        (102, "schemaalreadyexists"),
+        (103, "schemasnotfound"),
+        (201, "attestationnotfound"),
+        (202, "alreadyrevoked"),
+        (203, "notrevocable"),
+        (204, "alreadyexpired"),
+        (205, "duplicateattestation"),
+        (301, "unauthorized"),
+        (302, "invalidsignature"),
+        (303, "delegationreplay"),
+        (401, "invalidttl"),
+        (402, "invalidrecipient"),
+        (403, "invalidvalue"),
+        (404, "incompatibledependency"),
+        (405, "batchtoolarge"),
+        (406, "attesterkeyalreadyregistered"),
+        (407, "attesterkeynotfound"),
+        (408, "attesterkeyrevoked"),
+        (406, "feemismatch"),
+        (407, "indexerunavailable"),
+        (408, "countmetadataexpired"),
+    ];
+
+    // First, try to extract a number from "Error(<number>, ...)" pattern
+    // This handles the case where the host returns "Error(101, InvalidSchema)"
+    if let Some(pos) = error_lower.find("error(") {
+        // Look for a number after "error("
+        let after = &error_lower[pos + 6..];
+        if let Some(num_end) = after.chars().position(|c| !c.is_ascii_digit()) {
+            if let Ok(code) = after[..num_end].parse::<u32>() {
+                // Verify it's a valid SAS error code range (100-500)
+                if (100..=500).contains(&code) {
+                    return Some(code);
+                }
+            }
+        }
+    }
+
+    // Also check for known code words in the error message
+    for (code, keyword) in &code_map {
+        if error_lower.contains(*keyword) {
+            return Some(*code);
+        }
+    }
+
+    None
+}

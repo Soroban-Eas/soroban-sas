@@ -15,8 +15,7 @@ pub use signature::*;
 pub use typed_data::*;
 pub use validation::*;
 
-use soroban_sdk::{contracttype, Address, Bytes, Env, String};
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, String};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String};
 
 /// Approximate number of ledgers in one year at five seconds per ledger.
 pub const LEDGERS_IN_ONE_YEAR: u32 = 6_307_200;
