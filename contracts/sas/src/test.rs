@@ -2,7 +2,7 @@ use crate::{SASClient, SAS};
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
     hash_delegated_revocation, Attestation, AttestationDomain, AttestationIssuedEvent,
-    AttestationRevokedEvent, IndexerUpdatedEvent, SASError, UID,
+    AttestationRevokedEvent, IndexerUpdatedEvent, PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -45,6 +45,7 @@ pub mod mock1 {
             true
         }
 
+        #[allow(non_snake_case)]
         pub fn SASREG(_env: Env) -> bool {
             true
         }
@@ -73,6 +74,7 @@ pub mod mock2 {
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
             false
         }
+        #[allow(non_snake_case)]
         pub fn SASREG(_env: Env) -> bool {
             true
         }
@@ -308,6 +310,7 @@ mod replace {
         let sas_client = SASClient::new(&env, &sas_id);
 
         let admin = Address::generate(&env);
+        env.mock_all_auths();
         sas_client.init(&admin, &registry_id);
 
         let attester = Address::generate(&env);
@@ -327,7 +330,6 @@ mod replace {
             data: Bytes::new(&env),
         };
 
-        env.mock_all_auths();
         sas_client.attest(&old_attestation);
 
         // Ledger timestamp defaults to 0 in a fresh test Env, which would
@@ -795,12 +797,17 @@ fn test_second_revocation_is_rejected_for_direct_and_batch_paths() {
     let attestation = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
     sas_client.attest(&attestation);
 
+    // Ledger timestamp defaults to 0 in a fresh test Env, which would make a
+    // revocation's `revocation_time` indistinguishable from never-revoked.
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
     sas_client.revoke(&attestation.uid);
     let direct_res = sas_client.try_revoke(&attestation.uid);
     assert_eq!(direct_res, Err(Ok(SASError::AlreadyRevoked.into())));
 
     let second_attestation = attestation_fixture(&env, &attester, &recipient, [11u8; 32]);
     sas_client.attest(&second_attestation);
+    sas_client.revoke(&second_attestation.uid);
     let batch = soroban_sdk::vec![&env, second_attestation.uid.clone()];
     let batch_res = sas_client.try_multi_revoke(&batch);
     assert_eq!(batch_res, Err(Ok(SASError::AlreadyRevoked.into())));
@@ -1338,8 +1345,11 @@ fn test_verify_offchain_attestation_invalidated_by_onchain_revocation() {
 #[test]
 fn test_register_attester_key_requires_auth() {
     let s = offchain::setup([31u8; 32]);
+    // `offchain::setup` mocks all auths for its own `init` call; clear that
+    // back out so this call has no authorization, as the test intends.
+    s.env.set_auths(&[]);
 
-    // No mock_all_auths and no explicit signature: the attester never
+    // No mocked auth and no explicit signature: the attester never
     // authorized this registration, so it must fail.
     let res = s
         .sas_client
@@ -1357,18 +1367,12 @@ fn test_register_attester_key_rejects_overwrite_while_active() {
     s.sas_client.register_attester_key(&attester, &first_key);
 
     let other_signing_key = ed25519_dalek::SigningKey::from_bytes(&[33u8; 32]);
-    let other_key = BytesN::from_array(
-        &s.env,
-        &other_signing_key.verifying_key().to_bytes(),
-    );
+    let other_key = BytesN::from_array(&s.env, &other_signing_key.verifying_key().to_bytes());
 
     let res = s
         .sas_client
         .try_register_attester_key(&attester, &other_key);
-    assert_eq!(
-        res,
-        Err(Ok(SASError::AttesterKeyAlreadyRegistered.into()))
-    );
+    assert_eq!(res, Err(Ok(SASError::AttesterKeyAlreadyRegistered.into())));
 }
 
 #[test]
@@ -1382,10 +1386,7 @@ fn test_register_attester_key_allows_reregistration_after_revocation() {
     s.sas_client.revoke_attester_key(&attester);
 
     let other_signing_key = ed25519_dalek::SigningKey::from_bytes(&[35u8; 32]);
-    let other_key = BytesN::from_array(
-        &s.env,
-        &other_signing_key.verifying_key().to_bytes(),
-    );
+    let other_key = BytesN::from_array(&s.env, &other_signing_key.verifying_key().to_bytes());
 
     // Re-registration after revocation is allowed and starts a new version.
     s.sas_client.register_attester_key(&attester, &other_key);
@@ -1398,17 +1399,13 @@ fn test_register_attester_key_allows_reregistration_after_revocation() {
         contract: s.sas_id.clone(),
         nonce,
     };
-    let payload_hash =
-        soroban_sas_common::hash_offchain_attestation(&s.env, &attestation, &domain);
+    let payload_hash = soroban_sas_common::hash_offchain_attestation(&s.env, &attestation, &domain);
     let signature = other_signing_key.sign(&payload_hash.to_array());
     let signature = BytesN::from_array(&s.env, &signature.to_bytes());
 
-    assert!(s.sas_client.verify_offchain_attestation(
-        &attestation,
-        &nonce,
-        &other_key,
-        &signature
-    ));
+    assert!(s
+        .sas_client
+        .verify_offchain_attestation(&attestation, &nonce, &other_key, &signature));
 }
 
 #[test]
@@ -1480,8 +1477,7 @@ fn test_old_key_stops_validating_after_rotation() {
         contract: s.sas_id.clone(),
         nonce,
     };
-    let payload_hash =
-        soroban_sas_common::hash_offchain_attestation(&s.env, &attestation, &domain);
+    let payload_hash = soroban_sas_common::hash_offchain_attestation(&s.env, &attestation, &domain);
 
     // A signature made under the OLD key must no longer validate.
     let old_signature = old_signing_key.sign(&payload_hash.to_array());
@@ -1549,17 +1545,13 @@ fn test_revoked_key_stops_validating_delegated_operations() {
         contract: s.sas_id.clone(),
         nonce,
     };
-    let payload_hash =
-        soroban_sas_common::hash_offchain_attestation(&s.env, &attestation, &domain);
+    let payload_hash = soroban_sas_common::hash_offchain_attestation(&s.env, &attestation, &domain);
     let signature = signing_key.sign(&payload_hash.to_array());
     let signature = BytesN::from_array(&s.env, &signature.to_bytes());
 
-    let res = s.sas_client.try_verify_offchain_attestation(
-        &attestation,
-        &nonce,
-        &public_key,
-        &signature,
-    );
+    let res =
+        s.sas_client
+            .try_verify_offchain_attestation(&attestation, &nonce, &public_key, &signature);
     assert!(res.is_err());
 }
 
@@ -1749,6 +1741,58 @@ fn test_revoke_emits_attestation_revoked_event() {
 
 #[test]
 fn test_set_indexer_emits_event_with_old_and_new_value() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let indexer_one = Address::generate(&env);
+    let indexer_two = Address::generate(&env);
+
+    sas_client.set_indexer(&indexer_one);
+    let expected_first = IndexerUpdatedEvent {
+        old_indexer: PreviousAddress::None,
+        new_indexer: indexer_one.clone(),
+        authorizer: admin.clone(),
+    };
+    let events = env.events().all();
+    assert_eq!(
+        events.slice(events.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                sas_id.clone(),
+                (symbol_short!("IDXUPD"), admin.clone()).into_val(&env),
+                expected_first.into_val(&env),
+            )
+        ]
+    );
+
+    sas_client.set_indexer(&indexer_two);
+    let expected_second = IndexerUpdatedEvent {
+        old_indexer: PreviousAddress::Some(indexer_one),
+        new_indexer: indexer_two,
+        authorizer: admin.clone(),
+    };
+    let events = env.events().all();
+    assert_eq!(
+        events.slice(events.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                sas_id,
+                (symbol_short!("IDXUPD"), admin).into_val(&env),
+                expected_second.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
 fn test_delegation_nonce_survives_one_year_ttl_and_rejects_replay() {
     // Validates durable nonce: per-attester strictly increasing instance storage
     // must reject replay even after ledger advancement beyond the previous
@@ -1764,9 +1808,9 @@ fn test_delegation_nonce_survives_one_year_ttl_and_rejects_replay() {
     assert!(s.sas_client.verify_attestation(&s.attestation.uid));
 
     // Replay before TTL must fail
-    let replay_before = s
-        .sas_client
-        .try_attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
+    let replay_before =
+        s.sas_client
+            .try_attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
     assert!(replay_before.is_err());
 
     // Advance ledger in two stages with intermediate renewal to keep instance
@@ -1785,9 +1829,9 @@ fn test_delegation_nonce_survives_one_year_ttl_and_rejects_replay() {
     });
 
     // Replay after the previous one-year TTL must still fail (durable protection)
-    let replay_after = s
-        .sas_client
-        .try_attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
+    let replay_after =
+        s.sas_client
+            .try_attest_by_delegation(&s.attestation, &nonce, &signature, &public_key);
     assert!(replay_after.is_err());
 }
 
@@ -1883,9 +1927,9 @@ fn test_delegation_nonce_storage_bounded_and_describes_concurrent_behavior() {
         contract: s.sas_id.clone(),
         nonce: 20,
     };
-    let payload_hash =
-        soroban_sas_common::hash_offchain_attestation(&s.env, &other_att, &domain);
-    let other_sig = BytesN::from_array(&s.env, &other_key.sign(&payload_hash.to_array()).to_bytes());
+    let payload_hash = soroban_sas_common::hash_offchain_attestation(&s.env, &other_att, &domain);
+    let other_sig =
+        BytesN::from_array(&s.env, &other_key.sign(&payload_hash.to_array()).to_bytes());
     let other_pk = BytesN::from_array(&s.env, &other_key.verifying_key().to_bytes());
     // This should succeed because nonce 20 for other attester is first for that attester
     // (requires register fallback if structural check fails - use generated address that matches key structurally)
@@ -1895,7 +1939,6 @@ fn test_delegation_nonce_storage_bounded_and_describes_concurrent_behavior() {
         .attest_by_delegation(&other_att, &20, &other_sig, &other_pk);
     assert_eq!(uid, other_att.uid);
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #164 — attest_with_value derives payment from on-chain fee configuration
@@ -1928,51 +1971,6 @@ fn fee_test_env() -> (Env, SASClient<'static>, Address, Address, Address, Addres
     let registry_id = env.register_contract(None, mock1::MockRegistry);
     let sas_id = env.register_contract(None, SAS);
     let sas_client = SASClient::new(&env, &sas_id);
-
-    let admin = Address::generate(&env);
-    sas_client.init(&admin, &registry_id);
-
-    let indexer_one = Address::generate(&env);
-    let indexer_two = Address::generate(&env);
-
-    env.mock_all_auths();
-
-    sas_client.set_indexer(&indexer_one);
-    let expected_first = IndexerUpdatedEvent {
-        old_indexer: None,
-        new_indexer: indexer_one.clone(),
-        authorizer: admin.clone(),
-    };
-    let events = env.events().all();
-    assert_eq!(
-        events.slice(events.len() - 1..),
-        soroban_sdk::vec![
-            &env,
-            (
-                sas_id.clone(),
-                (symbol_short!("IDXUPD"), admin.clone()).into_val(&env),
-                expected_first.into_val(&env),
-            )
-        ]
-    );
-
-    sas_client.set_indexer(&indexer_two);
-    let expected_second = IndexerUpdatedEvent {
-        old_indexer: Some(indexer_one),
-        new_indexer: indexer_two,
-        authorizer: admin.clone(),
-    };
-    let events = env.events().all();
-    assert_eq!(
-        events.slice(events.len() - 1..),
-        soroban_sdk::vec![
-            &env,
-            (
-                sas_id,
-                (symbol_short!("IDXUPD"), admin).into_val(&env),
-                expected_second.into_val(&env),
-            )
-        ]
     let admin = Address::generate(&env);
     env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
@@ -2018,6 +2016,22 @@ fn test_attest_with_value_rejects_wrong_token_and_short_amount() {
 
 #[test]
 fn test_set_indexer_requires_admin_auth() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    env.set_auths(&[]);
+
+    let indexer = Address::generate(&env);
+    let res = sas_client.try_set_indexer(&indexer);
+    assert!(res.is_err());
+}
+
+#[test]
 fn test_attest_with_value_accepts_exact_configured_fee() {
     let (env, sas_client, sas_id, admin, attester, recipient) = fee_test_env();
     let fee_token = env.register_stellar_asset_contract(admin.clone());
@@ -2063,8 +2077,11 @@ fn test_attest_fails_open_when_indexer_traps() {
     assert!(sas_client.verify_attestation(&attestation.uid));
 
     // ... and the missed push is observable as an IndexFailed event.
-    let topics: soroban_sdk::Vec<soroban_sdk::Val> =
-        (soroban_sdk::symbol_short!("IDXFAIL"), attestation.uid.clone()).into_val(&env);
+    let topics: soroban_sdk::Vec<soroban_sdk::Val> = (
+        soroban_sdk::symbol_short!("IDXFAIL"),
+        attestation.uid.clone(),
+    )
+        .into_val(&env);
     let expected_event = (
         sas_id.clone(),
         topics,
@@ -2113,7 +2130,9 @@ fn test_reindex_attestation_replays_after_indexer_recovers() {
     sas_client.set_indexer(&good_id);
     sas_client.reindex_attestation(&uid);
 
-    assert!(good.get_attestations_by_recipient(&recipient).contains(&uid));
+    assert!(good
+        .get_attestations_by_recipient(&recipient)
+        .contains(&uid));
 }
 
 #[test]
@@ -2186,11 +2205,6 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
     let sas_client = SASClient::new(&env, &sas_id);
 
     let admin = Address::generate(&env);
-    sas_client.init(&admin, &registry_id);
-
-    let indexer = Address::generate(&env);
-    let res = sas_client.try_set_indexer(&indexer);
-    assert!(res.is_err());
     env.mock_all_auths();
     sas_client.init(&admin, &registry_id);
 
@@ -2221,8 +2235,7 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
         contract: sas_id.clone(),
         nonce,
     };
-    let payload_hash =
-        soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain);
+    let payload_hash = soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain);
     let signature = signing_key.sign(&payload_hash.to_array());
     let sig_bytes = soroban_sdk::BytesN::from_array(&env, &signature.to_bytes());
     let pub_bytes = soroban_sdk::BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());

@@ -146,10 +146,7 @@ impl std::fmt::Display for SdkError {
             SdkError::TransactionFailed {
                 result_xdr,
                 last_ledger,
-            } => write!(
-                f,
-                "transaction failed (ledger {last_ledger}): {result_xdr}"
-            ),
+            } => write!(f, "transaction failed (ledger {last_ledger}): {result_xdr}"),
         }
     }
 }

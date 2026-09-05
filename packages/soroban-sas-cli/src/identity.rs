@@ -40,12 +40,8 @@ pub fn resolve_identity_secret(name: &str) -> Result<String, String> {
         ));
     }
     let path = identity_dir()?.join(name);
-    let contents = std::fs::read_to_string(&path).map_err(|e| {
-        format!(
-            "cannot read identity {name:?} from {}: {e}",
-            path.display()
-        )
-    })?;
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read identity {name:?} from {}: {e}", path.display()))?;
     let secret = contents.trim();
     if secret.is_empty() {
         return Err(format!("identity {name:?} at {} is empty", path.display()));
@@ -84,7 +80,11 @@ mod tests {
     #[test]
     fn reads_a_trimmed_secret_from_the_identity_file() {
         with_identity_dir(|dir| {
-            std::fs::write(dir.join("alice"), "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF7U\n").unwrap();
+            std::fs::write(
+                dir.join("alice"),
+                "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF7U\n",
+            )
+            .unwrap();
             let secret = resolve_identity_secret("alice").unwrap();
             assert_eq!(
                 secret,

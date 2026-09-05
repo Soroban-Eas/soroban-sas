@@ -12,6 +12,10 @@ pub const SCHEMA_CREATOR: Symbol = symbol_short!("CREATOR");
 /// expose a way to read a contract's own installed hash from within its
 /// own execution, so `upgrade` tracks it here itself, purely so
 /// `ContractUpgradedEvent` can report the hash being replaced.
+///
+/// Only exercised by `SchemaRegistry::record_upgrade_event`, a
+/// test-only helper (see its doc comment) — hence `cfg(test)` here too.
+#[cfg(test)]
 pub const CURRENT_WASM_HASH: Symbol = symbol_short!("WASMHASH");
 /// Monotonically increasing registry version. Used to gate upgrades and
 /// drive storage-migration checks. v1 is the genesis deployment.

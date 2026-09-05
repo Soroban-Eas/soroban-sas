@@ -11,9 +11,9 @@ fn test_uid_deterministic() {
     assert_ne!(uid1, uid3);
 }
 
+use crate::validation::validate_recipient;
 use crate::validation::validate_schema_syntax;
 use crate::validation::validate_ttl;
-use crate::validation::validate_recipient;
 use soroban_sdk::Env;
 
 #[test]

@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod identity;
 mod io_safety;
+mod network;
 mod offchain;
 
 /// Resolves a subcommand's own flag against the global `--network` shorthand
@@ -31,11 +33,9 @@ fn resolve_network_passphrase(
     }
     match network {
         Some(name) => Ok(network::resolve_network(name)?.network_passphrase),
-        None => Err(
-            "missing --network-passphrase: pass it directly, set \
+        None => Err("missing --network-passphrase: pass it directly, set \
              SOROBAN_NETWORK_PASSPHRASE, or pass --network"
-                .to_string(),
-        ),
+            .to_string()),
     }
 }
 
@@ -231,7 +231,9 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
             start += 1;
         }
         if start >= end {
-            return Err("schema must use comma-separated `name Type` field definitions".to_string());
+            return Err(
+                "schema must use comma-separated `name Type` field definitions".to_string(),
+            );
         }
     }
 
@@ -441,7 +443,6 @@ enum SchemaCommands {
     },
 }
 
-
 #[derive(Subcommand)]
 enum AttestCommands {
     /// Issue a new on-chain attestation directly from flags (no JSON data
@@ -481,7 +482,7 @@ enum AttestCommands {
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[arg(
             long,
             help = "Use the local system clock if the network ledger time cannot be fetched or is out of range"
@@ -806,6 +807,10 @@ fn run_attest(
             contract_id,
             rpc_url,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
@@ -912,6 +917,30 @@ fn run_attest(
     }
 }
 
+/// Rejects a JSON-supplied `expiration_time` that has already passed
+/// against the network's ledger clock, before spending a submission
+/// attempt (and fee) on a call the contract would reject as
+/// `SASError::AlreadyExpired` anyway. `expiration_time == 0` (never
+/// expires) always passes.
+fn validate_expiration_before_submit(
+    rpc: &soroban_sas_sdk::rpc::RpcClient,
+    _env: &soroban_sdk::Env,
+    expiration_time: u64,
+) -> Result<(), String> {
+    if expiration_time == 0 {
+        return Ok(());
+    }
+    let ledger_time = rpc
+        .fetch_current_ledger_time()
+        .map_err(|e| format!("could not fetch network ledger time: {e:?}"))?;
+    if expiration_time <= ledger_time {
+        return Err(format!(
+            "expiration_time {expiration_time} is already in the past (network ledger time {ledger_time})"
+        ));
+    }
+    Ok(())
+}
+
 /// Resolves the timestamp a new attestation is issued with (#172).
 ///
 /// Prefers the network ledger close time via [`RpcClient::get_latest_ledger_clock`],
@@ -996,8 +1025,8 @@ fn print_transaction_result(
         "envelopeXdr": result.envelope_xdr,
         "resultXdr": result.result_xdr,
     });
-    let human_text = serde_json::to_string_pretty(&data)
-        .map_err(|e| format!("serialization failed: {e}"))?;
+    let human_text =
+        serde_json::to_string_pretty(&data).map_err(|e| format!("serialization failed: {e}"))?;
     emit_ok(output, || println!("{human_text}"), data.clone())
 }
 
@@ -1123,8 +1152,7 @@ fn run_delegate(
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let raw =
-                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
+            let raw = io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
             offchain::verify_offchain_attestation(&signed)?;
@@ -1156,8 +1184,7 @@ fn run_delegate(
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let raw =
-                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
+            let raw = io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedDelegatedRevocation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed revocation JSON: {e}"))?;
 
@@ -1295,6 +1322,9 @@ fn run_offchain(
             contract_id,
             output: output_file,
         } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
@@ -1333,8 +1363,7 @@ fn run_offchain(
             registry_contract_id,
             rpc_url,
         } => {
-            let raw =
-                io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
+            let raw = io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
                 .map_err(|e| format!("invalid signed attestation JSON: {e}"))?;
             // Cryptographic checks only: signature, attester binding, payload
@@ -1386,7 +1415,9 @@ fn run_offchain(
             emit_ok(
                 output,
                 || {
-                    println!("Cryptographic checks: signature, attester binding, payload hash — valid");
+                    println!(
+                        "Cryptographic checks: signature, attester binding, payload hash — valid"
+                    );
                     println!(
                         "Network matches trusted target: {} (trusted: {trusted_network_passphrase})",
                         report.network_matches_trusted
@@ -1402,7 +1433,11 @@ fn run_offchain(
                     println!("Schema availability: {}", report.schema_status);
                     println!(
                         "Overall: {}",
-                        if report.overall_valid { "VALID" } else { "NOT VALID" }
+                        if report.overall_valid {
+                            "VALID"
+                        } else {
+                            "NOT VALID"
+                        }
                     );
                 },
                 serde_json::json!({

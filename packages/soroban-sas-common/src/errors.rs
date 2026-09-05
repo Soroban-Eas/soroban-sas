@@ -56,4 +56,10 @@ pub enum SASError {
     IndexerUnavailable = 411,
     /// The count metadata expired while schema records still exist.
     CountMetadataExpired = 412,
+    /// `ref_uid` self-references the attestation being issued, or points at
+    /// a UID that was never issued (#159).
+    InvalidRefUid = 413,
+    /// The attestation's `data` payload exceeds `MAX_ATTESTATION_DATA_BYTES`
+    /// (#157).
+    PayloadTooLarge = 414,
 }

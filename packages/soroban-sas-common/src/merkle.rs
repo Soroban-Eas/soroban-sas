@@ -33,16 +33,20 @@ fn leaf_hash(env: &Env, data: &Bytes) -> BytesN<32> {
     let mut buf = Bytes::new(env);
     buf.push_back(0x00);
     buf.append(data);
-    env.crypto().sha256(&buf).into()
+    env.crypto().sha256(&buf)
 }
 
 fn node_hash(env: &Env, a: &BytesN<32>, b: &BytesN<32>) -> BytesN<32> {
-    let (left, right) = if a.to_array() <= b.to_array() { (a, b) } else { (b, a) };
+    let (left, right) = if a.to_array() <= b.to_array() {
+        (a, b)
+    } else {
+        (b, a)
+    };
     let mut buf = Bytes::new(env);
     buf.push_back(0x01);
     buf.append(&Bytes::from_array(env, &left.to_array()));
     buf.append(&Bytes::from_array(env, &right.to_array()));
-    env.crypto().sha256(&buf).into()
+    env.crypto().sha256(&buf)
 }
 
 /// Builds the Merkle root over `leaves` (raw, unhashed leaf data). Duplicate
@@ -60,7 +64,11 @@ pub fn merkle_root(env: &Env, leaves: &Vec<Bytes>) -> MerkleRoot {
         let mut i = 0u32;
         while i < level.len() {
             if i + 1 < level.len() {
-                next.push_back(node_hash(env, &level.get(i).unwrap(), &level.get(i + 1).unwrap()));
+                next.push_back(node_hash(
+                    env,
+                    &level.get(i).unwrap(),
+                    &level.get(i + 1).unwrap(),
+                ));
             } else {
                 // Odd node out: promote unchanged rather than duplicating it.
                 next.push_back(level.get(i).unwrap());

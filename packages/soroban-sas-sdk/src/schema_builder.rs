@@ -39,7 +39,10 @@ impl SchemaBuilder {
     pub fn build(self, env: &Env) -> Result<SchemaRecord, SdkError> {
         let schema = SorobanString::from_str(env, &self.schema);
         if let Err(e) = soroban_sas_common::validate_schema_syntax(env, &schema) {
-            return Err(SdkError::RpcError(format!("Invalid schema syntax: {:?}", e)));
+            return Err(SdkError::RpcError(format!(
+                "Invalid schema syntax: {:?}",
+                e
+            )));
         }
         let resolver = self
             .resolver

@@ -1,8 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use soroban_sas_common::{
-    hash_attestation_struct, hash_delegated_revocation, hash_domain, Attestation, AttestationDomain, UID,
+    hash_attestation_struct, hash_delegated_revocation, hash_domain, Attestation,
+    AttestationDomain, UID,
 };
-use soroban_sdk::{Address, Bytes, BytesN, Env};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
 
 fn bench_hash_uid(c: &mut Criterion) {
     let env = Env::default();
@@ -90,7 +91,7 @@ fn bench_payload_scaling(c: &mut Criterion) {
 
     for size in [64, 256, 1024, 4096, 16384] {
         let attestation = make_attestation(&env, size);
-        group.bench_with_input(format!("{size}b"), &size, |b, &size| {
+        group.bench_with_input(format!("{size}b"), &size, |b, &_size| {
             b.iter(|| hash_attestation_struct(black_box(&env), black_box(&attestation)))
         });
     }

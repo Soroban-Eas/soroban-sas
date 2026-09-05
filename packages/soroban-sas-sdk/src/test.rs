@@ -232,9 +232,10 @@ fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &
 
     let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let method = request["method"].as_str().unwrap_or_default();
+    let id = request["id"].clone();
     let response = match method {
         "getLedgerEntries" => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "result": {
+            "jsonrpc": "2.0", "id": id, "result": {
                 "entries": [{
                     "key": "AAAAAA==",
                     "xdr": account_entry_xdr,
@@ -244,7 +245,7 @@ fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &
             }
         }),
         "simulateTransaction" => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "result": {
+            "jsonrpc": "2.0", "id": id, "result": {
                 "latestLedger": 1,
                 "results": [{"xdr": "AAAAAA=="}],
                 "transactionData": transaction_data_xdr,
@@ -252,14 +253,14 @@ fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &
             }
         }),
         "sendTransaction" => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "result": {
+            "jsonrpc": "2.0", "id": id, "result": {
                 "status": "PENDING",
                 "hash": "abcd1234",
                 "latestLedger": 1
             }
         }),
         "getTransaction" => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "result": {
+            "jsonrpc": "2.0", "id": id, "result": {
                 "status": "SUCCESS",
                 "latestLedger": 1,
                 "envelopeXdr": sample_v1_envelope_xdr(),

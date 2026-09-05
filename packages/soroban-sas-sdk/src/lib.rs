@@ -6,12 +6,12 @@
 //! for interacting with the Soroban Attestation Service (SAS).
 
 pub mod account;
-pub mod client;
-pub mod schema_builder;
 pub mod attestation_builder;
 pub mod batch;
+pub mod client;
 pub mod limits;
 pub mod rpc;
+pub mod schema_builder;
 pub mod sequence;
 pub mod signature;
 pub mod simulate;

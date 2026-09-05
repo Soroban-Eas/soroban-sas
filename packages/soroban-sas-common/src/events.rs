@@ -107,18 +107,43 @@ pub struct AttesterKeyRevokedEvent {
     pub public_key: BytesN<32>,
     pub version: u32,
 }
+/// `Option<Address>`-equivalent for contract event payloads.
+///
+/// `#[contracttype]`'s generated `Option<T>` conversion requires a
+/// host-independent `From<T> for ScVal`, which `Address` does not provide
+/// (unlike primitives such as `i128`) — at this pinned SDK version that
+/// surfaces as a compile error specifically under the `testutils` cfg
+/// (`cargo test`, `cargo clippy --all-targets`). A plain enum sidesteps it:
+/// enum-with-data conversions go through a different, unaffected codegen
+/// path.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreviousAddress {
+    None,
+    Some(Address),
+}
+
+impl From<Option<Address>> for PreviousAddress {
+    fn from(value: Option<Address>) -> Self {
+        match value {
+            Some(address) => PreviousAddress::Some(address),
+            None => PreviousAddress::None,
+        }
+    }
+}
+
 /// Payload of the `IndexerUpdated` event.
 ///
 /// Published with topics `(INDEXER_UPDATED, authorizer)` on a successful
-/// `SAS::set_indexer`. `old_indexer` is `None` the first time an indexer is
-/// bound. `authorizer` is the address that authorized the change (SAS's
-/// admin), included directly in the payload — not just implied by
-/// `require_auth` — so an off-chain monitor can attribute the change
+/// `SAS::set_indexer`. `old_indexer` is `PreviousAddress::None` the first
+/// time an indexer is bound. `authorizer` is the address that authorized the
+/// change (SAS's admin), included directly in the payload — not just implied
+/// by `require_auth` — so an off-chain monitor can attribute the change
 /// without cross-referencing a separate admin-lookup call.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexerUpdatedEvent {
-    pub old_indexer: Option<Address>,
+    pub old_indexer: PreviousAddress,
     pub new_indexer: Address,
     pub authorizer: Address,
 }
@@ -139,12 +164,12 @@ pub struct SchemaFeeUpdatedEvent {
 /// Payload of the `TreasuryUpdated` event.
 ///
 /// Published with topics `(TREASURY_UPDATED, authorizer)` on a successful
-/// `SchemaRegistry::set_treasury`. `old_treasury` is `None` the first time
-/// a treasury address is set.
+/// `SchemaRegistry::set_treasury`. `old_treasury` is `PreviousAddress::None`
+/// the first time a treasury address is set.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryUpdatedEvent {
-    pub old_treasury: Option<Address>,
+    pub old_treasury: PreviousAddress,
     pub new_treasury: Address,
     pub authorizer: Address,
 }

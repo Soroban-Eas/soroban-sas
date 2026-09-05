@@ -2,14 +2,17 @@
 #![no_std]
 #![allow(unused_variables)]
 
+#[cfg(test)]
+use soroban_sas_common::{events::CONTRACT_UPGRADED, ContractUpgradedEvent};
 use soroban_sas_common::{
-    extend_instance_ttl, validate_schema_syntax, SASError, SchemaRecord, LEDGERS_IN_ONE_YEAR, UID,
-    events::{CONTRACT_UPGRADED, SCHEMA_FEE_UPDATED, TREASURY_UPDATED},
-    validate_schema_syntax, ContractUpgradedEvent, SASError, SchemaFeeUpdatedEvent, SchemaRecord,
-    TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
+    events::{SCHEMA_FEE_UPDATED, TREASURY_UPDATED},
+    validate_schema_syntax, SASError, SchemaFeeUpdatedEvent, SchemaRecord, TreasuryUpdatedEvent,
+    LEDGERS_IN_ONE_YEAR, UID,
 };
+#[cfg(test)]
+use soroban_sdk::BytesN;
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, xdr::ToXdr, Address, Bytes, BytesN, Env, String,
+    contract, contractimpl, panic_with_error, xdr::ToXdr, Address, Bytes, Env, String,
 };
 
 #[contract]
@@ -19,7 +22,9 @@ mod storage;
 use storage::*;
 
 fn extend_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
 /// Pushes a schema record's archival horizon back out to the shared
@@ -77,18 +82,6 @@ impl SchemaRegistry {
         env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1)
     }
 
-    /// Replaces this contract's installed WASM. Requires the registry
-    /// admin's authorization. Emits `ContractUpgraded` with the hash being
-    /// replaced and the new hash immediately before the swap takes effect,
-    /// so a failed or unauthorized call never emits the event: if the swap
-    /// itself then fails (e.g. `new_wasm_hash` has no uploaded WASM),
-    /// Soroban rolls back the whole invocation, discarding the event and
-    /// the storage write below along with it.
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
-        admin.require_auth();
-
-        Self::record_upgrade_event(&env, &admin, new_wasm_hash.clone());
     /// Versioned upgrade. Validates the candidate before activation:
     ///  - `new_version` must be exactly `current + 1` (no skips/downgrades)
     ///  - only known versions (currently 2, i.e. next after genesis) are
@@ -108,11 +101,7 @@ impl SchemaRegistry {
         admin.require_auth();
         extend_instance_ttl(&env);
 
-        let old_version: u32 = env
-            .storage()
-            .instance()
-            .get(&REGISTRY_VERSION)
-            .unwrap_or(1);
+        let old_version: u32 = env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1);
 
         // Reject unknown future versions before writing any state.
         // Genesis 1 -> only 2 is known; expand this allow-list as new
@@ -153,6 +142,7 @@ impl SchemaRegistry {
     /// previously tracked hash, building the event) can be exercised in
     /// tests without going through `update_current_contract_wasm`, which
     /// requires a real, previously uploaded WASM blob to target.
+    #[cfg(test)]
     fn record_upgrade_event(env: &Env, admin: &Address, new_wasm_hash: BytesN<32>) {
         let old_wasm_hash: Option<BytesN<32>> = env.storage().instance().get(&CURRENT_WASM_HASH);
         // Soroban does not expose a way to read the currently installed
@@ -180,7 +170,6 @@ impl SchemaRegistry {
     /// fee (`None` the first time a fee is set) after the new fee has
     /// already been written to storage.
     pub fn set_fee(env: Env, fee: i128) {
-        let admin: Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
         extend_instance_ttl(&env);
         let admin = require_registry_admin(&env);
         admin.require_auth();
@@ -203,8 +192,6 @@ impl SchemaRegistry {
     /// the registry admin's authorization. Emits `TreasuryUpdated` with the
     /// previous treasury (`None` the first time a treasury is set) after
     /// the new address has already been written to storage.
-    pub fn set_treasury(env: Env, treasury: Address) {
-        let admin: Address = env.storage().instance().get(&REGISTRY_ADMIN).unwrap();
     pub fn set_treasury(env: Env, treasury: soroban_sdk::Address) {
         extend_instance_ttl(&env);
         let admin = require_registry_admin(&env);
@@ -217,7 +204,7 @@ impl SchemaRegistry {
         env.events().publish(
             (TREASURY_UPDATED, admin.clone()),
             TreasuryUpdatedEvent {
-                old_treasury,
+                old_treasury: old_treasury.into(),
                 new_treasury: treasury,
                 authorizer: admin,
             },

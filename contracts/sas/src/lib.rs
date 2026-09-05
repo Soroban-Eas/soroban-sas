@@ -1,9 +1,12 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 
+#[cfg(test)]
 extern crate alloc;
 
-use soroban_sas_common::{Attestation, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID};
+use soroban_sas_common::{
+    Attestation, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID,
+};
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
 };
@@ -43,7 +46,9 @@ pub const MAX_MULTI_REVOKE: u32 = 100;
 const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
 fn extend_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
 /// Reads the admin recorded by `init`, or panics `NotInitialized`.
@@ -266,8 +271,7 @@ impl SAS {
         if attestation.ref_uid == attestation.uid {
             panic_with_error!(&env, SASError::InvalidRefUid);
         }
-        if attestation.ref_uid != zero_ref
-            && !env.storage().persistent().has(&attestation.ref_uid)
+        if attestation.ref_uid != zero_ref && !env.storage().persistent().has(&attestation.ref_uid)
         {
             panic_with_error!(&env, SASError::InvalidRefUid);
         }
@@ -290,8 +294,6 @@ impl SAS {
             panic_with_error!(&env, err);
         }
 
-        // Optional resolver callback support
-        let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
         // Resolver callback: authoritative. A resolver is optional in the
         // sense that a schema need not name a "real" enforcement contract,
         // but once named, its `on_attest` verdict controls whether the
@@ -313,18 +315,6 @@ impl SAS {
         {
             panic_with_error!(&env, SASError::ResolverRejected);
         }
-        // Resolver callback: validate attestation data against schema (#158).
-        // A failing resolver aborts issuance so schema typing is enforced.
-        let resolver_result = env.try_invoke_contract::<(), soroban_sdk::Error>(
-            &schema.resolver,
-            &Symbol::new(&env, "on_attest"),
-            soroban_sdk::vec![&env, attestation.clone().into_val(&env)],
-        );
-        match resolver_result {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => panic_with_error!(&env, err),
-            Err(_) => panic_with_error!(&env, SASError::InvalidSchema),
-        }
 
         // Normalize the issuance timestamp to the authoritative ledger close
         // time so that direct, delegated, batch, paid, and replacement paths
@@ -332,14 +322,13 @@ impl SAS {
         attestation.time = env.ledger().timestamp();
 
         // Store the attestation
+        let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
         env.storage()
             .persistent()
             .set(&attestation.uid, &attestation);
-        env.storage().persistent().extend_ttl(
-            &attestation.uid,
-            ttl,
-            ttl,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&attestation.uid, ttl, ttl);
 
         if let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) {
             Self::notify_indexer_of_issuance(&env, &indexer, &attestation);
@@ -367,7 +356,9 @@ impl SAS {
         let seconds_remaining = expiration_time - now;
         let ledgers_remaining = ((seconds_remaining + 4) / 5) as u32;
         let max_ttl = LEDGERS_IN_ONE_YEAR * 5;
-        ledgers_remaining.saturating_add(LEDGERS_IN_ONE_YEAR).min(max_ttl)
+        ledgers_remaining
+            .saturating_add(LEDGERS_IN_ONE_YEAR)
+            .min(max_ttl)
     }
 
     /// Pushes a freshly issued attestation to the bound Indexer.
@@ -422,7 +413,10 @@ impl SAS {
     /// `false` fail-open (the default).
     pub fn get_indexer_strict(env: Env) -> bool {
         extend_instance_ttl(&env);
-        env.storage().instance().get(&INDEXER_STRICT).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&INDEXER_STRICT)
+            .unwrap_or(false)
     }
 
     /// Replays an already-issued attestation to the currently bound Indexer.
@@ -512,9 +506,7 @@ impl SAS {
         attestation.revocation_time = timestamp;
         let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
         env.storage().persistent().set(&uid, &attestation);
-        env.storage()
-            .persistent()
-            .extend_ttl(&uid, ttl, ttl);
+        env.storage().persistent().extend_ttl(&uid, ttl, ttl);
 
         events::publish_revoked(&env, &uid, timestamp);
 
@@ -573,11 +565,7 @@ impl SAS {
             let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
                 &indexer,
                 &Symbol::new(&env, "handle_replace"),
-                soroban_sdk::vec![
-                    &env,
-                    old_uid_clone.into_val(&env),
-                    new_uid.into_val(&env)
-                ],
+                soroban_sdk::vec![&env, old_uid_clone.into_val(&env), new_uid.into_val(&env)],
             );
         }
         issued_uid
@@ -769,7 +757,11 @@ impl SAS {
     /// Once rotated, the old key immediately stops validating new
     /// delegated attestations or revocations: `require_attester_key` only
     /// ever compares against the current record.
-    pub fn rotate_attester_key(env: Env, attester: Address, new_public_key: soroban_sdk::BytesN<32>) {
+    pub fn rotate_attester_key(
+        env: Env,
+        attester: Address,
+        new_public_key: soroban_sdk::BytesN<32>,
+    ) {
         attester.require_auth();
 
         let key = (ATTESTER_KEY, attester.clone());
@@ -924,11 +916,9 @@ impl SAS {
             .get::<_, Attestation>(&attestation.uid)
         {
             let ttl = Self::compute_storage_ttl(&env, stored.expiration_time);
-            env.storage().persistent().extend_ttl(
-                &attestation.uid,
-                ttl,
-                ttl,
-            );
+            env.storage()
+                .persistent()
+                .extend_ttl(&attestation.uid, ttl, ttl);
             if stored.revocation_time != 0 {
                 panic_with_error!(&env, SASError::AlreadyRevoked);
             }
@@ -966,9 +956,7 @@ impl SAS {
         extend_instance_ttl(&env);
         if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
             let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-            env.storage()
-                .persistent()
-                .extend_ttl(&uid, ttl, ttl);
+            env.storage().persistent().extend_ttl(&uid, ttl, ttl);
             if attestation.revocation_time != 0 {
                 return false;
             }
@@ -997,9 +985,7 @@ impl SAS {
     pub fn get_attestation(env: Env, uid: UID) -> Option<Attestation> {
         if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
             let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-            env.storage()
-                .persistent()
-                .extend_ttl(&uid, ttl, ttl);
+            env.storage().persistent().extend_ttl(&uid, ttl, ttl);
             Some(attestation)
         } else {
             None

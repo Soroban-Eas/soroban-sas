@@ -2,8 +2,8 @@ extern crate alloc;
 use crate::{SchemaRegistry, SchemaRegistryClient};
 use alloc::format;
 use alloc::vec::Vec;
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
 /// `live_until_ledger` recorded for one persistent contract-data entry, or
 /// `None` when no such entry exists. The SDK 20 test host neither exposes
@@ -22,8 +22,7 @@ where
         .iter()
         .find_map(|(k, (_, live_until))| match &**k {
             LedgerKey::ContractData(data)
-                if data.durability == ContractDataDurability::Persistent
-                    && data.key == target =>
+                if data.durability == ContractDataDurability::Persistent && data.key == target =>
             {
                 *live_until
             }
@@ -38,14 +37,29 @@ fn test_pre_init_admin_endpoints_return_not_initialized() {
     let client = SchemaRegistryClient::new(&env, &cid);
     env.mock_all_auths();
     let hash = BytesN::from_array(&env, &[0u8; 32]);
-    assert_eq!(client.try_upgrade(&hash, &2u32), Err(Ok(SASError::NotInitialized.into())));
-    assert_eq!(client.try_set_fee(&100), Err(Ok(SASError::NotInitialized.into())));
+    assert_eq!(
+        client.try_upgrade(&hash, &2u32),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
+    assert_eq!(
+        client.try_set_fee(&100),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
     let treasury = Address::generate(&env);
-    assert_eq!(client.try_set_treasury(&treasury), Err(Ok(SASError::NotInitialized.into())));
-    assert_eq!(client.try_withdraw_fees(&100), Err(Ok(SASError::NotInitialized.into())));
+    assert_eq!(
+        client.try_set_treasury(&treasury),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
+    assert_eq!(
+        client.try_withdraw_fees(&100),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
     let fake = UID(BytesN::from_array(&env, &[9u8; 32]));
     let auth = Address::generate(&env);
-    assert_eq!(client.try_deprecate(&fake, &auth), Err(Ok(SASError::NotInitialized.into())));
+    assert_eq!(
+        client.try_deprecate(&fake, &auth),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
 }
 
 #[test]
@@ -67,7 +81,10 @@ fn test_no_partial_write_on_failure() {
     let res = client.try_deprecate(&unknown, &admin);
     assert_eq!(res, Err(Ok(SASError::SchemaNotFound.into())));
     let has: bool = env.as_contract(&cid, || {
-        env.storage().persistent().get(&(soroban_sdk::symbol_short!("DEPRECATE"), unknown.clone())).unwrap_or(false)
+        env.storage()
+            .persistent()
+            .get(&(soroban_sdk::symbol_short!("DEPRECATE"), unknown.clone()))
+            .unwrap_or(false)
     });
     assert!(!has, "no tombstone should exist");
 }
@@ -82,9 +99,15 @@ fn test_deprecate_unknown_and_idempotent() {
     env.mock_all_auths();
     client.init(&admin);
     let unknown = UID(BytesN::from_array(&env, &[99u8; 32]));
-    assert_eq!(client.try_deprecate(&unknown, &admin), Err(Ok(SASError::SchemaNotFound.into())));
+    assert_eq!(
+        client.try_deprecate(&unknown, &admin),
+        Err(Ok(SASError::SchemaNotFound.into()))
+    );
     let has: bool = env.as_contract(&cid, || {
-        env.storage().persistent().get(&(soroban_sdk::symbol_short!("DEPRECATE"), unknown.clone())).unwrap_or(false)
+        env.storage()
+            .persistent()
+            .get(&(soroban_sdk::symbol_short!("DEPRECATE"), unknown.clone()))
+            .unwrap_or(false)
     });
     assert!(!has);
     // Register and deprecate
@@ -252,15 +275,15 @@ fn test_get_schemas_pagination_skips_deprecated_and_returns_cursor() {
         let uid = client3.register(&owner, &s, &resolver, &true);
         uids3.push(uid);
     }
-    for i in 0..25 {
-        client3.deprecate(&uids3[i], &admin3);
+    for uid in uids3.iter().take(25) {
+        client3.deprecate(uid, &admin3);
     }
     // First page from 0 limit 5 should skip 25 deprecated and return next 5 (25..29)
     let (p1, c1) = client3.get_schemas_paginated(&0, &5);
     assert_eq!(p1.len(), 5);
     assert_eq!(c1, 30); // scanned 30 slots (0..29) to find 5 active at end
-    // Ensure bounded: scanning stops at budget or end, not infinite
-    // Second page should be empty as all remaining scanned
+                        // Ensure bounded: scanning stops at budget or end, not infinite
+                        // Second page should be empty as all remaining scanned
     let (p2, c2) = client3.get_schemas_paginated(&c1, &5);
     assert_eq!(p2.len(), 0);
     assert_eq!(c2, 30);

@@ -10,6 +10,15 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # cargo-audit only parses Cargo.lock; it never compiles this workspace, so
+  # it isn't bound by the project's 1.79.0 MSRV pin. A recent toolchain is
+  # required to build a cargo-audit new enough to parse current advisory-db
+  # entries (some now use CVSS 4.0). This must be set as an env var (not just
+  # `dtolnay/rust-toolchain`'s `toolchain: stable` input) because the
+  # checked-out repo's rust-toolchain.toml pins 1.79.0 and rustup applies
+  # that directory override to every cargo/rustc invocation regardless of
+  # which toolchain was installed as "default".
+  RUSTUP_TOOLCHAIN: stable
 
 jobs:
   audit:
@@ -20,8 +29,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.79.0
+          toolchain: stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run audit
-        run: cargo audit --config audit.toml
+        # See audit.toml for why each ignored advisory can't be fixed today.
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2024-0344 \
+            --ignore RUSTSEC-2024-0421 \
+            --ignore RUSTSEC-2026-0009

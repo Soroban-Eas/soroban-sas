@@ -156,7 +156,7 @@ mod tests {
             .to_xdr_base64(Limits::none())
             .unwrap();
 
-        let data = LedgerEntryData::from_xdr_base64(&entry_xdr, Limits::none()).unwrap();
+        let data = LedgerEntryData::from_xdr_base64(entry_xdr, Limits::none()).unwrap();
         let result = match data {
             LedgerEntryData::Account(_) => Ok(()),
             _ => Err(SdkError::ValidationError(
@@ -176,12 +176,10 @@ mod tests {
             latest_ledger: 100,
         };
 
-        // When entries is empty, should return ValidationError
-        if entries_response.entries.is_empty() {
-            assert!(true); // Correctly identifies unfunded account case
-        } else {
-            panic!("should recognize empty entries");
-        }
+        // `fetch_sequence_number` treats an empty `entries` list as the
+        // unfunded-account case and returns `SdkError::ValidationError`
+        // rather than panicking on a missing entry.
+        assert!(entries_response.entries.is_empty());
     }
 
     #[test]

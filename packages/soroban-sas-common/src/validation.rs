@@ -82,94 +82,93 @@ fn is_valid_type(bytes: &Bytes, start: u32, end: u32) -> bool {
 }
 
 pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError> {
-        let schema_len = schema.len() as usize;
-        if schema_len == 0 || schema_len > MAX_SCHEMA_LENGTH as usize {
-            return Err(SASError::InvalidSchema);
-        }
-        let mut buf = [0u8; 1024]; // Hardcoded to MAX_SCHEMA_LENGTH
-        schema.copy_into_slice(&mut buf[..schema_len]);
-        let schema_bytes = Bytes::from_slice(env, &buf[..schema_len]);
+    let schema_len = schema.len() as usize;
+    if schema_len == 0 || schema_len > MAX_SCHEMA_LENGTH as usize {
+        return Err(SASError::InvalidSchema);
+    }
+    let mut buf = [0u8; 1024]; // Hardcoded to MAX_SCHEMA_LENGTH
+    schema.copy_into_slice(&mut buf[..schema_len]);
+    let schema_bytes = Bytes::from_slice(env, &buf[..schema_len]);
 
-        let Some((mut start, end)) = trim_bounds(&schema_bytes, 0, schema_bytes.len()) else {
+    let Some((mut start, end)) = trim_bounds(&schema_bytes, 0, schema_bytes.len()) else {
+        return Err(SASError::InvalidSchema);
+    };
+
+    let mut field_count = 0u32;
+    while start < end {
+        let mut field_end = start;
+        while field_end < end {
+            let Some(byte) = schema_bytes.get(field_end) else {
+                return Err(SASError::InvalidSchema);
+            };
+            if byte == b',' {
+                break;
+            }
+            field_end += 1;
+        }
+
+        let Some((field_start, field_end)) = trim_bounds(&schema_bytes, start, field_end) else {
             return Err(SASError::InvalidSchema);
         };
 
-        let mut field_count = 0u32;
-        while start < end {
-            let mut field_end = start;
-            while field_end < end {
-                let Some(byte) = schema_bytes.get(field_end) else {
-                    return Err(SASError::InvalidSchema);
-                };
-                if byte == b',' {
-                    break;
-                }
-                field_end += 1;
-            }
-
-            let Some((field_start, field_end)) = trim_bounds(&schema_bytes, start, field_end)
-            else {
+        let mut split_index = field_start;
+        while split_index < field_end {
+            let Some(byte) = schema_bytes.get(split_index) else {
                 return Err(SASError::InvalidSchema);
             };
-
-            let mut split_index = field_start;
-            while split_index < field_end {
-                let Some(byte) = schema_bytes.get(split_index) else {
-                    return Err(SASError::InvalidSchema);
-                };
-                if is_ascii_whitespace(byte) {
-                    break;
-                }
-                split_index += 1;
-            }
-
-            if split_index == field_start || split_index >= field_end {
-                return Err(SASError::InvalidSchema);
-            }
-
-            let mut ty_start = split_index;
-            while ty_start < field_end {
-                let Some(byte) = schema_bytes.get(ty_start) else {
-                    return Err(SASError::InvalidSchema);
-                };
-                if !is_ascii_whitespace(byte) {
-                    break;
-                }
-                ty_start += 1;
-            }
-
-            if ty_start >= field_end
-                || !is_valid_identifier(&schema_bytes, field_start, split_index)
-                || !is_valid_type(&schema_bytes, ty_start, field_end)
-            {
-                return Err(SASError::InvalidSchema);
-            }
-            field_count += 1;
-
-            if field_end >= end {
+            if is_ascii_whitespace(byte) {
                 break;
             }
-            start = field_end + 1;
-            while start < end {
-                let Some(byte) = schema_bytes.get(start) else {
-                    return Err(SASError::InvalidSchema);
-                };
-                if !is_ascii_whitespace(byte) {
-                    break;
-                }
-                start += 1;
-            }
-            if start >= end {
-                return Err(SASError::InvalidSchema);
-            }
+            split_index += 1;
         }
 
-        if field_count == 0 {
+        if split_index == field_start || split_index >= field_end {
             return Err(SASError::InvalidSchema);
         }
 
-        Ok(())
+        let mut ty_start = split_index;
+        while ty_start < field_end {
+            let Some(byte) = schema_bytes.get(ty_start) else {
+                return Err(SASError::InvalidSchema);
+            };
+            if !is_ascii_whitespace(byte) {
+                break;
+            }
+            ty_start += 1;
+        }
+
+        if ty_start >= field_end
+            || !is_valid_identifier(&schema_bytes, field_start, split_index)
+            || !is_valid_type(&schema_bytes, ty_start, field_end)
+        {
+            return Err(SASError::InvalidSchema);
+        }
+        field_count += 1;
+
+        if field_end >= end {
+            break;
+        }
+        start = field_end + 1;
+        while start < end {
+            let Some(byte) = schema_bytes.get(start) else {
+                return Err(SASError::InvalidSchema);
+            };
+            if !is_ascii_whitespace(byte) {
+                break;
+            }
+            start += 1;
+        }
+        if start >= end {
+            return Err(SASError::InvalidSchema);
+        }
     }
+
+    if field_count == 0 {
+        return Err(SASError::InvalidSchema);
+    }
+
+    Ok(())
+}
 
 pub fn validate_ttl(_env: &Env, current_time: u64, expiration_time: u64) -> Result<(), SASError> {
     if expiration_time > 0 && current_time >= expiration_time {

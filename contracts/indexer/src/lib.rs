@@ -1,7 +1,5 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
-use soroban_sas_common::{extend_instance_ttl, SASError, LEDGERS_IN_ONE_YEAR, UID};
-use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Symbol};
 use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, IntoVal,
@@ -48,7 +46,9 @@ pub enum IndexStatus {
 }
 
 fn extend_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
 /// Number of UIDs recorded under one lookup key, across every chunk.
@@ -109,11 +109,9 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
     chunk.push_back(uid.clone());
     let storage_key = (key.clone(), chunk_index);
     env.storage().persistent().set(&storage_key, &chunk);
-    env.storage().persistent().extend_ttl(
-        &storage_key,
-        LEDGERS_IN_ONE_YEAR,
-        LEDGERS_IN_ONE_YEAR,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&storage_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 
     total += 1;
     env.storage().instance().set(&count_key, &total);
@@ -140,11 +138,9 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
     chunk.push_back(uid.clone());
     let storage_key = (key.clone(), chunk_index);
     env.storage().persistent().set(&storage_key, &chunk);
-    env.storage().persistent().extend_ttl(
-        &storage_key,
-        LEDGERS_IN_ONE_YEAR,
-        LEDGERS_IN_ONE_YEAR,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&storage_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 
     total += 1;
     env.storage().instance().set(&count_key, &total);
@@ -226,8 +222,13 @@ impl Indexer {
         }
         admin.require_auth();
         let compatible: bool = env
-            .try_invoke_contract::<bool, soroban_sdk::Error>(&sas, &SAS_INTERFACE_VERSION, soroban_sdk::vec![&env])
-            .unwrap_or(Ok(false)).unwrap_or(false);
+            .try_invoke_contract::<bool, soroban_sdk::Error>(
+                &sas,
+                &SAS_INTERFACE_VERSION,
+                soroban_sdk::vec![&env],
+            )
+            .unwrap_or(Ok(false))
+            .unwrap_or(false);
         if !compatible {
             panic_with_error!(&env, SASError::IncompatibleDependency);
         }
@@ -250,8 +251,7 @@ impl Indexer {
         env.storage().instance().get(&SAS_CONTRACT)
     }
 
-    /// Records an attestation's UID against its recipient, schema, and
-    /// attester lookup tables.
+    /// Records `uid` in the recipient, schema, and attester indexes.
     ///
     /// Trust boundary: only the SAS contract bound at `init` may call this.
     /// It requires `sas.require_auth()`, which Soroban satisfies without an
@@ -262,7 +262,6 @@ impl Indexer {
     /// `SASError::AlreadyInitialized`'s sibling, `Unauthorized`, if the
     /// indexer has not been initialized yet, since there is no trusted SAS
     /// address to authorize against.
-    /// Records `uid` in the recipient, schema, and attester indexes.
     ///
     /// Idempotent: a repeated call with the **same**
     /// `(recipient, schema_uid, attester)` triple is a no-op (it only
@@ -332,11 +331,6 @@ impl Indexer {
     /// included; use `get_recipient_filtered` for the active-only view.
     pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
-        let chunk_index = 0u32;
-        env.storage()
-            .persistent()
-            .get(&(recipient, chunk_index))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
         collect_filtered(
             &env,
@@ -353,11 +347,6 @@ impl Indexer {
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
-        let chunk_index = 0u32;
-        env.storage()
-            .persistent()
-            .get(&(schema_uid, chunk_index))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
         collect_filtered(
             &env,
@@ -374,11 +363,6 @@ impl Indexer {
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
-        let chunk_index = 0u32;
-        env.storage()
-            .persistent()
-            .get(&(attester, chunk_index))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
         collect_filtered(
             &env,
@@ -494,7 +478,7 @@ impl Indexer {
     /// into the historical index (so callers can resume with
     /// `cursor + returned.len()` only when also advancing over skipped
     /// entries, or use `cursor + limit` for historical pagination).
-    pub fn get_recipient_paginated_filtered(
+    pub fn get_recipient_page_filtered(
         env: Env,
         recipient: Address,
         cursor: u32,

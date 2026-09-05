@@ -461,6 +461,58 @@
       "event": {
         "ext": "v0",
         "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "IDXUPD"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "authorizer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "new_indexer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "old_indexer"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "symbol": "None"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
         "type_": "diagnostic",
         "body": {
           "v0": {
@@ -1119,7 +1171,7 @@
               },
               {
                 "error": {
-                  "contract": 407
+                  "contract": 411
                 }
               }
             ],
@@ -1129,7 +1181,7 @@
                   "string": "failing with contract error"
                 },
                 {
-                  "u32": 407
+                  "u32": 411
                 }
               ]
             }
@@ -1151,7 +1203,7 @@
               },
               {
                 "error": {
-                  "contract": 407
+                  "contract": 411
                 }
               }
             ],
@@ -1176,7 +1228,7 @@
               },
               {
                 "error": {
-                  "contract": 407
+                  "contract": 411
                 }
               }
             ],
@@ -1201,7 +1253,7 @@
               },
               {
                 "error": {
-                  "contract": 407
+                  "contract": 411
                 }
               }
             ],

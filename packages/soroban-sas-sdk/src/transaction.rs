@@ -385,9 +385,10 @@ mod tests {
             other => panic!("expected SettlementTimeout, got {other:?}"),
         }
 
-        // Terminal failure is an Ok result the caller inspects, not an Err.
-        let terminal = poll(&policy, &FakeClock::new(), || Ok(result("FAILED"))).unwrap();
-        assert_eq!(terminal.status, "FAILED");
+        // A settled FAILED status is a hard error, not an Ok result the
+        // caller has to remember to inspect.
+        let terminal_err = poll(&policy, &FakeClock::new(), || Ok(result("FAILED"))).unwrap_err();
+        assert!(matches!(terminal_err, SdkError::TransactionFailed { .. }));
 
         // An RPC failure propagates as its own error kind.
         let rpc_err = poll(&policy, &FakeClock::new(), || {

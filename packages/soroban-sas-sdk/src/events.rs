@@ -76,15 +76,18 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
     };
     match name {
         n if n == TOPIC_SCHEMA_REGISTERED => {
+            // Topics: `(REGISTERED, schema_uid)`. `schema_uid` topics/payload
+            // fields use the same encoding as any other `UID` value, so reuse
+            // `decode_uid` rather than assuming a `Symbol` shape.
             let map = expect_map(data)?;
             let schema_uid_from_payload = decode_uid(map_get(map, b"schema_uid")?)?;
-            let schema_uid_from_topic = match topics.get(1) {
-                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
-                    EventParseError::MalformedPayload("topic schema_uid is not 32 bytes")
-                }),
-                _ => Err(EventParseError::MalformedPayload("missing or invalid topic schema_uid")),
-            };
-            if schema_uid_from_topic != Ok(schema_uid_from_payload.clone()) {
+            let schema_uid_from_topic = topics
+                .get(1)
+                .ok_or(EventParseError::MalformedPayload(
+                    "missing topic schema_uid",
+                ))
+                .and_then(decode_uid);
+            if schema_uid_from_topic != Ok(schema_uid_from_payload) {
                 return Err(EventParseError::MalformedPayload(
                     "schema_uid topic does not match payload",
                 ));
@@ -95,37 +98,32 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
             }))
         }
         n if n == TOPIC_ATTESTATION_ISSUED => {
+            // Topics: `(ATTESTED, schema_uid, attester)` — see
+            // `contracts/sas/src/events.rs::publish_attested`. `uid` is not a
+            // topic, only a payload field.
             let map = expect_map(data)?;
             let uid_from_payload = decode_uid(map_get(map, b"uid")?)?;
             let schema_uid_from_payload = decode_uid(map_get(map, b"schema_uid")?)?;
             let attester_from_payload = decode_address(map_get(map, b"attester")?)?;
-            let map_get_attester = |key: &[u8]| -> Result<ScAddress, EventParseError> {
-                decode_address(map_get(map, key)?)
-            };
-            let uid_from_topic = match topics.get(1) {
-                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
-                    EventParseError::MalformedPayload("topic uid is not 32 bytes")
-                }),
-                _ => Err(EventParseError::MalformedPayload("missing or invalid topic uid")),
-            };
-            let schema_uid_from_topic = match topics.get(2) {
-                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
-                    EventParseError::MalformedPayload("topic schema_uid is not 32 bytes")
-                }),
-                _ => Err(EventParseError::MalformedPayload("missing or invalid topic schema_uid")),
-            };
-            let attester_from_topic = match topics.get(3) {
-                Some(ScVal::Symbol(sym)) => map_get_attester(&sym.0.as_slice().to_vec()),
-                _ => Err(EventParseError::MalformedPayload("missing or invalid topic attester")),
-            };
-            if uid_from_topic != Ok(uid_from_payload.clone()) {
-                return Err(EventParseError::MalformedPayload("uid topic does not match payload"));
-            }
-            if schema_uid_from_topic != Ok(schema_uid_from_payload.clone()) {
-                return Err(EventParseError::MalformedPayload("schema_uid topic does not match payload"));
+            let schema_uid_from_topic = topics
+                .get(1)
+                .ok_or(EventParseError::MalformedPayload(
+                    "missing topic schema_uid",
+                ))
+                .and_then(decode_uid);
+            let attester_from_topic = topics
+                .get(2)
+                .ok_or(EventParseError::MalformedPayload("missing topic attester"))
+                .and_then(decode_address);
+            if schema_uid_from_topic != Ok(schema_uid_from_payload) {
+                return Err(EventParseError::MalformedPayload(
+                    "schema_uid topic does not match payload",
+                ));
             }
             if attester_from_topic != Ok(attester_from_payload.clone()) {
-                return Err(EventParseError::MalformedPayload("attester topic does not match payload"));
+                return Err(EventParseError::MalformedPayload(
+                    "attester topic does not match payload",
+                ));
             }
             Ok(SasEvent::AttestationIssued(AttestationIssued {
                 uid: uid_from_payload,
@@ -135,20 +133,21 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
             }))
         }
         n if n == TOPIC_ATTESTATION_REVOKED => {
+            // Topics: `(REVOKED, uid)`.
             let map = expect_map(data)?;
             let uid_from_payload = decode_uid(map_get(map, b"uid")?)?;
             let timestamp = match map_get(map, b"timestamp")? {
                 ScVal::U64(ts) => *ts,
                 _ => return Err(EventParseError::MalformedPayload("timestamp is not a u64")),
             };
-            let uid_from_topic = match topics.get(1) {
-                Some(ScVal::Symbol(sym)) => sym.0.as_slice().try_into().map_err(|_| {
-                    EventParseError::MalformedPayload("topic uid is not 32 bytes")
-                }),
-                _ => Err(EventParseError::MalformedPayload("missing or invalid topic uid")),
-            };
-            if uid_from_topic != Ok(uid_from_payload.clone()) {
-                return Err(EventParseError::MalformedPayload("uid topic does not match payload"));
+            let uid_from_topic = topics
+                .get(1)
+                .ok_or(EventParseError::MalformedPayload("missing topic uid"))
+                .and_then(decode_uid);
+            if uid_from_topic != Ok(uid_from_payload) {
+                return Err(EventParseError::MalformedPayload(
+                    "uid topic does not match payload",
+                ));
             }
             Ok(SasEvent::AttestationRevoked(AttestationRevoked {
                 uid: uid_from_payload,
@@ -280,10 +279,7 @@ pub fn parse_events_verified(
 
 /// Convenience over [`parse_events_verified`]: only the events proven to come
 /// from an allowlisted source.
-pub fn parse_trusted_events(
-    events: &[ContractEvent],
-    trusted: &TrustedContracts,
-) -> Vec<SasEvent> {
+pub fn parse_trusted_events(events: &[ContractEvent], trusted: &TrustedContracts) -> Vec<SasEvent> {
     parse_events_verified(events, trusted)
         .into_iter()
         .filter(|v| v.trust == EventTrust::Trusted)
@@ -435,14 +431,8 @@ mod tests {
         );
     }
 
-    fn contract_event(
-        contract_id: [u8; 32],
-        topics: Vec<ScVal>,
-        data: ScVal,
-    ) -> ContractEvent {
-        use soroban_sdk::xdr::{
-            ContractEventType, ContractEventV0, ExtensionPoint, Hash,
-        };
+    fn contract_event(contract_id: [u8; 32], topics: Vec<ScVal>, data: ScVal) -> ContractEvent {
+        use soroban_sdk::xdr::{ContractEventType, ContractEventV0, ExtensionPoint, Hash};
         ContractEvent {
             ext: ExtensionPoint::V0,
             contract_id: Some(Hash(contract_id)),
@@ -488,11 +478,11 @@ mod tests {
         let trusted = TrustedContracts::new().with_sas([9u8; 32]);
 
         let (t1, d1) = revoked_event(&env, 2);
-        let honest = parse_contract_event_verified(&contract_event([9u8; 32], t1, d1), &trusted)
-            .unwrap();
+        let honest =
+            parse_contract_event_verified(&contract_event([9u8; 32], t1, d1), &trusted).unwrap();
         let (t2, d2) = revoked_event(&env, 2);
-        let spoofed = parse_contract_event_verified(&contract_event([0xAAu8; 32], t2, d2), &trusted)
-            .unwrap();
+        let spoofed =
+            parse_contract_event_verified(&contract_event([0xAAu8; 32], t2, d2), &trusted).unwrap();
 
         assert_eq!(honest.event, spoofed.event);
         assert_eq!(honest.trust, EventTrust::Trusted);
@@ -558,18 +548,18 @@ mod tests {
     #[test]
     fn malformed_known_event_with_wrong_payload_type_returns_error() {
         let env = Env::default();
-        
+
         // REVOKED topic with non-map payload
         let topics = [to_scval(
             &env,
             soroban_sas_common::events::REVOKED.into_val(&env),
         )];
-        
+
         assert_eq!(
             parse_event(&topics, &ScVal::Bool(true)),
             Err(EventParseError::MalformedPayload("payload is not a map"))
         );
-        
+
         assert_eq!(
             parse_event(&topics, &ScVal::U32(123)),
             Err(EventParseError::MalformedPayload("payload is not a map"))
@@ -579,12 +569,12 @@ mod tests {
     #[test]
     fn malformed_known_event_with_missing_required_field_returns_error() {
         let env = Env::default();
-        
+
         let topics = [to_scval(
             &env,
             soroban_sas_common::events::REVOKED.into_val(&env),
         )];
-        
+
         // Empty map - missing uid and timestamp
         let empty_map = ScVal::Map(Some(ScMap(vec![].try_into().unwrap())));
         assert_eq!(
@@ -596,50 +586,56 @@ mod tests {
     #[test]
     fn malformed_known_event_with_wrong_field_type_returns_error() {
         let env = Env::default();
-        
+
         let topics = [to_scval(
             &env,
             soroban_sas_common::events::REVOKED.into_val(&env),
         )];
-        
+
         // Map with uid as string instead of bytes
-        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM};
+        use soroban_sdk::xdr::{ScMapEntry, ScString, ScSymbol, StringM};
         let bad_uid_entry = ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
-            val: ScVal::String(StringM::try_from(b"not-bytes".to_vec()).unwrap()),
+            val: ScVal::String(ScString(StringM::try_from(b"not-bytes".to_vec()).unwrap())),
         };
         let bad_timestamp_entry = ScMapEntry {
             key: ScVal::Symbol(ScSymbol(StringM::try_from(b"timestamp".to_vec()).unwrap())),
             val: ScVal::U64(100),
         };
-        let bad_map = ScVal::Map(Some(ScMap(vec![bad_uid_entry, bad_timestamp_entry].try_into().unwrap())));
-        
+        let bad_map = ScVal::Map(Some(ScMap(
+            vec![bad_uid_entry, bad_timestamp_entry].try_into().unwrap(),
+        )));
+
         assert_eq!(
             parse_event(&topics, &bad_map),
-            Err(EventParseError::MalformedPayload("uid is not a bytes value"))
+            Err(EventParseError::MalformedPayload(
+                "uid is not a bytes value"
+            ))
         );
     }
 
     #[test]
     fn malformed_known_event_with_wrong_uid_length_returns_error() {
         let env = Env::default();
-        
+
         let topics = [to_scval(
             &env,
             soroban_sas_common::events::ATTESTED.into_val(&env),
         )];
-        
+
         // UID with wrong byte length (not 32 bytes)
-        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM, ScBytes};
-        let bad_uid = ScVal::Vec(Some(vec![ScVal::Bytes(ScBytes(vec![1, 2, 3].try_into().unwrap()))].try_into().unwrap()));
-        let entries = vec![
-            ScMapEntry {
-                key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
-                val: bad_uid,
-            },
-        ];
+        use soroban_sdk::xdr::{ScBytes, ScMapEntry, ScSymbol, StringM};
+        let bad_uid = ScVal::Vec(Some(
+            vec![ScVal::Bytes(ScBytes(vec![1, 2, 3].try_into().unwrap()))]
+                .try_into()
+                .unwrap(),
+        ));
+        let entries = vec![ScMapEntry {
+            key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
+            val: bad_uid,
+        }];
         let bad_map = ScVal::Map(Some(ScMap(entries.try_into().unwrap())));
-        
+
         assert_eq!(
             parse_event(&topics, &bad_map),
             Err(EventParseError::MalformedPayload("uid is not 32 bytes"))
@@ -651,12 +647,12 @@ mod tests {
         let env = Env::default();
         let uid = UID(BytesN::from_array(&env, &[1u8; 32]));
         let schema_uid = UID(BytesN::from_array(&env, &[2u8; 32]));
-        
+
         let topics = [
             to_scval(&env, soroban_sas_common::events::ATTESTED.into_val(&env)),
             to_scval(&env, schema_uid.into_val(&env)),
         ];
-        
+
         // Build payload with uid and schema_uid correct, but attester as U32 instead of Address
         use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM};
         let entries = vec![
@@ -674,7 +670,7 @@ mod tests {
             },
         ];
         let bad_map = ScVal::Map(Some(ScMap(entries.try_into().unwrap())));
-        
+
         assert_eq!(
             parse_event(&topics, &bad_map),
             Err(EventParseError::MalformedPayload("field is not an address"))
@@ -684,23 +680,23 @@ mod tests {
     #[test]
     fn unknown_event_types_are_skipped_without_losing_valid_events() {
         let env = Env::default();
-        
+
         // Create three events: valid, unknown, valid
         let (topics1, data1) = revoked_event(&env, 1);
         let event1 = contract_event([9u8; 32], topics1, data1);
-        
+
         let unknown_topics = vec![to_scval(
             &env,
             soroban_sdk::symbol_short!("TRANSFER").into_val(&env),
         )];
         let event2 = contract_event([9u8; 32], unknown_topics, ScVal::Void);
-        
+
         let (topics3, data3) = revoked_event(&env, 2);
         let event3 = contract_event([9u8; 32], topics3, data3);
-        
+
         let events = [event1, event2, event3];
         let parsed = parse_events(&events);
-        
+
         // Should get exactly 2 valid events (the unknown one is skipped)
         assert_eq!(parsed.len(), 2);
         assert!(matches!(parsed[0], SasEvent::AttestationRevoked(_)));
@@ -710,23 +706,23 @@ mod tests {
     #[test]
     fn malformed_known_event_is_skipped_in_batch_without_panicking() {
         let env = Env::default();
-        
+
         // Create three events: valid, malformed (but recognized topic), valid
         let (topics1, data1) = revoked_event(&env, 3);
         let event1 = contract_event([9u8; 32], topics1, data1);
-        
+
         let malformed_topics = vec![to_scval(
             &env,
             soroban_sas_common::events::REVOKED.into_val(&env),
         )];
         let event2 = contract_event([9u8; 32], malformed_topics, ScVal::U32(999)); // Wrong payload type
-        
+
         let (topics3, data3) = revoked_event(&env, 4);
         let event3 = contract_event([9u8; 32], topics3, data3);
-        
+
         let events = [event1, event2, event3];
         let parsed = parse_events(&events);
-        
+
         // Should get exactly 2 valid events (the malformed one is skipped)
         assert_eq!(parsed.len(), 2);
         assert!(matches!(parsed[0], SasEvent::AttestationRevoked(_)));
@@ -735,15 +731,13 @@ mod tests {
 
     #[test]
     fn non_symbol_first_topic_returns_not_sas_event() {
-        let env = Env::default();
-        
         // First topic is U32 instead of Symbol
         let topics = [ScVal::U32(123)];
         assert_eq!(
             parse_event(&topics, &ScVal::Void),
             Err(EventParseError::NotSasEvent)
         );
-        
+
         // First topic is Bytes instead of Symbol
         use soroban_sdk::xdr::ScBytes;
         let topics = [ScVal::Bytes(ScBytes(vec![1, 2, 3].try_into().unwrap()))];
@@ -757,14 +751,14 @@ mod tests {
     fn timestamp_field_with_wrong_type_returns_error() {
         let env = Env::default();
         let uid = UID(BytesN::from_array(&env, &[5u8; 32]));
-        
+
         let topics = [
             to_scval(&env, soroban_sas_common::events::REVOKED.into_val(&env)),
             to_scval(&env, uid.clone().into_val(&env)),
         ];
-        
+
         // Build payload with timestamp as String instead of U64
-        use soroban_sdk::xdr::{ScMapEntry, ScSymbol, StringM};
+        use soroban_sdk::xdr::{ScMapEntry, ScString, ScSymbol, StringM};
         let entries = vec![
             ScMapEntry {
                 key: ScVal::Symbol(ScSymbol(StringM::try_from(b"uid".to_vec()).unwrap())),
@@ -772,11 +766,13 @@ mod tests {
             },
             ScMapEntry {
                 key: ScVal::Symbol(ScSymbol(StringM::try_from(b"timestamp".to_vec()).unwrap())),
-                val: ScVal::String(StringM::try_from(b"not-a-number".to_vec()).unwrap()),
+                val: ScVal::String(ScString(
+                    StringM::try_from(b"not-a-number".to_vec()).unwrap(),
+                )),
             },
         ];
         let bad_map = ScVal::Map(Some(ScMap(entries.try_into().unwrap())));
-        
+
         assert_eq!(
             parse_event(&topics, &bad_map),
             Err(EventParseError::MalformedPayload("timestamp is not a u64"))

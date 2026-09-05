@@ -2,7 +2,6 @@ use soroban_sas_common::{
     events::{ATTESTED, INDEXER_UPDATED, REVOKED},
     Attestation, AttestationIssuedEvent, AttestationRevokedEvent, IndexerUpdatedEvent, UID,
 };
-use soroban_sdk::{Address, Env};
 use soroban_sdk::{symbol_short, Address, Env};
 
 /// Publishes the `AttestationIssued` event.
@@ -53,10 +52,13 @@ pub fn publish_indexer_updated(
     env.events().publish(
         (INDEXER_UPDATED, authorizer.clone()),
         IndexerUpdatedEvent {
-            old_indexer,
+            old_indexer: old_indexer.into(),
             new_indexer,
             authorizer,
         },
+    );
+}
+
 /// Publishes `IndexFailed` when a bound Indexer could not be notified of a
 /// newly issued attestation under the fail-open policy (#161).
 ///
@@ -76,9 +78,20 @@ pub fn publish_reindexed(env: &Env, uid: &UID) {
         .publish((symbol_short!("REINDEX"), uid.clone()), uid.clone());
 }
 
-pub fn publish_withdrawal(env: &Env, token: &Address, amount: i128, destination: &Address, authorizer: &Address) {
+pub fn publish_withdrawal(
+    env: &Env,
+    token: &Address,
+    amount: i128,
+    destination: &Address,
+    authorizer: &Address,
+) {
     env.events().publish(
         (symbol_short!("WITHDRAW"), token.clone(), authorizer.clone()),
-        (amount, destination.clone(), token.clone(), authorizer.clone()),
+        (
+            amount,
+            destination.clone(),
+            token.clone(),
+            authorizer.clone(),
+        ),
     );
 }

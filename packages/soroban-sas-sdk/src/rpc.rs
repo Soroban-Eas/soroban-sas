@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::errors::SdkError;
 use crate::limits::{rpc_response_limits, DEFAULT_MAX_RESPONSE_BYTES};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use soroban_sdk::xdr::{Limits, ReadXdr, TransactionEnvelope};
+use soroban_sdk::xdr::{ReadXdr, TransactionEnvelope};
 use ureq::{Agent, AgentBuilder};
 
 // ─── Rate-limit retry policy ─────────────────────────────────────────────────
@@ -106,7 +106,7 @@ impl RateLimitPolicy {
     /// number so the function is pure (no OS randomness required), while
     /// still spreading retries across the allowed window.
     pub fn backoff_for_attempt(&self, attempt: u32) -> Duration {
-        let factor = 1u64.saturating_shl(attempt);
+        let factor = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
         let cap_ms = (self.base_delay.as_millis() as u64)
             .saturating_mul(factor)
             .min(self.max_delay.as_millis() as u64);
@@ -381,17 +381,54 @@ impl RpcClient {
         self.parse_get_ledger_entries_response(&body, id)
     }
 
-    /// Fetches the RPC's view of the latest closed ledger via
-    /// `getLatestLedger`.
-    pub fn get_latest_ledger(&self) -> Result<GetLatestLedgerResult, SdkError> {
-        let request = JsonRpcRequest::new(
+    /// Builds the JSON-RPC request body for Soroban's `getLatestLedger`.
+    pub fn build_get_latest_ledger_request(&self) -> JsonRpcRequest<serde_json::Value> {
+        JsonRpcRequest::new(
             self.next_id.fetch_add(1, Ordering::Relaxed),
             "getLatestLedger",
             serde_json::Value::Null,
-        );
+        )
+    }
+
+    /// Parses a raw `getLatestLedger` JSON-RPC response body.
+    pub fn parse_get_latest_ledger_response(
+        &self,
+        body: &str,
+        expected_id: u32,
+    ) -> Result<GetLatestLedgerResult, SdkError> {
+        parse_response(body, expected_id)
+    }
+
+    /// Fetches the RPC's view of the latest closed ledger via
+    /// `getLatestLedger`.
+    pub fn get_latest_ledger(&self) -> Result<GetLatestLedgerResult, SdkError> {
+        let request = self.build_get_latest_ledger_request();
         let id = request.id;
         let body = self.post(&request)?;
-        parse_response(&body, id)
+        self.parse_get_latest_ledger_response(&body, id)
+    }
+
+    /// Builds the JSON-RPC request body for Soroban's `getLedgers`, starting
+    /// at `start_ledger` with a pagination limit of 1 — just enough to read
+    /// that one ledger's close time.
+    pub fn build_get_ledgers_request(&self, start_ledger: u32) -> JsonRpcRequest<GetLedgersParams> {
+        JsonRpcRequest::new(
+            self.next_id.fetch_add(1, Ordering::Relaxed),
+            "getLedgers",
+            GetLedgersParams {
+                start_ledger,
+                pagination: LedgersPagination { limit: 1 },
+            },
+        )
+    }
+
+    /// Parses a raw `getLedgers` JSON-RPC response body.
+    pub fn parse_get_ledgers_response(
+        &self,
+        body: &str,
+        expected_id: u32,
+    ) -> Result<GetLedgersResult, SdkError> {
+        parse_response(body, expected_id)
     }
 
     /// Returns the authoritative network wall-clock: the close time (unix
@@ -403,29 +440,28 @@ impl RpcClient {
     /// hanging the caller (#172).
     pub fn get_latest_ledger_clock(&self) -> Result<LedgerClock, SdkError> {
         let latest = self.get_latest_ledger()?;
-        let request = JsonRpcRequest::new(
-            self.next_id.fetch_add(1, Ordering::Relaxed),
-            "getLedgers",
-            GetLedgersParams {
-                start_ledger: latest.sequence,
-                pagination: LedgersPagination { limit: 1 },
-            },
-        );
+        let request = self.build_get_ledgers_request(latest.sequence);
         let id = request.id;
         let body = self.post(&request)?;
-        let result: GetLedgersResult = parse_response(&body, id)?;
+        let result = self.parse_get_ledgers_response(&body, id)?;
         let close_time_str = result
             .ledgers
             .first()
             .map(|l| l.ledger_close_time.clone())
             .unwrap_or(result.latest_ledger_close_time);
-        let close_time: u64 = close_time_str
-            .parse()
-            .map_err(|_| SdkError::RpcError(format!("invalid ledger close time: {close_time_str}")))?;
+        let close_time: u64 = close_time_str.parse().map_err(|_| {
+            SdkError::RpcError(format!("invalid ledger close time: {close_time_str}"))
+        })?;
         Ok(LedgerClock {
             sequence: latest.sequence,
             close_time,
         })
+    }
+
+    /// Convenience wrapper around [`RpcClient::get_latest_ledger_clock`] for
+    /// callers that only need the close time, not the sequence.
+    pub fn fetch_current_ledger_time(&self) -> Result<u64, SdkError> {
+        Ok(self.get_latest_ledger_clock()?.close_time)
     }
 
     /// POSTs a JSON-RPC request body to this client's `network_url` and
@@ -439,14 +475,14 @@ impl RpcClient {
         let mut attempt = 0;
         loop {
             let response = self.agent.post(&self.network_url).send_json(request);
-            
+
             match response {
                 Ok(resp) => return read_body_bounded(resp, self.max_response_bytes),
                 Err(ureq::Error::Status(429, resp)) => {
                     let retry_after_secs = resp
                         .header("Retry-After")
                         .and_then(|v| v.trim().parse::<u64>().ok());
-                    
+
                     // Check if we should retry
                     if let Some(policy) = &self.rate_limit_policy {
                         if policy.is_retryable(request.method) && attempt < policy.max_retries {
@@ -458,7 +494,7 @@ impl RpcClient {
                             continue;
                         }
                     }
-                    
+
                     // No policy, non-retryable method, or retries exhausted
                     return Err(SdkError::RateLimited { retry_after_secs });
                 }
@@ -534,11 +570,7 @@ fn parse_response<T: DeserializeOwned>(body: &str, expected_id: u32) -> Result<T
             }
             Ok(result)
         }
-        JsonRpcResponse::Error {
-            jsonrpc,
-            id,
-            error,
-        } => {
+        JsonRpcResponse::Error { jsonrpc, id, error } => {
             if jsonrpc != "2.0" {
                 return Err(SdkError::RpcError(format!(
                     "unsupported JSON-RPC version: expected \"2.0\", got \"{jsonrpc}\""
@@ -741,49 +773,6 @@ pub struct GetLedgerEntriesResult {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct GetLatestLedgerParams {}
 
-/// The `result` payload of a Soroban `getLatestLedger` response.
-/// See <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger>.
-/// Notably does *not* include a close time — fetch that ledger's header via
-/// [`RpcClient::get_ledgers`] for [`RpcClient::fetch_current_ledger_time`].
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct GetLatestLedgerResult {
-    pub id: String,
-    #[serde(rename = "protocolVersion")]
-    pub protocol_version: u32,
-    pub sequence: u32,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct LedgerPaginationParams {
-    pub limit: u32,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct GetLedgersParams {
-    #[serde(rename = "startLedger")]
-    pub start_ledger: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pagination: Option<LedgerPaginationParams>,
-}
-
-/// The `result` payload of a Soroban `getLedgers` response.
-/// See <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLedgers>.
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct GetLedgersResult {
-    #[serde(default)]
-    pub ledgers: Vec<LedgerInfoResult>,
-    #[serde(rename = "latestLedger")]
-    pub latest_ledger: u32,
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct LedgerInfoResult {
-    pub sequence: u32,
-    /// Unix timestamp (seconds), as a decimal string on the wire.
-    #[serde(rename = "ledgerCloseTime")]
-    pub ledger_close_time: String,
-}
-
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct LedgerEntryResult {
     pub key: String,
@@ -807,14 +796,14 @@ pub struct GetLatestLedgerResult {
     pub sequence: u32,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct GetLedgersParams {
     #[serde(rename = "startLedger")]
     pub start_ledger: u32,
     pub pagination: LedgersPagination,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LedgersPagination {
     pub limit: u32,
 }
@@ -1057,15 +1046,6 @@ mod tests {
             v0_envelope_xdr = serde_json::to_string(&v0_envelope_xdr()).unwrap()
         );
 
-        let err = client.parse_get_transaction_response(&body).unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                SdkError::DecodingError(msg)
-                    if msg.contains("unsupported transaction envelope variant: TxV0")
-            ),
-            "expected DecodingError mentioning TxV0, got {err:?}"
-        );
         let err = client.parse_get_transaction_response(&body, 1).unwrap_err();
         match err {
             SdkError::DecodingError(msg) => {
@@ -1091,15 +1071,6 @@ mod tests {
             fee_bump_envelope_xdr = serde_json::to_string(&fee_bump_envelope_xdr()).unwrap()
         );
 
-        let err = client.parse_get_transaction_response(&body).unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                SdkError::DecodingError(msg)
-                    if msg.contains("unsupported transaction envelope variant: TxFeeBump")
-            ),
-            "expected DecodingError mentioning TxFeeBump, got {err:?}"
-        );
         let err = client.parse_get_transaction_response(&body, 1).unwrap_err();
         match err {
             SdkError::DecodingError(msg) => {
@@ -1118,11 +1089,6 @@ mod tests {
             "error": { "code": -32602, "message": "Invalid params" }
         }"#;
 
-        let err = client.parse_send_transaction_response(body).unwrap_err();
-        assert!(
-            matches!(&err, SdkError::RpcError(msg) if msg.contains("Invalid params")),
-            "expected RpcError mentioning 'Invalid params', got {err:?}"
-        );
         let err = client.parse_send_transaction_response(body, 1).unwrap_err();
         match err {
             SdkError::RpcError(msg) => assert!(msg.contains("Invalid params")),
@@ -1596,7 +1562,7 @@ mod tests {
     #[test]
     fn parses_get_ledgers_response() {
         let client = RpcClient::new("https://soroban-testnet.stellar.org");
-        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"ledgers":[{"sequence":12345,"ledgerCloseTime":"1700000000"}],"latestLedger":12345}}"#;
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"ledgers":[{"sequence":12345,"ledgerCloseTime":"1700000000"}],"latestLedger":12345,"latestLedgerCloseTime":"1700000000"}}"#;
         let result = client.parse_get_ledgers_response(body, 1).unwrap();
         assert_eq!(result.ledgers.len(), 1);
         assert_eq!(result.ledgers[0].ledger_close_time, "1700000000");
@@ -1659,7 +1625,7 @@ mod tests {
             ),
             (
                 "getLedgers",
-                r#"{"jsonrpc":"2.0","id":2,"result":{"ledgers":[{"sequence":555,"ledgerCloseTime":"1700000042"}],"latestLedger":555}}"#
+                r#"{"jsonrpc":"2.0","id":2,"result":{"ledgers":[{"sequence":555,"ledgerCloseTime":"1700000042"}],"latestLedger":555,"latestLedgerCloseTime":"1700000042"}}"#
                     .to_string(),
             ),
         ]);

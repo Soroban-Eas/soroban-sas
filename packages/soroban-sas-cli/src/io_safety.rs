@@ -25,7 +25,7 @@ pub fn read_bounded(path: &str, max_bytes: u64) -> Result<String, String> {
         ));
     }
 
-    let mut file = fs::File::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let file = fs::File::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
     // Cap the read itself too, in case the file grows between the metadata
     // check and this read (TOCTOU) — take() ensures we never allocate past
     // the limit regardless.
@@ -45,7 +45,10 @@ pub fn read_bounded(path: &str, max_bytes: u64) -> Result<String, String> {
 /// overwritten.
 pub fn write_atomic_private(path: &str, contents: &str, force: bool) -> Result<(), String> {
     let dest = Path::new(path);
-    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = dest
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let file_name = dest
         .file_name()
         .ok_or_else(|| format!("cannot write {path}: invalid file name"))?

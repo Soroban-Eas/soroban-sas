@@ -2,7 +2,10 @@
 mod tests {
     use clap::Parser;
 
-    use crate::{decode_hex_or_base64, parse_uid, validate_schema_syntax, AttestCommands, Cli, Commands, OutputFormat};
+    use crate::{
+        decode_hex_or_base64, parse_uid, validate_schema_syntax, AttestCommands, Cli, Commands,
+        OutputFormat,
+    };
 
     #[test]
     fn test_cli_snapshot_formatting() {
@@ -31,11 +34,12 @@ mod tests {
         .unwrap();
 
         let Some(Commands::Attest {
-            action: AttestCommands::Attest {
-                allow_local_time,
-                max_ledger_skew,
-                ..
-            },
+            action:
+                AttestCommands::Attest {
+                    allow_local_time,
+                    max_ledger_skew,
+                    ..
+                },
         }) = cli.command
         else {
             panic!("expected attest attest command");
@@ -69,14 +73,9 @@ mod tests {
 
     #[test]
     fn network_and_identity_flags_parse() {
-        let cli = Cli::try_parse_from([
-            "soroban-sas",
-            "--network",
-            "testnet",
-            "--identity",
-            "alice",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["soroban-sas", "--network", "testnet", "--identity", "alice"])
+                .unwrap();
         assert_eq!(cli.network.as_deref(), Some("testnet"));
         assert_eq!(cli.identity.as_deref(), Some("alice"));
     }
@@ -105,8 +104,7 @@ mod tests {
     #[test]
     fn resolve_network_passphrase_follows_the_same_precedence() {
         assert_eq!(
-            crate::resolve_network_passphrase(Some("custom".to_string()), Some("testnet"))
-                .unwrap(),
+            crate::resolve_network_passphrase(Some("custom".to_string()), Some("testnet")).unwrap(),
             "custom"
         );
         assert_eq!(
@@ -118,8 +116,8 @@ mod tests {
 
     #[test]
     fn resolve_secret_key_prefers_an_explicit_flag_over_identity() {
-        let resolved = crate::resolve_secret_key(Some("explicit-secret".to_string()), Some("alice"))
-            .unwrap();
+        let resolved =
+            crate::resolve_secret_key(Some("explicit-secret".to_string()), Some("alice")).unwrap();
         assert_eq!(resolved, "explicit-secret");
     }
 
@@ -182,11 +180,9 @@ mod tests {
         .unwrap();
 
         let Some(Commands::Attest {
-            action:
-                AttestCommands::Verify {
-                    uid: parsed_uid,
-                    ..
-                },
+            action: AttestCommands::Verify {
+                uid: parsed_uid, ..
+            },
         }) = cli.command
         else {
             panic!("expected attest verify command");
@@ -297,7 +293,9 @@ mod tests {
 
         assert_eq!(cli.output, OutputFormat::Json);
         let Some(Commands::Schema {
-            action: crate::SchemaCommands::Get { uid: parsed_uid, .. },
+            action: crate::SchemaCommands::Get {
+                uid: parsed_uid, ..
+            },
         }) = cli.command
         else {
             panic!("expected schema get command");
@@ -634,8 +632,7 @@ mod online_verification_tests {
         let url = spawn_single_response_mock_server(not_found_response());
         let rpc = RpcClient::new(url);
 
-        let report =
-            perform_online_verification(&signed, NETWORK, &contract, None, &rpc).unwrap();
+        let report = perform_online_verification(&signed, NETWORK, &contract, None, &rpc).unwrap();
 
         assert_eq!(report.schema_status, "not_checked");
     }

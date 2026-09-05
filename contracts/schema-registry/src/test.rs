@@ -1,11 +1,9 @@
 use crate::{SchemaRegistry, SchemaRegistryClient};
-use soroban_sas_common::{SchemaRegisteredEvent, INSTANCE_EXTEND_TO_LEDGERS};
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
-use soroban_sdk::{symbol_short, Address, Env, IntoVal, String};
 use soroban_sas_common::{
-    ContractUpgradedEvent, SchemaFeeUpdatedEvent, SchemaRegisteredEvent, TreasuryUpdatedEvent,
+    ContractUpgradedEvent, PreviousAddress, SchemaFeeUpdatedEvent, SchemaRegisteredEvent,
+    TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
 };
-use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, IntoVal, String};
 
 #[test]
@@ -41,7 +39,10 @@ fn test_register_rejects_malformed_schema_strings() {
     for schema in ["!!!", " ", "12345"] {
         let schema = String::from_str(&env, schema);
         let res = client.try_register(&owner, &schema, &resolver, &true);
-        assert_eq!(res, Err(Ok(soroban_sas_common::SASError::InvalidSchema.into())));
+        assert_eq!(
+            res,
+            Err(Ok(soroban_sas_common::SASError::InvalidSchema.into()))
+        );
     }
 }
 
@@ -123,9 +124,9 @@ fn test_fee_and_treasury() {
 
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
 
-    env.mock_all_auths();
     client.set_fee(&1000);
     client.set_treasury(&treasury);
     client.withdraw_fees(&500);
@@ -138,8 +139,8 @@ fn test_set_fee_emits_event_with_old_and_new_value() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.init(&admin);
     env.mock_all_auths();
+    client.init(&admin);
 
     client.set_fee(&1000);
     let expected_first = SchemaFeeUpdatedEvent {
@@ -187,7 +188,9 @@ fn test_set_fee_requires_admin_auth() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
+    env.set_auths(&[]);
 
     let res = client.try_set_fee(&1000);
     assert!(res.is_err());
@@ -202,12 +205,12 @@ fn test_set_treasury_emits_event_with_old_and_new_value() {
     let admin = Address::generate(&env);
     let treasury_one = Address::generate(&env);
     let treasury_two = Address::generate(&env);
-    client.init(&admin);
     env.mock_all_auths();
+    client.init(&admin);
 
     client.set_treasury(&treasury_one);
     let expected_first = TreasuryUpdatedEvent {
-        old_treasury: None,
+        old_treasury: PreviousAddress::None,
         new_treasury: treasury_one.clone(),
         authorizer: admin.clone(),
     };
@@ -226,7 +229,7 @@ fn test_set_treasury_emits_event_with_old_and_new_value() {
 
     client.set_treasury(&treasury_two);
     let expected_second = TreasuryUpdatedEvent {
-        old_treasury: Some(treasury_one),
+        old_treasury: PreviousAddress::Some(treasury_one),
         new_treasury: treasury_two,
         authorizer: admin.clone(),
     };
@@ -252,7 +255,9 @@ fn test_set_treasury_requires_admin_auth() {
 
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
+    env.set_auths(&[]);
 
     let res = client.try_set_treasury(&treasury);
     assert!(res.is_err());
@@ -272,6 +277,7 @@ fn test_record_upgrade_event_reports_old_and_new_hash() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
 
     let first_hash = BytesN::from_array(&env, &[1u8; 32]);
@@ -328,10 +334,12 @@ fn test_upgrade_requires_admin_auth() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
+    env.set_auths(&[]);
 
     let new_hash = BytesN::from_array(&env, &[9u8; 32]);
-    let res = client.try_upgrade(&new_hash);
+    let res = client.try_upgrade(&new_hash, &2);
     assert!(res.is_err());
 }
 
@@ -430,6 +438,7 @@ fn test_init_twice_is_rejected() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
 
     let res = client.try_init(&admin);
@@ -452,6 +461,7 @@ fn test_instance_configuration_survives_long_after_init() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
 
     env.ledger().with_mut(|li| {
@@ -480,11 +490,11 @@ fn test_ordinary_traffic_renews_decayed_instance_ttl() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.init(&admin);
 
     let owner = Address::generate(&env);
     let resolver = Address::generate(&env);
-    env.mock_all_auths();
 
     env.ledger().with_mut(|li| {
         li.sequence_number += INSTANCE_EXTEND_TO_LEDGERS - 1000;
@@ -505,6 +515,8 @@ fn test_ordinary_traffic_renews_decayed_instance_ttl() {
         &resolver,
         &true,
     );
+}
+
 #[test]
 fn test_get_schemas_overflow_deterministic() {
     let env = Env::default();
@@ -653,7 +665,10 @@ fn test_uid_derivation_is_deterministic_and_includes_policy() {
     payload.append(&schema.clone().to_xdr(&env));
     payload.append(&resolver.clone().to_xdr(&env));
     payload.append(&Bytes::from_slice(&env, &[1u8]));
-    let expected = soroban_sas_common::UID(BytesN::from_array(&env, &env.crypto().sha256(&payload).to_array()));
+    let expected = soroban_sas_common::UID(BytesN::from_array(
+        &env,
+        &env.crypto().sha256(&payload).to_array(),
+    ));
     assert_eq!(uid, expected);
 
     // False case: revocable false yields different hash
@@ -661,7 +676,10 @@ fn test_uid_derivation_is_deterministic_and_includes_policy() {
     payload2.append(&schema.clone().to_xdr(&env));
     payload2.append(&resolver.clone().to_xdr(&env));
     payload2.append(&Bytes::from_slice(&env, &[0u8]));
-    let expected_false = soroban_sas_common::UID(BytesN::from_array(&env, &env.crypto().sha256(&payload2).to_array()));
+    let expected_false = soroban_sas_common::UID(BytesN::from_array(
+        &env,
+        &env.crypto().sha256(&payload2).to_array(),
+    ));
     assert_ne!(uid, expected_false);
 }
 
@@ -682,7 +700,10 @@ fn test_uid_golden_vectors() {
     payload_true.append(&schema.clone().to_xdr(&env));
     payload_true.append(&resolver.clone().to_xdr(&env));
     payload_true.append(&Bytes::from_slice(&env, &[1u8]));
-    let expected_true = soroban_sas_common::UID(BytesN::from_array(&env, &env.crypto().sha256(&payload_true).to_array()));
+    let expected_true = soroban_sas_common::UID(BytesN::from_array(
+        &env,
+        &env.crypto().sha256(&payload_true).to_array(),
+    ));
     assert_eq!(uid_true, expected_true);
 
     // Golden vector: same schema/resolver with revocable=false must be distinct
@@ -691,7 +712,10 @@ fn test_uid_golden_vectors() {
     payload_false.append(&schema.clone().to_xdr(&env));
     payload_false.append(&resolver.clone().to_xdr(&env));
     payload_false.append(&Bytes::from_slice(&env, &[0u8]));
-    let expected_false = soroban_sas_common::UID(BytesN::from_array(&env, &env.crypto().sha256(&payload_false).to_array()));
+    let expected_false = soroban_sas_common::UID(BytesN::from_array(
+        &env,
+        &env.crypto().sha256(&payload_false).to_array(),
+    ));
     assert_eq!(uid_false, expected_false);
     assert_ne!(uid_true, uid_false);
 
