@@ -124,10 +124,11 @@ fn test_fee_and_treasury() {
 
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
     env.mock_all_auths();
     client.init(&admin);
 
-    client.set_fee(&1000);
+    client.set_fee(&token, &1000);
     client.set_treasury(&treasury);
     client.withdraw_fees(&500);
 }
@@ -139,13 +140,17 @@ fn test_set_fee_emits_event_with_old_and_new_value() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let token_one = Address::generate(&env);
+    let token_two = Address::generate(&env);
     env.mock_all_auths();
     client.init(&admin);
 
-    client.set_fee(&1000);
+    client.set_fee(&token_one, &1000);
     let expected_first = SchemaFeeUpdatedEvent {
-        old_fee: None,
-        new_fee: 1000,
+        old_fee_token: PreviousAddress::None,
+        old_fee_amount: None,
+        new_fee_token: token_one.clone(),
+        new_fee_amount: 1000,
         authorizer: admin.clone(),
     };
     let events = env.events().all();
@@ -161,10 +166,12 @@ fn test_set_fee_emits_event_with_old_and_new_value() {
         ]
     );
 
-    client.set_fee(&2000);
+    client.set_fee(&token_two, &2000);
     let expected_second = SchemaFeeUpdatedEvent {
-        old_fee: Some(1000),
-        new_fee: 2000,
+        old_fee_token: PreviousAddress::Some(token_one),
+        old_fee_amount: Some(1000),
+        new_fee_token: token_two,
+        new_fee_amount: 2000,
         authorizer: admin.clone(),
     };
     let events = env.events().all();
@@ -188,11 +195,12 @@ fn test_set_fee_requires_admin_auth() {
     let client = SchemaRegistryClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let token = Address::generate(&env);
     env.mock_all_auths();
     client.init(&admin);
     env.set_auths(&[]);
 
-    let res = client.try_set_fee(&1000);
+    let res = client.try_set_fee(&token, &1000);
     assert!(res.is_err());
 }
 
@@ -261,6 +269,179 @@ fn test_set_treasury_requires_admin_auth() {
 
     let res = client.try_set_treasury(&treasury);
     assert!(res.is_err());
+}
+
+/// Shared fixture for `register_with_value` tests: an initialized registry
+/// with an admin, a fresh test token minted to `owner`, and no fee/treasury
+/// configured yet (callers set those as each test needs).
+fn fee_test_env() -> (
+    Env,
+    SchemaRegistryClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let owner = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(admin.clone());
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_id).mint(&owner, &1_000);
+
+    (env, client, admin, owner, token_id)
+}
+
+fn resolver_and_schema(env: &Env, schema: &str) -> (Address, String) {
+    (Address::generate(env), String::from_str(env, schema))
+}
+
+#[test]
+fn test_register_with_value_collects_the_fee_and_routes_to_treasury() {
+    let (env, client, admin, owner, token_id) = fee_test_env();
+    let treasury = Address::generate(&env);
+    let token = soroban_sdk::token::Client::new(&env, &token_id);
+
+    client.set_fee(&token_id, &500);
+    client.set_treasury(&treasury);
+
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_success");
+    let uid = client.register_with_value(&owner, &schema, &resolver, &true, &token_id, &500);
+
+    assert!(client.get_schema(&uid).is_some());
+    assert_eq!(token.balance(&owner), 500);
+    assert_eq!(token.balance(&treasury), 500);
+    let _ = admin;
+}
+
+#[test]
+fn test_register_with_value_zero_skips_transfer_when_fee_free() {
+    let (env, client, _admin, owner, token_id) = fee_test_env();
+    let token = soroban_sdk::token::Client::new(&env, &token_id);
+
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_free");
+    let uid = client.register_with_value(&owner, &schema, &resolver, &true, &token_id, &0);
+
+    assert!(client.get_schema(&uid).is_some());
+    assert_eq!(token.balance(&owner), 1_000);
+}
+
+#[test]
+fn test_register_with_value_rejects_unconfigured_payment() {
+    let (env, client, _admin, owner, token_id) = fee_test_env();
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_unconfigured");
+
+    // No fee configured -> a non-zero value is a fee that was never required.
+    let res = client.try_register_with_value(&owner, &schema, &resolver, &true, &token_id, &500);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::FeeMismatch.into()))
+    );
+}
+
+#[test]
+fn test_register_with_value_rejects_wrong_token_and_short_amount() {
+    let (env, client, admin, owner, fee_token) = fee_test_env();
+    let other_token = env.register_stellar_asset_contract(admin.clone());
+    soroban_sdk::token::StellarAssetClient::new(&env, &other_token).mint(&owner, &1_000);
+    client.set_fee(&fee_token, &500);
+    client.set_treasury(&Address::generate(&env));
+
+    let (resolver_one, schema_one) =
+        resolver_and_schema(&env, "bool register_with_value_wrong_token");
+    assert_eq!(
+        client.try_register_with_value(
+            &owner,
+            &schema_one,
+            &resolver_one,
+            &true,
+            &other_token,
+            &500
+        ),
+        Err(Ok(soroban_sas_common::SASError::FeeMismatch.into()))
+    );
+
+    let (resolver_two, schema_two) =
+        resolver_and_schema(&env, "bool register_with_value_short_amount");
+    assert_eq!(
+        client.try_register_with_value(&owner, &schema_two, &resolver_two, &true, &fee_token, &499),
+        Err(Ok(soroban_sas_common::SASError::FeeMismatch.into()))
+    );
+}
+
+#[test]
+fn test_register_with_value_requires_treasury_when_fee_configured() {
+    let (env, client, _admin, owner, token_id) = fee_test_env();
+    client.set_fee(&token_id, &500);
+    // Deliberately no set_treasury call.
+
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_no_treasury");
+    let res = client.try_register_with_value(&owner, &schema, &resolver, &true, &token_id, &500);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::TreasuryNotSet.into()))
+    );
+}
+
+#[test]
+fn test_register_with_value_rejects_negative_value() {
+    let (env, client, _admin, owner, token_id) = fee_test_env();
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_negative");
+
+    let res = client.try_register_with_value(&owner, &schema, &resolver, &true, &token_id, &-1);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::InvalidValue.into()))
+    );
+}
+
+#[test]
+fn test_register_with_value_insufficient_balance_registers_nothing() {
+    let (env, client, admin, _owner, token_id) = fee_test_env();
+    client.set_fee(&token_id, &500);
+    client.set_treasury(&Address::generate(&env));
+
+    // A payer distinct from the funded `owner` fixture, so the transfer has
+    // no balance to draw from.
+    let broke_owner = Address::generate(&env);
+    let _ = admin;
+
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_broke");
+    // The token transfer traps on insufficient balance; use try_* so that
+    // host trap surfaces as a deterministic Err instead of aborting the
+    // suite.
+    let res =
+        client.try_register_with_value(&broke_owner, &schema, &resolver, &true, &token_id, &500);
+    assert!(res.is_err(), "expected host error for insufficient balance");
+
+    // No schema was left behind by the failed payment: derive the UID the
+    // same way the contract does and confirm it was never stored.
+    let uid = {
+        use soroban_sdk::xdr::ToXdr;
+        let mut payload = soroban_sdk::Bytes::new(&env);
+        payload.append(&schema.clone().to_xdr(&env));
+        payload.append(&resolver.clone().to_xdr(&env));
+        payload.append(&soroban_sdk::Bytes::from_slice(&env, &[1u8]));
+        soroban_sas_common::UID(env.crypto().sha256(&payload))
+    };
+    assert!(client.get_schema(&uid).is_none());
+}
+
+#[test]
+fn test_clear_fee_makes_registration_free_again() {
+    let (env, client, _admin, owner, token_id) = fee_test_env();
+    client.set_fee(&token_id, &500);
+    client.set_treasury(&Address::generate(&env));
+    client.clear_fee();
+    assert_eq!(client.get_fee(), None);
+
+    let (resolver, schema) = resolver_and_schema(&env, "bool register_with_value_after_clear");
+    let uid = client.register_with_value(&owner, &schema, &resolver, &true, &token_id, &0);
+    assert!(client.get_schema(&uid).is_some());
 }
 
 /// Exercises `record_upgrade_event` (the event-payload half of `upgrade`,

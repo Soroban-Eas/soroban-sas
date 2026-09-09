@@ -6,13 +6,13 @@
 use soroban_sas_common::{events::CONTRACT_UPGRADED, ContractUpgradedEvent};
 use soroban_sas_common::{
     events::{SCHEMA_FEE_UPDATED, TREASURY_UPDATED},
-    validate_schema_syntax, SASError, SchemaFeeUpdatedEvent, SchemaRecord, TreasuryUpdatedEvent,
-    LEDGERS_IN_ONE_YEAR, UID,
+    validate_schema_syntax, PreviousAddress, SASError, SchemaFeeUpdatedEvent, SchemaRecord,
+    TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
 };
 #[cfg(test)]
 use soroban_sdk::BytesN;
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, xdr::ToXdr, Address, Bytes, Env, String,
+    contract, contractimpl, panic_with_error, token, xdr::ToXdr, Address, Bytes, Env, String,
 };
 
 #[contract]
@@ -165,27 +165,64 @@ impl SchemaRegistry {
         );
     }
 
-    /// Sets the fee charged for schema registration. Requires the registry
-    /// admin's authorization. Emits `SchemaFeeUpdated` with the previous
-    /// fee (`None` the first time a fee is set) after the new fee has
-    /// already been written to storage.
-    pub fn set_fee(env: Env, fee: i128) {
+    /// Pins the asset and exact amount `register_with_value` charges for
+    /// schema registration. Requires the registry admin's authorization.
+    /// `amount` must be positive; call `clear_fee` for fee-free
+    /// registration instead of encoding "no fee" as an arbitrary zero.
+    /// Emits `SchemaFeeUpdated` with the previous fee (`None` the first
+    /// time a fee is set) after the new fee has already been written to
+    /// storage.
+    pub fn set_fee(env: Env, token: Address, amount: i128) {
         extend_instance_ttl(&env);
         let admin = require_registry_admin(&env);
         admin.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
 
-        let old_fee: Option<i128> = env.storage().instance().get(&SCHEMA_FEE);
-        env.storage().instance().set(&SCHEMA_FEE, &fee);
+        let old_fee: Option<(Address, i128)> = env.storage().instance().get(&SCHEMA_FEE);
+        env.storage()
+            .instance()
+            .set(&SCHEMA_FEE, &(token.clone(), amount));
         extend_instance_ttl(&env);
 
+        let (old_fee_token, old_fee_amount) = match old_fee {
+            Some((t, a)) => (PreviousAddress::Some(t), Some(a)),
+            None => (PreviousAddress::None, None),
+        };
         env.events().publish(
             (SCHEMA_FEE_UPDATED, admin.clone()),
             SchemaFeeUpdatedEvent {
-                old_fee,
-                new_fee: fee,
+                old_fee_token,
+                old_fee_amount,
+                new_fee_token: token,
+                new_fee_amount: amount,
                 authorizer: admin,
             },
         );
+    }
+
+    /// Removes the registration fee requirement, so `register` (and
+    /// `register_with_value` called with `value == 0`) are free again.
+    /// Requires the registry admin's authorization.
+    pub fn clear_fee(env: Env) {
+        extend_instance_ttl(&env);
+        let admin = require_registry_admin(&env);
+        admin.require_auth();
+        env.storage().instance().remove(&SCHEMA_FEE);
+        extend_instance_ttl(&env);
+    }
+
+    /// Returns the `(token, amount)` fee `register_with_value` requires, or
+    /// `None` when registration is fee-free.
+    pub fn get_fee(env: Env) -> Option<(Address, i128)> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&SCHEMA_FEE)
+    }
+
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&TREASURY)
     }
 
     /// Sets the treasury address that receives registration fees. Requires
@@ -258,10 +295,78 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
     }
 
-    /// Registers a new schema in the registry.
+    /// Registers a new schema in the registry, free of charge.
     ///
     /// See `docs/schemas.md` for the schema syntax specification.
     pub fn register(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+    ) -> UID {
+        // The owner must authorize the registration so the emitted event
+        // carries a caller identity that off-chain indexers can trust.
+        owner.require_auth();
+        Self::register_internal(env, owner, schema, resolver, revocable)
+    }
+
+    /// Registers a new schema, paying the configured registration fee (#1).
+    ///
+    /// Mirrors `SAS::attest_with_value`'s payment discipline: the fee asset
+    /// and exact amount are pinned by `set_fee`, not supplied by the
+    /// caller. `token`/`value` here are the caller's declaration of what
+    /// they expect to pay — a mismatch against the live configuration
+    /// fails with `SASError::FeeMismatch` before anything is registered or
+    /// transferred, so a fee raised after the caller signed never silently
+    /// overcharges them. With no fee configured, only `value == 0` is
+    /// accepted. The transfer goes straight to the configured treasury
+    /// (`SASError::TreasuryNotSet` if none is set) and happens before the
+    /// schema is stored, so a failed payment aborts the whole invocation.
+    pub fn register_with_value(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        token: Address,
+        value: i128,
+    ) -> UID {
+        if value < 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let configured: Option<(Address, i128)> = env.storage().instance().get(&SCHEMA_FEE);
+        match &configured {
+            Some((fee_token, fee_amount)) => {
+                if &token != fee_token || value != *fee_amount {
+                    panic_with_error!(&env, SASError::FeeMismatch);
+                }
+            }
+            None => {
+                if value != 0 {
+                    panic_with_error!(&env, SASError::FeeMismatch);
+                }
+            }
+        }
+
+        // The owner must authorize both the registration and (when a fee
+        // applies) the token transfer below.
+        owner.require_auth();
+
+        if value > 0 {
+            let treasury: Address = env
+                .storage()
+                .instance()
+                .get(&TREASURY)
+                .unwrap_or_else(|| panic_with_error!(&env, SASError::TreasuryNotSet));
+            token::Client::new(&env, &token).transfer(&owner, &treasury, &value);
+        }
+
+        Self::register_internal(env, owner, schema, resolver, revocable)
+    }
+
+    fn register_internal(
         env: Env,
         owner: Address,
         schema: String,
@@ -272,10 +377,6 @@ impl SchemaRegistry {
         if let Err(err) = validate_schema_syntax(&env, &schema) {
             panic_with_error!(&env, err);
         }
-
-        // The owner must authorize the registration so the emitted event
-        // carries a caller identity that off-chain indexers can trust.
-        owner.require_auth();
 
         // Canonical schema identity includes the schema string, resolver
         // address, and revocability flag. Including all policy-defining fields

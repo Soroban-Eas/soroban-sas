@@ -151,13 +151,18 @@ pub struct IndexerUpdatedEvent {
 /// Payload of the `SchemaFeeUpdated` event.
 ///
 /// Published with topics `(SCHEMA_FEE_UPDATED, authorizer)` on a
-/// successful `SchemaRegistry::set_fee`. `old_fee` is `None` the first
-/// time a fee is set.
+/// successful `SchemaRegistry::set_fee`. `old_fee_token`/`old_fee_amount`
+/// are `PreviousAddress::None`/`None` the first time a fee is set. The
+/// token and amount are split into separate fields (rather than an
+/// `Option<(Address, i128)>` pair) because `Option<Address>` fails to
+/// compile under `testutils` — see [`PreviousAddress`].
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemaFeeUpdatedEvent {
-    pub old_fee: Option<i128>,
-    pub new_fee: i128,
+    pub old_fee_token: PreviousAddress,
+    pub old_fee_amount: Option<i128>,
+    pub new_fee_token: Address,
+    pub new_fee_amount: i128,
     pub authorizer: Address,
 }
 

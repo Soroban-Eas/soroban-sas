@@ -62,4 +62,7 @@ pub enum SASError {
     /// The attestation's `data` payload exceeds `MAX_ATTESTATION_DATA_BYTES`
     /// (#157).
     PayloadTooLarge = 414,
+    /// `register_with_value` was called while a registration fee is
+    /// configured but no treasury address has been set to receive it (#1).
+    TreasuryNotSet = 415,
 }

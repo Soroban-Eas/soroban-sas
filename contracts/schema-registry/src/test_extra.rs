@@ -41,8 +41,9 @@ fn test_pre_init_admin_endpoints_return_not_initialized() {
         client.try_upgrade(&hash, &2u32),
         Err(Ok(SASError::NotInitialized.into()))
     );
+    let token = Address::generate(&env);
     assert_eq!(
-        client.try_set_fee(&100),
+        client.try_set_fee(&token, &100),
         Err(Ok(SASError::NotInitialized.into()))
     );
     let treasury = Address::generate(&env);
@@ -69,12 +70,13 @@ fn test_no_partial_write_on_failure() {
     let client = SchemaRegistryClient::new(&env, &cid);
     env.mock_all_auths();
     // Try set_fee before init should fail and not write
-    let _ = client.try_set_fee(&100);
+    let token = Address::generate(&env);
+    let _ = client.try_set_fee(&token, &100);
     // Init should still succeed
     let admin = Address::generate(&env);
     client.init(&admin);
     // Now set_fee should succeed and be independent
-    client.set_fee(&123);
+    client.set_fee(&token, &123);
     // If previous partial write had stored 100, this would be 123 anyway, but we verify that init succeeded
     // Also test deprecate no tombstone for unknown
     let unknown = UID(BytesN::from_array(&env, &[77u8; 32]));
