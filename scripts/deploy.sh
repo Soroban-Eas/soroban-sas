@@ -64,7 +64,14 @@ info() { printf '\033[1;34m[deploy]\033[0m %s\n' "$*" >&2; }
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*" >&2; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; }
-die()  { err "$*"; exit 1; }
+die()  {
+    err "$*"
+    if [[ -n "${MANIFEST_FILE:-}" && -f "$MANIFEST_FILE" ]]; then
+        info "Deployment failed midway. Successfully deployed IDs are saved in $MANIFEST_FILE."
+        info "Resume recovery: $0 --resume"
+    fi
+    exit 1
+}
 
 usage() { sed -n '2,55p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
 
@@ -75,9 +82,11 @@ NETWORK="testnet"
 SECRET_KEY="${SOROBAN_SECRET_KEY:-${ADMIN_SECRET_KEY:-}}"
 RPC_URL_OVERRIDE=""
 ENV_FILE=".env"
+MANIFEST_FILE=".deploy-manifest.env"
 SKIP_BUILD=false
 JSON_OUTPUT=false
 EXPORT_SECRET=false
+RESUME=false
 
 TESTNET_RPC_URL="https://soroban-testnet.stellar.org:443"
 TESTNET_PASSPHRASE="Test SDF Network ; September 2015"
@@ -96,6 +105,7 @@ while [[ $# -gt 0 ]]; do
         --skip-build)     SKIP_BUILD=true; shift ;;
         --json)           JSON_OUTPUT=true; shift ;;
         --export-secret)  EXPORT_SECRET=true; shift ;;
+        --resume)         RESUME=true; shift ;;
         -h|--help)        usage; exit 0 ;;
         *)                die "unknown argument: $1 (see --help)" ;;
     esac
@@ -230,56 +240,137 @@ invoke() {
 }
 
 # ---------------------------------------------------------------------------
+# Manifest Helpers
+# ---------------------------------------------------------------------------
+load_manifest() {
+    if [[ -f "$MANIFEST_FILE" ]]; then
+        # shellcheck disable=SC1090
+        source "$MANIFEST_FILE"
+    fi
+}
+
+save_manifest() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" "$MANIFEST_FILE" 2>/dev/null; then
+        sed -i -e "s/^${key}=.*/${key}=${value}/" "$MANIFEST_FILE"
+    else
+        echo "${key}=${value}" >> "$MANIFEST_FILE"
+    fi
+}
+
+if [[ "$RESUME" == true ]]; then
+    step "Resuming from $MANIFEST_FILE"
+    if [[ ! -f "$MANIFEST_FILE" ]]; then
+        die "Resume requested but manifest file $MANIFEST_FILE not found."
+    fi
+    load_manifest
+    
+    if [[ "${MANIFEST_NETWORK:-}" != "$NETWORK" ]]; then
+        die "Manifest network '${MANIFEST_NETWORK:-}' does not match requested network '$NETWORK'"
+    fi
+    if [[ "${MANIFEST_ADMIN:-}" != "$ADMIN_ADDRESS" ]]; then
+        die "Manifest admin '${MANIFEST_ADMIN:-}' does not match requested admin '$ADMIN_ADDRESS'"
+    fi
+else
+    # Start fresh
+    rm -f "$MANIFEST_FILE"
+    save_manifest "MANIFEST_NETWORK" "$NETWORK"
+    save_manifest "MANIFEST_ADMIN" "$ADMIN_ADDRESS"
+fi
+
+# ---------------------------------------------------------------------------
 # 1/3 — schema-registry (no dependencies)
 # ---------------------------------------------------------------------------
-REGISTRY_ID="$(deploy_contract "$WASM_REGISTRY" "schema-registry")"
+REGISTRY_ID=""
+if [[ "$RESUME" == true ]] && [[ -n "${MANIFEST_REGISTRY_ID:-}" ]]; then
+    info "Skipping schema-registry deployment, already deployed at ${MANIFEST_REGISTRY_ID}"
+    REGISTRY_ID="${MANIFEST_REGISTRY_ID}"
+else
+    REGISTRY_ID="$(deploy_contract "$WASM_REGISTRY" "schema-registry")"
+    save_manifest "MANIFEST_REGISTRY_ID" "$REGISTRY_ID"
+fi
 
-step "Initializing SchemaRegistry::init(admin)"
-invoke "$REGISTRY_ID" init --admin "$ADMIN_ADDRESS" ||
-    die "SchemaRegistry::init failed"
-info "SchemaRegistry initialized"
+if [[ "$RESUME" == true ]] && [[ "${MANIFEST_REGISTRY_INIT:-}" == "true" ]]; then
+    info "Skipping schema-registry init"
+else
+    step "Initializing SchemaRegistry::init(admin)"
+    invoke "$REGISTRY_ID" init --admin "$ADMIN_ADDRESS" ||
+        die "SchemaRegistry::init failed"
+    save_manifest "MANIFEST_REGISTRY_INIT" "true"
+    info "SchemaRegistry initialized"
+fi
 
 # ---------------------------------------------------------------------------
 # 2/3 — sas (depends on registry)
 # ---------------------------------------------------------------------------
-SAS_ID="$(deploy_contract "$WASM_SAS" "sas")"
+SAS_ID=""
+if [[ "$RESUME" == true ]] && [[ -n "${MANIFEST_SAS_ID:-}" ]]; then
+    info "Skipping sas deployment, already deployed at ${MANIFEST_SAS_ID}"
+    SAS_ID="${MANIFEST_SAS_ID}"
+else
+    SAS_ID="$(deploy_contract "$WASM_SAS" "sas")"
+    save_manifest "MANIFEST_SAS_ID" "$SAS_ID"
+fi
 
-step "Calling SAS::init(admin, registry_address)"
-invoke "$SAS_ID" init --admin "$ADMIN_ADDRESS" --registry "$REGISTRY_ID" ||
-    die "SAS::init failed — sas deployed at $SAS_ID but is NOT initialized"
-info "SAS initialized with registry $REGISTRY_ID"
+if [[ "$RESUME" == true ]] && [[ "${MANIFEST_SAS_INIT:-}" == "true" ]]; then
+    info "Skipping sas init"
+else
+    step "Calling SAS::init(admin, registry_address)"
+    invoke "$SAS_ID" init --admin "$ADMIN_ADDRESS" --registry "$REGISTRY_ID" ||
+        die "SAS::init failed — sas deployed at $SAS_ID but is NOT initialized"
+    save_manifest "MANIFEST_SAS_INIT" "true"
+    info "SAS initialized with registry $REGISTRY_ID"
+fi
 
 # ---------------------------------------------------------------------------
 # 3/3 — indexer (depends on sas)
 # ---------------------------------------------------------------------------
-INDEXER_ID="$(deploy_contract "$WASM_INDEXER" "indexer")"
-
-step "Calling Indexer::init(admin, sas_address)"
-invoke "$INDEXER_ID" init --admin "$ADMIN_ADDRESS" --sas "$SAS_ID" ||
-    die "Indexer::init failed — indexer deployed at $INDEXER_ID but is NOT initialized"
-info "Indexer initialized with sas $SAS_ID"
-
-step "Binding SAS to the deployed indexer"
-invoke "$SAS_ID" set_indexer --indexer "$INDEXER_ID" ||
-    die "SAS::set_indexer failed — indexer was initialized but SAS was not bound"
-
-step "Verifying the SAS <-> Indexer binding"
-# Newer stellar-cli versions (28+) print an Address return value as a
-# JSON-quoted string (`"C..."`) instead of bare (`C...`); strip a matching
-# pair of surrounding quotes so the comparison below works against either
-# CLI generation. A no-op when there are no quotes to strip.
-strip_quotes() {
-    local v="$1"
-    v="${v%\"}"
-    v="${v#\"}"
-    printf '%s' "$v"
-}
-SAS_BOUND="$(strip_quotes "$(invoke "$SAS_ID" get_indexer)")"
-INDEXER_BOUND="$(strip_quotes "$(invoke "$INDEXER_ID" get_sas)")"
-if [[ "$SAS_BOUND" != "$INDEXER_ID" || "$INDEXER_BOUND" != "$SAS_ID" ]]; then
-    die "binding verification failed: SAS.get_indexer=$SAS_BOUND, Indexer.get_sas=$INDEXER_BOUND. Re-run with the same admin key, then call 'stellar contract invoke --id $SAS_ID -- set_indexer --indexer $INDEXER_ID' and verify with 'stellar contract invoke --id $INDEXER_ID -- get_sas'"
+INDEXER_ID=""
+if [[ "$RESUME" == true ]] && [[ -n "${MANIFEST_INDEXER_ID:-}" ]]; then
+    info "Skipping indexer deployment, already deployed at ${MANIFEST_INDEXER_ID}"
+    INDEXER_ID="${MANIFEST_INDEXER_ID}"
+else
+    INDEXER_ID="$(deploy_contract "$WASM_INDEXER" "indexer")"
+    save_manifest "MANIFEST_INDEXER_ID" "$INDEXER_ID"
 fi
-info "SAS and Indexer are bidirectionally bound"
+
+if [[ "$RESUME" == true ]] && [[ "${MANIFEST_INDEXER_INIT:-}" == "true" ]]; then
+    info "Skipping indexer init"
+else
+    step "Calling Indexer::init(admin, sas_address)"
+    invoke "$INDEXER_ID" init --admin "$ADMIN_ADDRESS" --sas "$SAS_ID" ||
+        die "Indexer::init failed — indexer deployed at $INDEXER_ID but is NOT initialized"
+    save_manifest "MANIFEST_INDEXER_INIT" "true"
+    info "Indexer initialized with sas $SAS_ID"
+fi
+
+if [[ "$RESUME" == true ]] && [[ "${MANIFEST_SAS_BOUND:-}" == "true" ]]; then
+    info "Skipping binding, already bidirectionally bound"
+else
+    step "Binding SAS to the deployed indexer"
+    invoke "$SAS_ID" set_indexer --indexer "$INDEXER_ID" ||
+        die "SAS::set_indexer failed — indexer was initialized but SAS was not bound"
+    save_manifest "MANIFEST_SAS_BOUND" "true"
+
+    step "Verifying the SAS <-> Indexer binding"
+    # Newer stellar-cli versions (28+) print an Address return value as a
+    # JSON-quoted string (`"C..."`) instead of bare (`C...`); strip a matching
+    # pair of surrounding quotes so the comparison below works against either
+    # CLI generation. A no-op when there are no quotes to strip.
+    strip_quotes() {
+        local v="$1"
+        v="${v%\"}"
+        v="${v#\"}"
+        printf '%s' "$v"
+    }
+    SAS_BOUND="$(strip_quotes "$(invoke "$SAS_ID" get_indexer)")"
+    INDEXER_BOUND="$(strip_quotes "$(invoke "$INDEXER_ID" get_sas)")"
+    if [[ "$SAS_BOUND" != "$INDEXER_ID" || "$INDEXER_BOUND" != "$SAS_ID" ]]; then
+        die "binding verification failed: SAS.get_indexer=$SAS_BOUND, Indexer.get_sas=$INDEXER_BOUND. Re-run with the same admin key, then call 'stellar contract invoke --id $SAS_ID -- set_indexer --indexer $INDEXER_ID' and verify with 'stellar contract invoke --id $INDEXER_ID -- get_sas'"
+    fi
+    info "SAS and Indexer are bidirectionally bound"
+fi
 
 # ---------------------------------------------------------------------------
 # Write .env — merge into any existing file without clobbering unrelated
@@ -289,6 +380,8 @@ info "SAS and Indexer are bidirectionally bound"
 # flushed to disk in one atomic rename, so a reader (or a crash mid-write)
 # never observes a partially-updated file.
 # ---------------------------------------------------------------------------
+rm -f "$MANIFEST_FILE"
+
 step "Writing deployment results to $ENV_FILE"
 
 MANAGED_KEYS=(
