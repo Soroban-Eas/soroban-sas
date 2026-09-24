@@ -221,14 +221,31 @@ impl Indexer {
             panic_with_error!(&env, SASError::AlreadyInitialized);
         }
         admin.require_auth();
-        let compatible: bool = env
-            .try_invoke_contract::<bool, soroban_sdk::Error>(
-                &sas,
-                &SAS_INTERFACE_VERSION,
-                soroban_sdk::vec![&env],
-            )
-            .unwrap_or(Ok(false))
-            .unwrap_or(false);
+        // Compatibility probe: try both upper and lower spellings, mirroring
+        // SAS::init's own probe of the schema registry (see its doc comment)
+        // — the real `sas` contract exposes `sasv1`, while existing mocks in
+        // this crate's tests expose `SASV1`.
+        let compatible: bool = {
+            let upper: bool = env
+                .try_invoke_contract::<bool, soroban_sdk::Error>(
+                    &sas,
+                    &SAS_INTERFACE_VERSION,
+                    soroban_sdk::vec![&env],
+                )
+                .unwrap_or(Ok(false))
+                .unwrap_or(false);
+            if upper {
+                true
+            } else {
+                env.try_invoke_contract::<bool, soroban_sdk::Error>(
+                    &sas,
+                    &Symbol::new(&env, "sasv1"),
+                    soroban_sdk::vec![&env],
+                )
+                .unwrap_or(Ok(false))
+                .unwrap_or(false)
+            }
+        };
         if !compatible {
             panic_with_error!(&env, SASError::IncompatibleDependency);
         }

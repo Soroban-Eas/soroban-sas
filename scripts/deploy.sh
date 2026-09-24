@@ -89,19 +89,12 @@ MAINNET_PASSPHRASE="Public Global Stellar Network ; September 2015"
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --network)    NETWORK="${2:?--network requires a value}"; shift 2 ;;
-        --secret-key) SECRET_KEY="${2:?--secret-key requires a value}"; shift 2 ;;
-        --rpc-url)    RPC_URL_OVERRIDE="${2:?--rpc-url requires a value}"; shift 2 ;;
-        --env-file)   ENV_FILE="${2:?--env-file requires a value}"; shift 2 ;;
-        --skip-build) SKIP_BUILD=true; shift ;;
-        --json)       JSON_OUTPUT=true; shift ;;
-        -h|--help)    usage; exit 0 ;;
-        *)            die "unknown argument: $1 (see --help)" ;;
         --network)        NETWORK="${2:?--network requires a value}"; shift 2 ;;
         --secret-key)     SECRET_KEY="${2:?--secret-key requires a value}"; shift 2 ;;
         --rpc-url)        RPC_URL_OVERRIDE="${2:?--rpc-url requires a value}"; shift 2 ;;
         --env-file)       ENV_FILE="${2:?--env-file requires a value}"; shift 2 ;;
         --skip-build)     SKIP_BUILD=true; shift ;;
+        --json)           JSON_OUTPUT=true; shift ;;
         --export-secret)  EXPORT_SECRET=true; shift ;;
         -h|--help)        usage; exit 0 ;;
         *)                die "unknown argument: $1 (see --help)" ;;
@@ -271,8 +264,18 @@ invoke "$SAS_ID" set_indexer --indexer "$INDEXER_ID" ||
     die "SAS::set_indexer failed — indexer was initialized but SAS was not bound"
 
 step "Verifying the SAS <-> Indexer binding"
-SAS_BOUND="$(invoke "$SAS_ID" get_indexer)"
-INDEXER_BOUND="$(invoke "$INDEXER_ID" get_sas)"
+# Newer stellar-cli versions (28+) print an Address return value as a
+# JSON-quoted string (`"C..."`) instead of bare (`C...`); strip a matching
+# pair of surrounding quotes so the comparison below works against either
+# CLI generation. A no-op when there are no quotes to strip.
+strip_quotes() {
+    local v="$1"
+    v="${v%\"}"
+    v="${v#\"}"
+    printf '%s' "$v"
+}
+SAS_BOUND="$(strip_quotes "$(invoke "$SAS_ID" get_indexer)")"
+INDEXER_BOUND="$(strip_quotes "$(invoke "$INDEXER_ID" get_sas)")"
 if [[ "$SAS_BOUND" != "$INDEXER_ID" || "$INDEXER_BOUND" != "$SAS_ID" ]]; then
     die "binding verification failed: SAS.get_indexer=$SAS_BOUND, Indexer.get_sas=$INDEXER_BOUND. Re-run with the same admin key, then call 'stellar contract invoke --id $SAS_ID -- set_indexer --indexer $INDEXER_ID' and verify with 'stellar contract invoke --id $INDEXER_ID -- get_sas'"
 fi

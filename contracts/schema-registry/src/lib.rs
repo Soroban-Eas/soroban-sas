@@ -11,9 +11,7 @@ use soroban_sas_common::{
 };
 #[cfg(test)]
 use soroban_sdk::BytesN;
-use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token, xdr::ToXdr, Address, Bytes, Env, String,
-};
+use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, String};
 
 #[contract]
 pub struct SchemaRegistry;
@@ -383,13 +381,7 @@ impl SchemaRegistry {
         // in the UID preimage ensures two registrations with identical field
         // definitions but different resolver or revocability policies do not
         // collide. See specs/protocol-v1.md#schema-identity.
-        let mut payload = Bytes::new(&env);
-        payload.append(&schema.clone().to_xdr(&env));
-        payload.append(&resolver.clone().to_xdr(&env));
-        payload.append(&Bytes::from_slice(&env, &[revocable as u8]));
-
-        let hash = env.crypto().sha256(&payload);
-        let uid = UID(hash);
+        let uid = soroban_sas_common::schema_uid(&env, &schema, &resolver, revocable);
 
         if env.storage().persistent().has(&uid) {
             panic_with_error!(&env, SASError::SchemaAlreadyExists);

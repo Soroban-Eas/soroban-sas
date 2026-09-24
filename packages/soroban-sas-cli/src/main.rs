@@ -441,6 +441,145 @@ enum SchemaCommands {
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
     },
+    /// Register a new schema, paying the configured registration fee.
+    /// `token`/`value` must match what the registry admin configured via
+    /// `set-fee`, or the call fails before anything is registered.
+    RegisterWithValue {
+        #[arg(long, help = "Schema definition string")]
+        schema: String,
+        #[arg(
+            long,
+            help = "Resolver contract address (C...) invoked on attest/revoke"
+        )]
+        resolver: String,
+        #[arg(long, help = "Whether attestations against this schema can be revoked")]
+        revocable: bool,
+        #[arg(long, help = "Fee asset: token contract address (C...)")]
+        token: String,
+        #[arg(long, help = "Fee amount, in the token's smallest unit")]
+        value: i128,
+        #[arg(
+            long,
+            help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Admin: pin the asset and exact amount `register-with-value` charges.
+    SetFee {
+        #[arg(long, help = "Fee asset: token contract address (C...)")]
+        token: String,
+        #[arg(long, help = "Fee amount, in the token's smallest unit")]
+        amount: i128,
+        #[arg(
+            long,
+            help = "Registry admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Admin: remove the registration fee requirement.
+    ClearFee {
+        #[arg(
+            long,
+            help = "Registry admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Admin: pin the address that receives registration fees.
+    SetTreasury {
+        #[arg(long, help = "Treasury address (G... account or C... contract)")]
+        treasury: String,
+        #[arg(
+            long,
+            help = "Registry admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Read the currently configured registration fee, if any.
+    GetFee {
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Read the currently configured treasury address, if any.
+    GetTreasury {
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -793,10 +932,16 @@ fn run_attest(
                     serde_json::to_string_pretty(&serde_json::json!({
                         "status": "ok",
                         "uid": uid_hex,
+                        "hash": result.hash,
                     }))
                     .map_err(|e| format!("serialization failed: {e}"))?
                 ),
-                OutputFormat::Human => println!("Attestation issued: {uid_hex}"),
+                OutputFormat::Human => {
+                    println!("Attestation issued: {uid_hex}");
+                    if let Some(hash) = &result.hash {
+                        println!("Transaction hash:   {hash}");
+                    }
+                }
             }
             Ok(())
         }
@@ -1013,6 +1158,62 @@ fn decode_hex_or_base64(value: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("data must be hex or base64 encoded: {e}"))
 }
 
+/// Derives a schema's UID client-side, the same way the contract does,
+/// so `register`/`register-with-value` can print it up front — before the
+/// transaction even confirms — for use in a following `attest` call.
+fn compute_schema_uid_hex(
+    env: &soroban_sdk::Env,
+    schema: &str,
+    resolver: &str,
+    revocable: bool,
+) -> Result<String, String> {
+    let resolver_addr = soroban_sas_sdk::strkey::parse_address(
+        env,
+        resolver,
+        soroban_sas_sdk::strkey::AddressKind::Contract,
+        "resolver",
+    )
+    .map_err(|e| e.to_string())?;
+    let schema_val = soroban_sdk::String::from_str(env, schema);
+    let uid = soroban_sas_common::schema_uid(env, &schema_val, &resolver_addr, revocable);
+    Ok(hex::encode(uid.0.to_array()))
+}
+
+/// Like [`print_transaction_result`] but for a schema registration: prints
+/// the schema's UID (computed locally, matching the contract) alongside
+/// the transaction outcome, mirroring how `attest attest` surfaces its
+/// generated attestation UID.
+fn print_schema_registration_result(
+    result: soroban_sas_sdk::rpc::GetTransactionResult,
+    uid_hex: &str,
+    output: OutputFormat,
+) -> Result<(), String> {
+    if result.status != "SUCCESS" {
+        return Err(format!(
+            "schema registration failed with status {}",
+            result.status
+        ));
+    }
+    match output {
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "schema_uid": uid_hex,
+                "hash": result.hash,
+            }))
+            .map_err(|e| format!("serialization failed: {e}"))?
+        ),
+        OutputFormat::Human => {
+            println!("Schema registered: {uid_hex}");
+            if let Some(hash) = &result.hash {
+                println!("Transaction hash:  {hash}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn print_transaction_result(
     result: soroban_sas_sdk::rpc::GetTransactionResult,
     output: OutputFormat,
@@ -1022,6 +1223,7 @@ fn print_transaction_result(
     // standard `{status, data}` envelope.
     let data = serde_json::json!({
         "status": result.status,
+        "hash": result.hash,
         "envelopeXdr": result.envelope_xdr,
         "resultXdr": result.result_xdr,
     });
@@ -1239,6 +1441,7 @@ fn run_schema(
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
             let result = client
                 .register_schema(
                     &env,
@@ -1251,7 +1454,7 @@ fn run_schema(
                     revocable,
                 )
                 .map_err(|e| e.to_string())?;
-            print_transaction_result(result, output)
+            print_schema_registration_result(result, &uid_hex, output)
         }
         SchemaCommands::Get {
             uid,
@@ -1292,6 +1495,181 @@ fn run_schema(
                             "revocable": revocable,
                             "schema": schema_str.clone(),
                         }),
+                    )
+                }
+            }
+        }
+        SchemaCommands::RegisterWithValue {
+            schema,
+            resolver,
+            revocable,
+            token,
+            value,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            validate_schema_syntax(&schema)?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
+            let result = client
+                .register_schema_with_value(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    &schema,
+                    &resolver,
+                    revocable,
+                    &token,
+                    value,
+                )
+                .map_err(|e| e.to_string())?;
+            print_schema_registration_result(result, &uid_hex, output)
+        }
+        SchemaCommands::SetFee {
+            token,
+            amount,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let result = client
+                .set_schema_fee(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    &token,
+                    amount,
+                )
+                .map_err(|e| e.to_string())?;
+            print_transaction_result(result, output)
+        }
+        SchemaCommands::ClearFee {
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let result = client
+                .clear_schema_fee(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                )
+                .map_err(|e| e.to_string())?;
+            print_transaction_result(result, output)
+        }
+        SchemaCommands::SetTreasury {
+            treasury,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let result = client
+                .set_schema_treasury(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    &treasury,
+                )
+                .map_err(|e| e.to_string())?;
+            print_transaction_result(result, output)
+        }
+        SchemaCommands::GetFee {
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let fee = client
+                .get_schema_fee(&env, &rpc, &registry_contract_id)
+                .map_err(|e| e.to_string())?;
+
+            match fee {
+                None => emit_ok(
+                    output,
+                    || println!("No fee configured — registration is free."),
+                    serde_json::json!({ "configured": false }),
+                ),
+                Some((token, amount)) => {
+                    let token_str = soroban_string_to_std(&token.to_string());
+                    emit_ok(
+                        output,
+                        || {
+                            println!("token:  {token_str}");
+                            println!("amount: {amount}");
+                        },
+                        serde_json::json!({
+                            "configured": true,
+                            "token": token_str,
+                            "amount": amount.to_string(),
+                        }),
+                    )
+                }
+            }
+        }
+        SchemaCommands::GetTreasury {
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let treasury = client
+                .get_schema_treasury(&env, &rpc, &registry_contract_id)
+                .map_err(|e| e.to_string())?;
+
+            match treasury {
+                None => emit_ok(
+                    output,
+                    || println!("No treasury configured."),
+                    serde_json::json!({ "configured": false }),
+                ),
+                Some(addr) => {
+                    let addr_str = soroban_string_to_std(&addr.to_string());
+                    emit_ok(
+                        output,
+                        || println!("treasury: {addr_str}"),
+                        serde_json::json!({ "configured": true, "treasury": addr_str }),
                     )
                 }
             }

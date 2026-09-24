@@ -65,6 +65,25 @@ pub const MAX_ATTESTATION_DATA_BYTES: u32 = 10_000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UID(pub soroban_sdk::BytesN<32>);
 
+/// Derives a schema's UID the same way `SchemaRegistry::register` does:
+/// `sha256(schema || resolver || [revocable as u8])`, each field XDR-encoded.
+/// Schema identity is content-addressed on the schema string, resolver, and
+/// revocability flag together, so two registrations that differ only in
+/// resolver or revocability policy never collide (see
+/// `specs/protocol-v1.md#schema-identity`).
+///
+/// Exposed here (rather than kept private to the contract) so off-chain
+/// callers — the SDK, the CLI, indexers — can compute a schema's UID from
+/// the same inputs they registered it with, without an extra round trip.
+pub fn schema_uid(env: &Env, schema: &String, resolver: &Address, revocable: bool) -> UID {
+    use soroban_sdk::xdr::ToXdr;
+    let mut payload = Bytes::new(env);
+    payload.append(&schema.clone().to_xdr(env));
+    payload.append(&resolver.clone().to_xdr(env));
+    payload.append(&Bytes::from_slice(env, &[revocable as u8]));
+    UID(env.crypto().sha256(&payload))
+}
+
 /// A delegated-verification key registered for an attester via
 /// `SAS::register_attester_key`/`rotate_attester_key`/`revoke_attester_key`.
 ///

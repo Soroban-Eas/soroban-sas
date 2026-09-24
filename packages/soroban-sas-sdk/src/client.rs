@@ -403,6 +403,152 @@ impl SASClient {
         )
     }
 
+    /// Calls `SchemaRegistry::register_with_value(owner, schema, resolver,
+    /// revocable, token, value)` on `registry_contract_id` — like
+    /// [`register_schema`](Self::register_schema) but pays the registration
+    /// fee. `token`/`value` must match the fee the registry admin
+    /// configured via [`set_schema_fee`](Self::set_schema_fee); a mismatch
+    /// fails with `SdkError::ContractError` before anything is registered
+    /// or transferred (see the contract's `FeeMismatch`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_schema_with_value(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema: &str,
+        resolver: &str,
+        revocable: bool,
+        token: &str,
+        value: i128,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
+        let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
+        let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
+        let token = parse_address(env, token, AddressKind::Contract, "token")?;
+        let schema = SorobanString::from_str(env, schema);
+
+        let args = vec![
+            simulate::encode_arg(env, &owner)?,
+            simulate::encode_arg(env, &schema)?,
+            simulate::encode_arg(env, &resolver)?,
+            simulate::encode_arg(env, &revocable)?,
+            simulate::encode_arg(env, &token)?,
+            simulate::encode_arg(env, &value)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            registry_contract_id,
+            "register_with_value",
+            args,
+        )
+    }
+
+    /// Calls `SchemaRegistry::set_fee(token, amount)`, pinning the asset and
+    /// exact amount `register_schema_with_value` charges. Requires
+    /// `admin_secret_seed`'s account to be the registry's admin.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_schema_fee(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        token: &str,
+        amount: i128,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let token = parse_address(env, token, AddressKind::Contract, "token")?;
+        let args = vec![
+            simulate::encode_arg(env, &token)?,
+            simulate::encode_arg(env, &amount)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            admin_secret_seed,
+            registry_contract_id,
+            "set_fee",
+            args,
+        )
+    }
+
+    /// Calls `SchemaRegistry::clear_fee()`, removing the registration fee
+    /// requirement so `register`/`register_with_value(value: 0)` are free
+    /// again. Requires `admin_secret_seed`'s account to be the registry's
+    /// admin.
+    pub fn clear_schema_fee(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            admin_secret_seed,
+            registry_contract_id,
+            "clear_fee",
+            vec![],
+        )
+    }
+
+    /// Calls `SchemaRegistry::set_treasury(treasury)`, pinning the address
+    /// that receives registration fees. Requires `admin_secret_seed`'s
+    /// account to be the registry's admin.
+    pub fn set_schema_treasury(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        treasury: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let treasury = parse_address(env, treasury, AddressKind::Either, "treasury")?;
+        let args = vec![simulate::encode_arg(env, &treasury)?];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            admin_secret_seed,
+            registry_contract_id,
+            "set_treasury",
+            args,
+        )
+    }
+
+    /// Reads the `(token, amount)` fee `register_schema_with_value`
+    /// requires, or `None` when registration is fee-free.
+    pub fn get_schema_fee(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+    ) -> Result<Option<(Address, i128)>, SdkError> {
+        invoke_read_only(env, rpc, registry_contract_id, "get_fee", vec![])
+    }
+
+    /// Reads the registry's configured treasury address, or `None` if unset.
+    pub fn get_schema_treasury(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+    ) -> Result<Option<Address>, SdkError> {
+        invoke_read_only(env, rpc, registry_contract_id, "get_treasury", vec![])
+    }
+
     /// Calls `SAS::attest(attestation)`: builds the invoke transaction,
     /// signs it with the ed25519 key derived from `secret_seed`, and
     /// submits it — then polls until it settles.

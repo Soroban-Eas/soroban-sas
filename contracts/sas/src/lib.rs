@@ -1,5 +1,5 @@
 #![allow(unexpected_cfgs)]
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 #[cfg(test)]
 extern crate alloc;
@@ -75,6 +75,13 @@ fn require_registry(env: &Env) -> Address {
 
 #[contractimpl]
 impl SAS {
+    /// Compatibility probe used by `Indexer::init` before binding to this
+    /// contract as its SAS address — confirms the address is a real SAS v1
+    /// contract rather than merely a contract address.
+    pub fn sasv1(_env: Env) -> bool {
+        true
+    }
+
     pub fn init(env: Env, admin: Address, registry: Address) {
         extend_instance_ttl(&env);
         if env.storage().instance().has(&SAS_ADMIN) {
@@ -993,6 +1000,8 @@ impl SAS {
     }
 }
 
+#[cfg(test)]
+mod demo;
 #[cfg(test)]
 mod test;
 #[cfg(test)]

@@ -1,5 +1,6 @@
 dist
 /target
+/issues
 cargo_err.log
 .DS_Store
 .env
