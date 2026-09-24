@@ -27,6 +27,10 @@ pub const SCHEMA_FEE_UPDATED: Symbol = symbol_short!("FEEUPD");
 pub const TREASURY_UPDATED: Symbol = symbol_short!("TRSUPD");
 /// First topic of every `ContractUpgraded` event.
 pub const CONTRACT_UPGRADED: Symbol = symbol_short!("UPGRADED");
+/// First topic of every `SchemaDelegateAdded` event.
+pub const SCHEMA_DELEGATE_ADDED: Symbol = symbol_short!("DELADD");
+/// First topic of every `SchemaDelegateRemoved` event.
+pub const SCHEMA_DELEGATE_REMOVED: Symbol = symbol_short!("DELREM");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -191,5 +195,27 @@ pub struct TreasuryUpdatedEvent {
 pub struct ContractUpgradedEvent {
     pub old_wasm_hash: BytesN<32>,
     pub new_wasm_hash: BytesN<32>,
+    pub authorizer: Address,
+}
+
+/// Payload of the `SchemaDelegateAdded` event.
+///
+/// Published with topics `(SCHEMA_DELEGATE_ADDED, schema_uid)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaDelegateAddedEvent {
+    pub schema_uid: UID,
+    pub delegate: Address,
+    pub authorizer: Address,
+}
+
+/// Payload of the `SchemaDelegateRemoved` event.
+///
+/// Published with topics `(SCHEMA_DELEGATE_REMOVED, schema_uid)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaDelegateRemovedEvent {
+    pub schema_uid: UID,
+    pub delegate: Address,
     pub authorizer: Address,
 }

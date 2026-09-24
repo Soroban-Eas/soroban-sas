@@ -712,6 +712,66 @@
           "v0": {
             "topics": [
               {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "is_authorized"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "vec": [
+                    {
+                      "bytes": "0909090909090909090909090909090909090909090909090909090909090909"
+                    }
+                  ]
+                },
+                {
+                  "address": "GBYN7HRCPGW35RWRFPZJEEMEZERC5MSO3BJAAW7WIAJZ6UXFTTM257XB"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "is_authorized"
+              }
+            ],
+            "data": {
+              "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
                 "symbol": "error"
               },
               {

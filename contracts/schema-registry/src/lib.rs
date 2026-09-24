@@ -5,9 +5,12 @@
 #[cfg(test)]
 use soroban_sas_common::{events::CONTRACT_UPGRADED, ContractUpgradedEvent};
 use soroban_sas_common::{
-    events::{SCHEMA_FEE_UPDATED, TREASURY_UPDATED},
-    validate_schema_syntax, PreviousAddress, SASError, SchemaFeeUpdatedEvent, SchemaRecord,
-    TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
+    events::{
+        SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_FEE_UPDATED, TREASURY_UPDATED,
+    },
+    validate_schema_syntax, PreviousAddress, SASError, SchemaDelegateAddedEvent,
+    SchemaDelegateRemovedEvent, SchemaFeeUpdatedEvent, SchemaRecord, TreasuryUpdatedEvent,
+    LEDGERS_IN_ONE_YEAR, UID,
 };
 #[cfg(test)]
 use soroban_sdk::BytesN;
@@ -293,6 +296,77 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
     }
 
+    /// Authorizes `delegate` to issue and revoke attestations under schema `uid`.
+    ///
+    /// Requires authorization from the primary schema owner (creator).
+    /// Emits `SchemaDelegateAdded`.
+    pub fn add_delegate(env: Env, uid: UID, delegate: Address) {
+        extend_instance_ttl(&env);
+        if !env.storage().persistent().has(&uid) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+
+        let creator_key = (SCHEMA_CREATOR, uid.clone());
+        let creator: Option<Address> = env.storage().persistent().get(&creator_key);
+        let Some(owner) = creator else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+
+        owner.require_auth();
+
+        let delegate_key = (AUTHORIZED_DELEGATES, uid.clone(), delegate.clone());
+        env.storage().persistent().set(&delegate_key, &true);
+        env.storage().persistent().extend_ttl(
+            &delegate_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
+        env.events().publish(
+            (SCHEMA_DELEGATE_ADDED, uid.clone()),
+            SchemaDelegateAddedEvent {
+                schema_uid: uid,
+                delegate,
+                authorizer: owner,
+            },
+        );
+
+        extend_instance_ttl(&env);
+    }
+
+    /// Revokes `delegate`'s authorization to issue or revoke attestations under schema `uid`.
+    ///
+    /// Requires authorization from the primary schema owner (creator).
+    /// Emits `SchemaDelegateRemoved`.
+    pub fn remove_delegate(env: Env, uid: UID, delegate: Address) {
+        extend_instance_ttl(&env);
+        if !env.storage().persistent().has(&uid) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+
+        let creator_key = (SCHEMA_CREATOR, uid.clone());
+        let creator: Option<Address> = env.storage().persistent().get(&creator_key);
+        let Some(owner) = creator else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+
+        owner.require_auth();
+
+        let delegate_key = (AUTHORIZED_DELEGATES, uid.clone(), delegate.clone());
+        env.storage().persistent().remove(&delegate_key);
+
+        env.events().publish(
+            (SCHEMA_DELEGATE_REMOVED, uid.clone()),
+            SchemaDelegateRemovedEvent {
+                schema_uid: uid,
+                delegate,
+                authorizer: owner,
+            },
+        );
+
+        extend_instance_ttl(&env);
+    }
+
     /// Registers a new schema in the registry, free of charge.
     ///
     /// See `docs/schemas.md` for the schema syntax specification.
@@ -483,6 +557,92 @@ impl SchemaRegistry {
         } else {
             false
         }
+    }
+
+    /// Returns true if `delegate` is currently an authorized delegate for `uid`.
+    pub fn is_delegate(env: Env, uid: UID, delegate: Address) -> bool {
+        extend_instance_ttl(&env);
+        let delegate_key = (AUTHORIZED_DELEGATES, uid, delegate);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&delegate_key)
+            .unwrap_or(false)
+        {
+            env.storage().persistent().extend_ttl(
+                &delegate_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the creator/owner address recorded when schema `uid` was registered.
+    pub fn get_creator(env: Env, uid: UID) -> Option<Address> {
+        extend_instance_ttl(&env);
+        let creator_key = (SCHEMA_CREATOR, uid.clone());
+        let creator: Option<Address> = env.storage().persistent().get(&creator_key);
+        if creator.is_some() {
+            env.storage().persistent().extend_ttl(
+                &creator_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
+        creator
+    }
+
+    /// Checks whether `attester` is authorized to issue attestations under
+    /// `uid` — returns true if `attester` is either the primary schema owner
+    /// or an authorized delegate, provided the schema exists and is not
+    /// deprecated.
+    ///
+    /// Single cross-contract call for SAS issuance checks to prevent excessive
+    /// gas usage.
+    pub fn is_authorized(env: Env, uid: UID, attester: Address) -> bool {
+        extend_instance_ttl(&env);
+        if env
+            .storage()
+            .persistent()
+            .get(&(DEPRECATED, uid.clone()))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+
+        let creator_key = (SCHEMA_CREATOR, uid.clone());
+        if let Some(creator) = env.storage().persistent().get::<_, Address>(&creator_key) {
+            if creator == attester {
+                env.storage().persistent().extend_ttl(
+                    &creator_key,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
+                return true;
+            }
+        } else {
+            return false;
+        }
+
+        let delegate_key = (AUTHORIZED_DELEGATES, uid.clone(), attester);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&delegate_key)
+            .unwrap_or(false)
+        {
+            env.storage().persistent().extend_ttl(
+                &delegate_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            return true;
+        }
+
+        false
     }
 
     /// Returns up to `limit` active schemas from `start`, skipping deprecated.

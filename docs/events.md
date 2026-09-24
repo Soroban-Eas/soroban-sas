@@ -128,6 +128,24 @@ was originally deployed with. If the WASM swap itself fails (for example,
 `new_wasm_hash` has no corresponding uploaded WASM), Soroban rolls back the
 entire invocation, so this event is never emitted for a failed upgrade.
 
+## SchemaDelegateAdded
+
+Emitted by the schema registry on a successful `add_delegate`.
+
+- Topics: `("DELADD", schema_uid: UID)`
+- Data: `SchemaDelegateAddedEvent { schema_uid: UID, delegate: Address, authorizer: Address }`
+
+`add_delegate` requires authorization from the primary schema owner (`authorizer`).
+
+## SchemaDelegateRemoved
+
+Emitted by the schema registry on a successful `remove_delegate`.
+
+- Topics: `("DELREM", schema_uid: UID)`
+- Data: `SchemaDelegateRemovedEvent { schema_uid: UID, delegate: Address, authorizer: Address }`
+
+`remove_delegate` requires authorization from the primary schema owner (`authorizer`).
+
 ## Security-sensitive configuration changes
 
 `IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and

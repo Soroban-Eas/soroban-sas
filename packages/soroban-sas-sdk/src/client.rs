@@ -549,6 +549,102 @@ impl SASClient {
         invoke_read_only(env, rpc, registry_contract_id, "get_treasury", vec![])
     }
 
+    /// Calls `SchemaRegistry::add_delegate(uid, delegate)`: authorizes `delegate`
+    /// to issue and revoke attestations under schema `uid`.
+    ///
+    /// Requires `owner_secret_seed` to be the primary schema owner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_delegate(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        delegate: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let delegate_addr = parse_address(env, delegate, AddressKind::Either, "delegate")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &delegate_addr)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            owner_secret_seed,
+            registry_contract_id,
+            "add_delegate",
+            args,
+        )
+    }
+
+    /// Calls `SchemaRegistry::remove_delegate(uid, delegate)`: removes `delegate`'s
+    /// authorization to issue or revoke attestations under schema `uid`.
+    ///
+    /// Requires `owner_secret_seed` to be the primary schema owner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn remove_delegate(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        delegate: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let delegate_addr = parse_address(env, delegate, AddressKind::Either, "delegate")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &delegate_addr)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            owner_secret_seed,
+            registry_contract_id,
+            "remove_delegate",
+            args,
+        )
+    }
+
+    /// Checks whether `delegate` is currently an authorized delegate for `schema_uid`.
+    pub fn is_delegate(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        delegate: &str,
+    ) -> Result<bool, SdkError> {
+        let delegate_addr = parse_address(env, delegate, AddressKind::Either, "delegate")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &delegate_addr)?,
+        ];
+        invoke_read_only(env, rpc, registry_contract_id, "is_delegate", args)
+    }
+
+    /// Checks whether `attester` is authorized to issue attestations under `schema_uid`.
+    pub fn is_authorized(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        attester: &str,
+    ) -> Result<bool, SdkError> {
+        let attester_addr = parse_address(env, attester, AddressKind::Either, "attester")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &attester_addr)?,
+        ];
+        invoke_read_only(env, rpc, registry_contract_id, "is_authorized", args)
+    }
+
     /// Calls `SAS::attest(attestation)`: builds the invoke transaction,
     /// signs it with the ed25519 key derived from `secret_seed`, and
     /// submits it — then polls until it settles.

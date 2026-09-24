@@ -15,6 +15,9 @@ pub mod mock_registry {
 
     #[contractimpl]
     impl MockRegistry {
+        pub fn is_authorized(_env: Env, _uid: UID, _attester: Address) -> bool {
+            true
+        }
         #[allow(non_snake_case)]
         pub fn SASREG(_env: Env) -> bool {
             true

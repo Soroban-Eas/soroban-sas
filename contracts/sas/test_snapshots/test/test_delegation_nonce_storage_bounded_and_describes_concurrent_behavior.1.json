@@ -810,6 +810,66 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
+                "symbol": "is_authorized"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "vec": [
+                    {
+                      "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                    }
+                  ]
+                },
+                {
+                  "address": "GAXQU6ZJ6U3FEAC42RZAUP7HVTIIZBNE4KONN5ENDEC6E5W2Y3767N3T"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "is_authorized"
+              }
+            ],
+            "data": {
+              "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
                 "symbol": "on_attest"
               }
             ],
@@ -1604,6 +1664,66 @@
                   }
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "is_authorized"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "vec": [
+                    {
+                      "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                    }
+                  ]
+                },
+                {
+                  "address": "GABVFCUEZ427GPN66GZSDEWZGUKE5HLCGOCNBMDZZJUHYAAQTOAZNS7D"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "is_authorized"
+              }
+            ],
+            "data": {
+              "bool": true
             }
           }
         }

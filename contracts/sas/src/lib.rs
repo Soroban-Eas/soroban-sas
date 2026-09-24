@@ -292,6 +292,24 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidSchema);
         };
 
+        // Verify attester authorization: attester must be either the original
+        // schema owner or an authorized delegate in the registry allow-list (#7).
+        let is_auth: bool = match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+            &registry,
+            &Symbol::new(&env, "is_authorized"),
+            soroban_sdk::vec![
+                &env,
+                attestation.schema_uid.clone().into_val(&env),
+                attestation.attester.clone().into_val(&env),
+            ],
+        ) {
+            Ok(Ok(auth)) => auth,
+            _ => false,
+        };
+        if !is_auth {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
         // A revocable schema permits both revocable and irrevocable
         // attestations; a non-revocable schema forbids an attestation from
         // claiming `revocable = true` under it. See docs/schemas.md.
@@ -466,6 +484,40 @@ impl SAS {
         };
         attestation.attester.require_auth();
         Self::revoke_internal(env, uid)
+    }
+
+    /// Revokes an attestation under the authority of `authorizer`.
+    /// `authorizer` must either be the original attester, or an authorized
+    /// delegate / primary owner of the schema recorded in the registry (#7).
+    pub fn revoke_by_authorizer(env: Env, uid: UID, authorizer: Address) {
+        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            panic_with_error!(&env, SASError::AttestationNotFound);
+        };
+        authorizer.require_auth();
+        if authorizer != attestation.attester {
+            let registry = require_registry(&env);
+            let is_auth: bool = match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+                &registry,
+                &Symbol::new(&env, "is_authorized"),
+                soroban_sdk::vec![
+                    &env,
+                    attestation.schema_uid.clone().into_val(&env),
+                    authorizer.clone().into_val(&env),
+                ],
+            ) {
+                Ok(Ok(auth)) => auth,
+                _ => false,
+            };
+            if !is_auth {
+                panic_with_error!(&env, SASError::Unauthorized);
+            }
+        }
+        Self::revoke_internal(env, uid)
+    }
+
+    /// Convenience alias for `revoke_by_authorizer` using a delegate address (#7).
+    pub fn revoke_by_delegate(env: Env, uid: UID, delegate: Address) {
+        Self::revoke_by_authorizer(env, uid, delegate);
     }
 
     pub fn revoke_by_delegation(
