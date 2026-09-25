@@ -259,4 +259,3 @@ pub struct SchemaOwnershipTransferredEvent {
     pub new_owner: Address,
 }
 pub type SchemaOwnershipTransferred = SchemaOwnershipTransferredEvent;
-

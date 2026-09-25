@@ -119,11 +119,7 @@ pub fn publish_admin_transfer_proposed(
 /// Publishes the `AdminTransferCompleted` event.
 ///
 /// Topics: `(ADMIN_TRANSFER_COMPLETED, old_admin)`.
-pub fn publish_admin_transfer_completed(
-    env: &Env,
-    old_admin: &Address,
-    new_admin: &Address,
-) {
+pub fn publish_admin_transfer_completed(env: &Env, old_admin: &Address, new_admin: &Address) {
     env.events().publish(
         (ADMIN_TRANSFER_COMPLETED, old_admin.clone()),
         AdminTransferCompletedEvent {
@@ -132,4 +128,3 @@ pub fn publish_admin_transfer_completed(
         },
     );
 }
-

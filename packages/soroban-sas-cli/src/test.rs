@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use soroban_sdk::testutils::Address as _;
 
     use crate::{
         decode_hex_or_base64, fee_to_human, fee_to_json, parse_uid, validate_schema_syntax,
@@ -348,10 +349,11 @@ mod tests {
 
         assert_eq!(cli.output, OutputFormat::Json);
         let Some(Commands::Sas {
-            action: SasCommands::GetFee {
-                contract_id,
-                rpc_url,
-            },
+            action:
+                SasCommands::GetFee {
+                    contract_id,
+                    rpc_url,
+                },
         }) = cli.command
         else {
             panic!("expected sas get-fee command");
@@ -381,10 +383,11 @@ mod tests {
 
         assert!(cli.identity.is_none());
         let Some(Commands::Sas {
-            action: SasCommands::GetFee {
-                contract_id,
-                rpc_url,
-            },
+            action:
+                SasCommands::GetFee {
+                    contract_id,
+                    rpc_url,
+                },
         }) = cli.command
         else {
             panic!("expected sas get-fee command");
@@ -603,6 +606,7 @@ mod online_verification_tests {
     use crate::offchain::{sign_offchain_attestation, AttestationInput};
     use crate::perform_online_verification;
     use soroban_sas_sdk::rpc::RpcClient;
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::xdr::{Limits, WriteXdr};
     use std::io::{BufRead, BufReader, Read, Write};
 
@@ -745,10 +749,13 @@ mod online_verification_tests {
         )
     }
 
-    fn fee_configured_response(token: &soroban_sdk::Address, amount: i128) -> String {
-        let env = soroban_sdk::Env::default();
+    fn fee_configured_response(
+        env: &soroban_sdk::Env,
+        token: &soroban_sdk::Address,
+        amount: i128,
+    ) -> String {
         let fee: Option<(soroban_sdk::Address, i128)> = Some((token.clone(), amount));
-        let result_xdr = soroban_sas_sdk::simulate::encode_arg(&env, &fee)
+        let result_xdr = soroban_sas_sdk::simulate::encode_arg(env, &fee)
             .unwrap()
             .to_xdr_base64(Limits::none())
             .unwrap();
@@ -777,7 +784,11 @@ mod online_verification_tests {
         let contract_id = stellar_strkey::Contract([6u8; 32]).to_string();
         let env = soroban_sdk::Env::default();
         let token_addr = soroban_sdk::Address::generate(&env);
-        let url = spawn_single_response_mock_server(fee_configured_response(&token_addr, 1_000_000));
+        let url = spawn_single_response_mock_server(fee_configured_response(
+            &env,
+            &token_addr,
+            1_000_000,
+        ));
         let res = crate::run_sas(
             crate::SasCommands::GetFee {
                 contract_id,

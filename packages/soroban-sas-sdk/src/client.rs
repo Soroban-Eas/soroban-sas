@@ -24,6 +24,7 @@ use std::sync::Arc;
 /// archived entries surface as `Archived` with restoration metadata rather
 /// than `NotFound`.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum AttestationResult {
     /// Live entry, TTL was bumped on read.
     Live(Attestation),
@@ -184,7 +185,13 @@ impl SASClient {
         attester: &Address,
     ) -> Result<Option<u64>, SdkError> {
         let arg = simulate::encode_arg(env, attester)?;
-        invoke_read_only(env, rpc, &self.contract_id, "get_delegation_nonce", vec![arg])
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_delegation_nonce",
+            vec![arg],
+        )
     }
 
     /// Calls `SchemaRegistry::get_schema(uid)` on `registry_contract_id` via

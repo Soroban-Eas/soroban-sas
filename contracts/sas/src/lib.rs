@@ -416,7 +416,7 @@ impl SAS {
             return LEDGERS_IN_ONE_YEAR;
         }
         let seconds_remaining = expiration_time - now;
-        let ledgers_remaining = ((seconds_remaining + 4) / 5) as u32;
+        let ledgers_remaining = seconds_remaining.div_ceil(5) as u32;
         let max_ttl = LEDGERS_IN_ONE_YEAR * 5;
         ledgers_remaining
             .saturating_add(LEDGERS_IN_ONE_YEAR)

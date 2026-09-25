@@ -2574,4 +2574,3 @@ fn test_get_delegation_nonce() {
 
     assert_eq!(sas.get_delegation_nonce(&attester), Some(5));
 }
-

@@ -1206,4 +1206,3 @@ fn test_transfer_schema_ownership_deprecated_schema_rejected() {
         Err(Ok(soroban_sas_common::SASError::InvalidSchema.into()))
     );
 }
-
