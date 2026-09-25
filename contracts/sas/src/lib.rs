@@ -664,6 +664,11 @@ impl SAS {
             let uid = Self::attest_internal(env.clone(), attestation);
             uids.push_back(uid);
         }
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationIssued event first (#213). Reaching this line means the
+        // whole batch committed: a panic anywhere above reverts the call and
+        // this never runs.
+        events::publish_batch_attested(&env, uids.len(), authorized_attesters.len());
         uids
     }
 
@@ -764,6 +769,11 @@ impl SAS {
         for uid in to_revoke.iter() {
             Self::revoke_internal(env.clone(), uid);
         }
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationRevoked event first (#213). Reaching this line means
+        // the whole batch committed: a panic anywhere above reverts the
+        // call and this never runs.
+        events::publish_batch_revoked(&env, to_revoke.len(), distinct.len());
     }
 
     /// Registers the ed25519 public key that backs `attester`'s Stellar

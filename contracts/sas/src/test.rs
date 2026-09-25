@@ -2,7 +2,8 @@ use crate::{SASClient, SAS};
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
     hash_delegated_revocation, Attestation, AttestationDomain, AttestationIssuedEvent,
-    AttestationRevokedEvent, IndexerUpdatedEvent, PreviousAddress, SASError, UID,
+    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent,
+    PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -2689,4 +2690,157 @@ fn test_replace_attestation_rejects_a_replacement_uid_that_does_not_match_its_co
 
     // The old attestation must remain untouched (no partial commit).
     assert!(f.sas_client.verify_attestation(&f.old_uid));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #213 — BatchAttested / BatchRevoked summary events
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_multi_attest_emits_batch_attested_summary_as_last_event() {
+    let (env, sas_client, sas_id, _admin, attester_a, recipient) = fee_test_env();
+    let attester_b = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+
+    // Mixed batch: two items from attester_a, one from attester_b, so
+    // attester_count (2) must differ from count (3).
+    let a1 = attestation_fixture(&env, &attester_a, &recipient, [120u8; 32]);
+    let a2 = attestation_fixture(&env, &attester_a, &recipient, [121u8; 32]);
+    let b1 = attestation_fixture(&env, &attester_b, &recipient, [122u8; 32]);
+    let (uid1, uid2, uid3) = (a1.uid.clone(), a2.uid.clone(), b1.uid.clone());
+
+    env.mock_all_auths();
+    let batch = soroban_sdk::vec![&env, a1, a2, b1];
+    sas_client.multi_attest(&batch);
+
+    let issued = |uid: UID, attester: Address| {
+        (
+            sas_id.clone(),
+            (symbol_short!("ATTESTED"), schema_uid.clone(), attester.clone()).into_val(&env),
+            AttestationIssuedEvent {
+                uid,
+                schema_uid: schema_uid.clone(),
+                attester,
+                recipient: recipient.clone(),
+            }
+            .into_val(&env),
+        )
+    };
+    assert_eq!(
+        env.events().all(),
+        soroban_sdk::vec![
+            &env,
+            issued(uid1, attester_a.clone()),
+            issued(uid2, attester_a),
+            issued(uid3, attester_b),
+            (
+                sas_id,
+                (symbol_short!("BATCHATT"),).into_val(&env),
+                BatchAttestedEvent {
+                    count: 3,
+                    attester_count: 2,
+                }
+                .into_val(&env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn test_multi_attest_does_not_emit_batch_attested_on_a_reverted_call() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    // Oversized batch: rejected up front, before any item (and so no
+    // per-item event) is touched.
+    let mut batch = soroban_sdk::vec![&env];
+    for i in 0..(crate::MAX_MULTI_ATTEST + 1) {
+        let seed = (i % 256) as u8;
+        batch.push_back(attestation_fixture(
+            &env,
+            &attester,
+            &recipient,
+            [seed; 32],
+        ));
+    }
+
+    env.mock_all_auths();
+    let res = sas_client.try_multi_attest(&batch);
+    assert_eq!(res, Err(Ok(SASError::BatchTooLarge.into())));
+    assert!(env.events().all().is_empty());
+}
+
+#[test]
+fn test_multi_revoke_emits_batch_revoked_summary_as_last_event() {
+    let (env, sas_client, sas_id, _admin, attester_a, recipient) = fee_test_env();
+    let attester_b = Address::generate(&env);
+
+    let a1 = attestation_fixture(&env, &attester_a, &recipient, [124u8; 32]);
+    let a2 = attestation_fixture(&env, &attester_a, &recipient, [125u8; 32]);
+    let b1 = attestation_fixture(&env, &attester_b, &recipient, [126u8; 32]);
+    let (uid1, uid2, uid3) = (a1.uid.clone(), a2.uid.clone(), b1.uid.clone());
+
+    env.mock_all_auths();
+    sas_client.attest(&a1);
+    sas_client.attest(&a2);
+    sas_client.attest(&b1);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    let uids = soroban_sdk::vec![&env, uid1.clone(), uid2.clone(), uid3.clone()];
+    sas_client.multi_revoke(&uids);
+
+    let revoked_at = 5000u64;
+    let revoked = |uid: UID| {
+        (
+            sas_id.clone(),
+            (symbol_short!("REVOKED"), uid.clone()).into_val(&env),
+            AttestationRevokedEvent {
+                uid,
+                timestamp: revoked_at,
+            }
+            .into_val(&env),
+        )
+    };
+    let all_events = env.events().all();
+    // Only the tail — the 3 AttestationRevoked events plus the BatchRevoked
+    // summary — matters here; the 3 AttestationIssued events from the
+    // earlier `attest` calls are asserted elsewhere.
+    let tail_start = all_events.len() - 4;
+    let tail: soroban_sdk::Vec<_> = all_events.slice(tail_start..);
+    assert_eq!(
+        tail,
+        soroban_sdk::vec![
+            &env,
+            revoked(uid1),
+            revoked(uid2),
+            revoked(uid3),
+            (
+                sas_id,
+                (symbol_short!("BATCHREV"),).into_val(&env),
+                BatchRevokedEvent {
+                    count: 3,
+                    attester_count: 2,
+                }
+                .into_val(&env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn test_multi_revoke_does_not_emit_batch_revoked_on_a_reverted_call() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let attestation = attestation_fixture(&env, &attester, &recipient, [127u8; 32]);
+    env.mock_all_auths();
+    sas_client.attest(&attestation);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    // Duplicate uid within the batch aborts the whole call before any
+    // revocation (and thus the summary) is committed.
+    let uids = soroban_sdk::vec![&env, attestation.uid.clone(), attestation.uid.clone()];
+    let res = sas_client.try_multi_revoke(&uids);
+    assert!(res.is_err());
+
+    let all_events = env.events().all();
+    // Only the earlier successful `attest` call's event remains; nothing
+    // from the reverted `multi_revoke`.
+    assert_eq!(all_events.len(), 1);
 }
