@@ -84,7 +84,14 @@ info "using CLI: $CLI_BIN"
 info "SAS contract: $SAS_ID"
 info "Registry:     $REGISTRY_ID"
 
-NET_ARGS=(--source-account "$SECRET_KEY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE")
+# ---------------------------------------------------------------------------
+# Register Identity
+# ---------------------------------------------------------------------------
+IDENTITY_NAME="soroban-sas-smoke-test"
+printf '%s\n' "$SECRET_KEY" | "$CLI_BIN" keys add "$IDENTITY_NAME" --secret-key --overwrite >/dev/null
+ADMIN_ADDRESS="$("$CLI_BIN" keys address "$IDENTITY_NAME")"
+
+NET_ARGS=(--source-account "$IDENTITY_NAME" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE")
 
 invoke() {
     local id="$1"
@@ -97,9 +104,9 @@ invoke() {
 # ---------------------------------------------------------------------------
 step "Step 1: Register schema"
 SCHEMA_UID="$(invoke "$REGISTRY_ID" register \
-    --owner "$SECRET_KEY" \
+    --owner "$ADMIN_ADDRESS" \
     --schema '"string name,bool verified"' \
-    --resolver "$SECRET_KEY" \
+    --resolver "$ADMIN_ADDRESS" \
     --revocable true)"
 info "schema registered: $SCHEMA_UID"
 
@@ -120,8 +127,8 @@ ATTESTATION_UID="$(invoke "$SAS_ID" attest \
         "expiration_time": 0,
         "revocation_time": 0,
         "ref_uid": {"bytes": "0000000000000000000000000000000000000000000000000000000000000000"},
-        "recipient": "'"$SECRET_KEY"'",
-        "attester": "'"$SECRET_KEY"'",
+        "recipient": "'"$ADMIN_ADDRESS"'",
+        "attester": "'"$ADMIN_ADDRESS"'",
         "revocable": true,
         "data": {"bytes": ""}
     }')"
