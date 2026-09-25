@@ -31,6 +31,12 @@ pub const CONTRACT_UPGRADED: Symbol = symbol_short!("UPGRADED");
 pub const SCHEMA_DELEGATE_ADDED: Symbol = symbol_short!("DELADD");
 /// First topic of every `SchemaDelegateRemoved` event.
 pub const SCHEMA_DELEGATE_REMOVED: Symbol = symbol_short!("DELREM");
+/// First topic of every `AdminTransferProposed` event.
+pub const ADMIN_TRANSFER_PROPOSED: Symbol = symbol_short!("ADMPROP");
+/// First topic of every `AdminTransferCompleted` event.
+pub const ADMIN_TRANSFER_COMPLETED: Symbol = symbol_short!("ADMCOMP");
+/// First topic of every `SchemaOwnershipTransferred` event.
+pub const SCHEMA_OWNERSHIP_TRANSFERRED: Symbol = symbol_short!("SCHOWN");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -219,3 +225,38 @@ pub struct SchemaDelegateRemovedEvent {
     pub delegate: Address,
     pub authorizer: Address,
 }
+
+/// Payload of the `AdminTransferProposed` event.
+///
+/// Published with topics `(ADMIN_TRANSFER_PROPOSED, current_admin)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposedEvent {
+    pub current_admin: Address,
+    pub proposed_admin: Address,
+}
+pub type AdminTransferProposed = AdminTransferProposedEvent;
+
+/// Payload of the `AdminTransferCompleted` event.
+///
+/// Published with topics `(ADMIN_TRANSFER_COMPLETED, old_admin)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferCompletedEvent {
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+pub type AdminTransferCompleted = AdminTransferCompletedEvent;
+
+/// Payload of the `SchemaOwnershipTransferred` event.
+///
+/// Published with topics `(SCHEMA_OWNERSHIP_TRANSFERRED, schema_uid)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaOwnershipTransferredEvent {
+    pub schema_uid: UID,
+    pub old_owner: Address,
+    pub new_owner: Address,
+}
+pub type SchemaOwnershipTransferred = SchemaOwnershipTransferredEvent;
+

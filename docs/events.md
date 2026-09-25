@@ -146,6 +146,33 @@ Emitted by the schema registry on a successful `remove_delegate`.
 
 `remove_delegate` requires authorization from the primary schema owner (`authorizer`).
 
+## AdminTransferProposed
+
+Emitted by the SAS contract on a successful `propose_admin`.
+
+- Topics: `("ADMPROP", current_admin: Address)`
+- Data: `AdminTransferProposedEvent { current_admin: Address, proposed_admin: Address }`
+
+`propose_admin` requires authorization from `current_admin`. It stores `proposed_admin` under instance storage key `PENDING_ADMIN`.
+
+## AdminTransferCompleted
+
+Emitted by the SAS contract on a successful `accept_admin`.
+
+- Topics: `("ADMCOMP", old_admin: Address)`
+- Data: `AdminTransferCompletedEvent { old_admin: Address, new_admin: Address }`
+
+`accept_admin` requires authorization from `new_admin` (the pending admin). It finalizes the two-step admin transfer, overwriting `SAS_ADMIN` with `new_admin` and clearing `PENDING_ADMIN`.
+
+## SchemaOwnershipTransferred
+
+Emitted by the schema registry on a successful `transfer_schema_ownership`.
+
+- Topics: `("SCHOWN", schema_uid: UID)`
+- Data: `SchemaOwnershipTransferredEvent { schema_uid: UID, old_owner: Address, new_owner: Address }`
+
+`transfer_schema_ownership` requires authorization from `old_owner` (the current schema creator). Deprecated schemas cannot be transferred. Once transferred, `new_owner` becomes the creator/owner who may manage delegates and deprecate the schema.
+
 ## Security-sensitive configuration changes
 
 `IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and

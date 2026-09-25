@@ -1,6 +1,9 @@
 use soroban_sas_common::{
-    events::{ATTESTED, INDEXER_UPDATED, REVOKED},
-    Attestation, AttestationIssuedEvent, AttestationRevokedEvent, IndexerUpdatedEvent, UID,
+    events::{
+        ADMIN_TRANSFER_COMPLETED, ADMIN_TRANSFER_PROPOSED, ATTESTED, INDEXER_UPDATED, REVOKED,
+    },
+    AdminTransferCompletedEvent, AdminTransferProposedEvent, Attestation, AttestationIssuedEvent,
+    AttestationRevokedEvent, IndexerUpdatedEvent, UID,
 };
 use soroban_sdk::{symbol_short, Address, Env};
 
@@ -95,3 +98,38 @@ pub fn publish_withdrawal(
         ),
     );
 }
+
+/// Publishes the `AdminTransferProposed` event.
+///
+/// Topics: `(ADMIN_TRANSFER_PROPOSED, current_admin)`.
+pub fn publish_admin_transfer_proposed(
+    env: &Env,
+    current_admin: &Address,
+    proposed_admin: &Address,
+) {
+    env.events().publish(
+        (ADMIN_TRANSFER_PROPOSED, current_admin.clone()),
+        AdminTransferProposedEvent {
+            current_admin: current_admin.clone(),
+            proposed_admin: proposed_admin.clone(),
+        },
+    );
+}
+
+/// Publishes the `AdminTransferCompleted` event.
+///
+/// Topics: `(ADMIN_TRANSFER_COMPLETED, old_admin)`.
+pub fn publish_admin_transfer_completed(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+) {
+    env.events().publish(
+        (ADMIN_TRANSFER_COMPLETED, old_admin.clone()),
+        AdminTransferCompletedEvent {
+            old_admin: old_admin.clone(),
+            new_admin: new_admin.clone(),
+        },
+    );
+}
+
