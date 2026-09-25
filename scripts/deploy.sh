@@ -151,27 +151,42 @@ WASM_INDEXER="$WASM_DIR/soroban_sas_indexer.wasm"
 # Source account: validate key, derive the admin G... address
 # ---------------------------------------------------------------------------
 if [[ -z "$SECRET_KEY" ]]; then
-    die "no secret key provided. Pass --secret-key S... or export SOROBAN_SECRET_KEY (or ADMIN_SECRET_KEY)"
+    die "no secret key provided. Pass --secret-key S... or an existing identity name, or export SOROBAN_SECRET_KEY (or ADMIN_SECRET_KEY)"
 fi
-if [[ ! "$SECRET_KEY" =~ ^S[A-Z2-7]{55}$ ]]; then
-    die "secret key must be an ed25519 strkey seed (S...) — got '${SECRET_KEY:0:4}...' with wrong format"
-fi
-
-step "Deriving admin address from the provided secret key"
-# Register the key under a well-known local identity so the CLI can resolve
-# both the signing source and the matching G... address. The identity lives
-# in ~/.config/stellar/identity/ and is refreshed on every run.
-IDENTITY_NAME="soroban-sas-deploy-$NETWORK"
-printf '%s\n' "$SECRET_KEY" | "$CLI_BIN" keys add "$IDENTITY_NAME" --secret-key --overwrite >/dev/null
-ADMIN_ADDRESS="$("$CLI_BIN" keys address "$IDENTITY_NAME")"
-[[ "$ADMIN_ADDRESS" =~ ^G[A-Z2-7]{55}$ ]] || die "failed to derive admin address from secret key"
-info "admin address: $ADMIN_ADDRESS"
 
 ENV_WORK=""
+CLEANUP_IDENTITY=""
 cleanup() {
     [[ -n "$ENV_WORK" ]] && rm -f "$ENV_WORK" "$ENV_WORK.next"
+    if [[ -n "$CLEANUP_IDENTITY" ]]; then
+        "$CLI_BIN" keys rm "$CLEANUP_IDENTITY" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
+
+if [[ "$SECRET_KEY" =~ ^S[A-Z2-7]{55}$ ]]; then
+    step "Deriving admin address from the provided secret key"
+    # Generate a collision-resistant name for a temporary identity
+    IDENTITY_NAME="tmp-deploy-$RANDOM$RANDOM"
+    printf '%s\n' "$SECRET_KEY" | "$CLI_BIN" keys add "$IDENTITY_NAME" --secret-key >/dev/null
+    CLEANUP_IDENTITY="$IDENTITY_NAME"
+else
+    step "Using existing CLI identity: $SECRET_KEY"
+    IDENTITY_NAME="$SECRET_KEY"
+    if ! "$CLI_BIN" keys address "$IDENTITY_NAME" >/dev/null 2>&1; then
+        die "source '$SECRET_KEY' is not a valid seed (S...) and not found in CLI identities"
+    fi
+    # If using an existing identity, we don't have a secret key to export to .env
+    if [[ "$EXPORT_SECRET" == true ]]; then
+        warn "Cannot export secret key for an existing CLI identity; ignoring --export-secret"
+        EXPORT_SECRET=false
+    fi
+    SECRET_KEY=""
+fi
+
+ADMIN_ADDRESS="$("$CLI_BIN" keys address "$IDENTITY_NAME")"
+[[ "$ADMIN_ADDRESS" =~ ^G[A-Z2-7]{55}$ ]] || die "failed to derive admin address from identity '$IDENTITY_NAME'"
+info "admin address: $ADMIN_ADDRESS"
 
 # ---------------------------------------------------------------------------
 # Testnet convenience: top up via Friendbot if needed (best-effort — ignored
