@@ -42,6 +42,12 @@ Emitted by the SAS contract on every successful revocation (`revoke`,
 `timestamp` is the exact ledger timestamp written to the attestation's
 `revocation_time`, so event consumers and contract state can never diverge.
 
+Published before the schema's `on_revoke` resolver callback runs (#216, see
+docs/schemas.md's "Resolver Failure Semantics"): if that resolver rejects,
+the whole call — this event included — rolls back, so a `AttestationRevoked`
+event that a consumer actually observes always corresponds to a revocation
+that durably stuck.
+
 ## AttesterKeyRegistered
 
 Emitted by the SAS contract on a successful `register_attester_key` — the

@@ -584,6 +584,38 @@ impl SAS {
 
         events::publish_revoked(&env, &uid, timestamp);
 
+        // Resolver callback: authoritative, mirroring `on_attest`'s
+        // semantics (#216; see docs/schemas.md's "Resolver Failure
+        // Semantics"). Invoked after the revocation is written and its
+        // event published — rather than before, as `on_attest` does with
+        // issuance — so the resolver can inspect the attestation exactly as
+        // it will read on-chain once this call commits. A rejection, trap,
+        // or missing `on_revoke` implementation all panic with
+        // `SASError::ResolverRejected`, which reverts the whole
+        // invocation — the storage write and event published just above
+        // included — so schemas without a real enforcement resolver are
+        // unaffected and a rejected revocation leaves the attestation
+        // exactly as it was.
+        let registry = require_registry(&env);
+        let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
+            &registry,
+            &Symbol::new(&env, "get_schema"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        );
+        let Some(schema) = schema_opt else {
+            panic_with_error!(&env, SASError::InvalidSchema);
+        };
+        if env
+            .try_invoke_contract::<(), soroban_sdk::Error>(
+                &schema.resolver,
+                &Symbol::new(&env, "on_revoke"),
+                soroban_sdk::vec![&env, attestation.clone().into_val(&env)],
+            )
+            .is_err()
+        {
+            panic_with_error!(&env, SASError::ResolverRejected);
+        }
+
         // Notify indexer if bound, so revoked status is observable via
         // filtered queries. Best-effort: ignore `invoke` failure if the
         // indexer does not implement the callback (e.g. legacy indexer).
