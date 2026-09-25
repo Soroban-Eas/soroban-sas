@@ -46,24 +46,28 @@ Invoked exactly once, synchronously, when a new attestation is issued using the 
 - **Contract:** `fn on_attest(env: Env, attestation: Attestation)`. No return value is required; a resolver signals rejection by returning a `contracterror` or by trapping (e.g. `panic_with_error!`/`panic!`).
 
 ### `on_revoke`
-Not currently implemented. `revoke_internal` does not invoke the resolver at all, so registering a resolver has no effect on revocation today; a schema's resolver is consulted only by `attest_internal`. This section is aspirational and tracked as a separate gap — do not rely on `on_revoke` being called.
+Invoked exactly once, synchronously, when an attestation issued under the schema is revoked — after `revocation_time` has been written to storage and the `AttestationRevoked` event published, but (like `on_attest`) before the call returns, so a rejection still rolls back everything the same invocation has done so far (#216).
+- **Payload:** The full `Attestation` record, with `revocation_time` already set to the value now in storage — the resolver sees exactly what an on-chain reader would see once the call commits.
+- **Contract:** `fn on_revoke(env: Env, attestation: Attestation)`. Same shape as `on_attest`: no return value is required, and a resolver signals rejection by returning a `contracterror` or by trapping.
+
+Unlike `on_attest` (invoked before the write), `on_revoke` runs after the write and event because revocation has no separate "would-be" state to validate up front — the resolver's job is to react to (or veto) a revocation that has, from the caller's perspective, already happened, not to gate whether it may happen based on content the caller controls.
 
 ### Resolver Failure Semantics
 
-Resolvers are **authoritative**, not advisory: `on_attest`'s outcome controls whether the attestation is issued. `attest_internal` invokes `on_attest` via `try_invoke_contract` and inspects the result:
+Resolvers are **authoritative**, not advisory: `on_attest`'s outcome controls whether the attestation is issued, and `on_revoke`'s outcome controls whether the revocation stands. `attest_internal` invokes `on_attest`, and `revoke_internal` invokes `on_revoke`, via `try_invoke_contract`, inspecting the result the same way:
 
 | Resolver outcome | Result |
 | --- | --- |
-| Returns successfully | The attestation is stored and issuance proceeds normally. |
-| Explicitly rejects (returns/panics with a `contracterror`) | The whole `attest` call fails with `SASError::ResolverRejected`. Nothing is stored. |
+| Returns successfully | The attestation is stored (`on_attest`) or the revocation stands (`on_revoke`); the call proceeds normally. |
+| Explicitly rejects (returns/panics with a `contracterror`) | The whole call fails with `SASError::ResolverRejected`. Nothing is stored/revoked. |
 | Traps (an unhandled `panic!`, or any other host-level abort) | Same as above — `SASError::ResolverRejected`. The Soroban host does not let a caller distinguish an intentional rejection from an unhandled trap, so both surface identically. |
-| Does not implement `on_attest` | Same as above — an unrecognized function call also traps at the host level, so this is indistinguishable from the trap case and is likewise `SASError::ResolverRejected`. |
+| Does not implement `on_attest` / `on_revoke` | Same as above — an unrecognized function call also traps at the host level, so this is indistinguishable from the trap case and is likewise `SASError::ResolverRejected`. |
 
-Because the whole invocation is one Soroban transaction, a `SASError::ResolverRejected` panic rolls back everything that happened earlier in the same call — including, for `replace_attestation`, the old attestation's revocation. A rejected replacement therefore leaves the original attestation exactly as it was, never partially revoked with no successor.
+Because the whole invocation is one Soroban transaction, a `SASError::ResolverRejected` panic rolls back everything that happened earlier in the same call — including, for `replace_attestation`, the old attestation's revocation (whose own `on_revoke` call, if rejected, aborts before `attest_internal` for the replacement even runs) and, for `multi_revoke`, every other revocation already committed earlier in the same batch. A rejected replacement or batch therefore leaves every attestation involved exactly as it was — never partially revoked with no successor, and never a batch with only some of its members actually revoked.
 
-This applies uniformly to every attestation issuance path — `attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest` (a single resolver rejection fails the entire batch, consistent with its other atomic validation), and `replace_attestation` — since they all funnel through `attest_internal`.
+This applies uniformly to every attestation issuance path — `attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest`, and `replace_attestation` — and every revocation path — `revoke`, `revoke_by_authorizer`, `revoke_by_delegate`, `revoke_by_delegation`, `multi_revoke`, and `replace_attestation`'s own internal revocation of the old attestation — since they all funnel through `attest_internal` / `revoke_internal` respectively.
 
-A resolver's failure is a normal, typed contract error (`SASError::ResolverRejected`), the same class of outcome as `SASError::InvalidSchema` or `SASError::NotRevocable` — callers should expect and handle it, not treat it as exceptional. There is deliberately no separate "resolver failed" event: a panic discards any event the same call would have published, so the typed error returned to the caller is the only — and sufficient — signal.
+A resolver's failure is a normal, typed contract error (`SASError::ResolverRejected`), the same class of outcome as `SASError::InvalidSchema` or `SASError::NotRevocable` — callers should expect and handle it, not treat it as exceptional. There is deliberately no separate "resolver failed" event: a panic discards any event the same call would have published — including, for revocation, the `AttestationRevoked` event published just before `on_revoke` runs — so the typed error returned to the caller is the only — and sufficient — signal.
 
 ## Delegated Issuance and Schema Allow-lists (#7)
 

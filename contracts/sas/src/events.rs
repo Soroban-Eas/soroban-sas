@@ -1,6 +1,7 @@
 use soroban_sas_common::{
-    events::{ATTESTED, INDEXER_UPDATED, REVOKED},
-    Attestation, AttestationIssuedEvent, AttestationRevokedEvent, IndexerUpdatedEvent, UID,
+    events::{ATTESTED, BATCH_ATTESTED, BATCH_REVOKED, INDEXER_UPDATED, REVOKED},
+    Attestation, AttestationIssuedEvent, AttestationRevokedEvent, BatchAttestedEvent,
+    BatchRevokedEvent, IndexerUpdatedEvent, UID,
 };
 use soroban_sdk::{symbol_short, Address, Env};
 
@@ -76,6 +77,38 @@ pub fn publish_index_failed(env: &Env, uid: &UID) {
 pub fn publish_reindexed(env: &Env, uid: &UID) {
     env.events()
         .publish((symbol_short!("REINDEX"), uid.clone()), uid.clone());
+}
+
+/// Publishes the `BatchAttested` summary event marking the end of a
+/// successful `multi_attest` call. Must be called only after every per-item
+/// `AttestationIssued` event for the batch has already been published, and
+/// only on the batch's success path — never on a reverted call (#213).
+///
+/// Topics: `(BATCH_ATTESTED,)`.
+pub fn publish_batch_attested(env: &Env, count: u32, attester_count: u32) {
+    env.events().publish(
+        (BATCH_ATTESTED,),
+        BatchAttestedEvent {
+            count,
+            attester_count,
+        },
+    );
+}
+
+/// Publishes the `BatchRevoked` summary event marking the end of a
+/// successful `multi_revoke` call, after every per-item `AttestationRevoked`
+/// event for the batch. See `publish_batch_attested` for the shared
+/// ordering/failure-path guarantees.
+///
+/// Topics: `(BATCH_REVOKED,)`.
+pub fn publish_batch_revoked(env: &Env, count: u32, attester_count: u32) {
+    env.events().publish(
+        (BATCH_REVOKED,),
+        BatchRevokedEvent {
+            count,
+            attester_count,
+        },
+    );
 }
 
 pub fn publish_withdrawal(

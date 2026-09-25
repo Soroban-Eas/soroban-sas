@@ -310,7 +310,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": ""
+                    "bytes": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
                   }
                 },
                 {
@@ -384,7 +384,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+                        "bytes": "959941034d11867f270e0114e234d0460bf59f01a2f22e98351ad3d9987aa7b6"
                       }
                     ]
                   }
@@ -571,7 +571,7 @@
                             "symbol": "data"
                           },
                           "val": {
-                            "bytes": ""
+                            "bytes": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
                           }
                         },
                         {
@@ -645,7 +645,7 @@
                           "val": {
                             "vec": [
                               {
-                                "bytes": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+                                "bytes": "959941034d11867f270e0114e234d0460bf59f01a2f22e98351ad3d9987aa7b6"
                               }
                             ]
                           }

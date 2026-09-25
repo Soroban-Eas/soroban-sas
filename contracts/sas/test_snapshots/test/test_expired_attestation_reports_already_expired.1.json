@@ -310,7 +310,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": ""
+                    "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
                   }
                 },
                 {
@@ -384,7 +384,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                        "bytes": "ecb237699c1cc9b84bf6d463a9e4711c54d218d492f6a7a20f15e35dd70e5224"
                       }
                     ]
                   }
@@ -520,7 +520,7 @@
                             "symbol": "data"
                           },
                           "val": {
-                            "bytes": ""
+                            "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
                           }
                         },
                         {
@@ -594,7 +594,7 @@
                           "val": {
                             "vec": [
                               {
-                                "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                                "bytes": "ecb237699c1cc9b84bf6d463a9e4711c54d218d492f6a7a20f15e35dd70e5224"
                               }
                             ]
                           }

@@ -259,6 +259,21 @@ impl SAS {
             panic_with_error!(&env, SASError::DuplicateAttestation);
         }
 
+        // Reject any attestation whose `uid` does not match the
+        // content-addressed hash of its own fields, so a caller cannot
+        // forge, copy, or randomly pick a UID that isn't derived from what
+        // is actually being attested (#215).
+        let expected_uid = soroban_sas_common::attestation_uid(
+            &env,
+            &attestation.schema_uid,
+            &attestation.recipient,
+            &attestation.attester,
+            &attestation.data,
+        );
+        if attestation.uid != expected_uid {
+            panic_with_error!(&env, SASError::InvalidUID);
+        }
+
         if attestation.expiration_time != 0
             && attestation.expiration_time <= env.ledger().timestamp()
         {
@@ -569,6 +584,38 @@ impl SAS {
 
         events::publish_revoked(&env, &uid, timestamp);
 
+        // Resolver callback: authoritative, mirroring `on_attest`'s
+        // semantics (#216; see docs/schemas.md's "Resolver Failure
+        // Semantics"). Invoked after the revocation is written and its
+        // event published — rather than before, as `on_attest` does with
+        // issuance — so the resolver can inspect the attestation exactly as
+        // it will read on-chain once this call commits. A rejection, trap,
+        // or missing `on_revoke` implementation all panic with
+        // `SASError::ResolverRejected`, which reverts the whole
+        // invocation — the storage write and event published just above
+        // included — so schemas without a real enforcement resolver are
+        // unaffected and a rejected revocation leaves the attestation
+        // exactly as it was.
+        let registry = require_registry(&env);
+        let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
+            &registry,
+            &Symbol::new(&env, "get_schema"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        );
+        let Some(schema) = schema_opt else {
+            panic_with_error!(&env, SASError::InvalidSchema);
+        };
+        if env
+            .try_invoke_contract::<(), soroban_sdk::Error>(
+                &schema.resolver,
+                &Symbol::new(&env, "on_revoke"),
+                soroban_sdk::vec![&env, attestation.clone().into_val(&env)],
+            )
+            .is_err()
+        {
+            panic_with_error!(&env, SASError::ResolverRejected);
+        }
+
         // Notify indexer if bound, so revoked status is observable via
         // filtered queries. Best-effort: ignore `invoke` failure if the
         // indexer does not implement the callback (e.g. legacy indexer).
@@ -649,6 +696,11 @@ impl SAS {
             let uid = Self::attest_internal(env.clone(), attestation);
             uids.push_back(uid);
         }
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationIssued event first (#213). Reaching this line means the
+        // whole batch committed: a panic anywhere above reverts the call and
+        // this never runs.
+        events::publish_batch_attested(&env, uids.len(), authorized_attesters.len());
         uids
     }
 
@@ -749,6 +801,11 @@ impl SAS {
         for uid in to_revoke.iter() {
             Self::revoke_internal(env.clone(), uid);
         }
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationRevoked event first (#213). Reaching this line means
+        // the whole batch committed: a panic anywhere above reverts the
+        // call and this never runs.
+        events::publish_batch_revoked(&env, to_revoke.len(), distinct.len());
     }
 
     /// Registers the ed25519 public key that backs `attester`'s Stellar
@@ -1049,6 +1106,31 @@ impl SAS {
         } else {
             None
         }
+    }
+
+    /// Returns `attester`'s registered delegated-verification key record, or
+    /// `None` if one was never registered (#214).
+    ///
+    /// Every other piece of user-facing persistent state in the protocol has
+    /// a typed public reader; this closes that gap for the attester key
+    /// registry, which previously required parsing raw storage off-chain.
+    /// `Some(record)` is returned for both active and revoked registrations
+    /// — `record.revoked` distinguishes the two — so callers can tell "never
+    /// registered" apart from "registered, then revoked".
+    pub fn get_attester_key(
+        env: Env,
+        attester: Address,
+    ) -> Option<soroban_sas_common::AttesterKeyRecord> {
+        extend_instance_ttl(&env);
+        let key = (ATTESTER_KEY, attester);
+        let record: Option<soroban_sas_common::AttesterKeyRecord> =
+            env.storage().persistent().get(&key);
+        if record.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        record
     }
 }
 

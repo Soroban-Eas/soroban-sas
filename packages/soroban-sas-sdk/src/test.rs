@@ -170,11 +170,11 @@ fn test_attestation_builder_uid_is_deterministic_and_content_addressed() {
     let uid_b = build_uid(b"different data", [0u8; 32]);
     assert_ne!(uid_a, uid_b, "different data must produce a different UID");
 
+    // `ref_uid` is deliberately not part of the content-addressing preimage
+    // (`sha256(schema_uid || recipient || attester || data)`, #215), so it
+    // must not affect the derived UID.
     let uid_c = build_uid(b"same data", [9u8; 32]);
-    assert_ne!(
-        uid_a, uid_c,
-        "a different ref_uid must produce a different UID"
-    );
+    assert_eq!(uid_a, uid_c, "ref_uid must not affect the derived UID");
 }
 
 #[test]
