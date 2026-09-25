@@ -1417,6 +1417,108 @@ fn test_register_attester_key_requires_auth() {
     assert!(res.is_err());
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// #214 — get_attester_key public read entrypoint
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_attester_key_returns_none_for_never_registered_attester() {
+    let s = offchain::setup([60u8; 32]);
+    let never_registered = Address::generate(&s.env);
+    assert_eq!(s.sas_client.get_attester_key(&never_registered), None);
+}
+
+#[test]
+fn test_get_attester_key_returns_active_registration() {
+    let s = offchain::setup([61u8; 32]);
+    s.env.mock_all_auths();
+
+    let attester = s.attestation.attester.clone();
+    let public_key = offchain::public_key(&s);
+    s.sas_client.register_attester_key(&attester, &public_key);
+
+    let record = s
+        .sas_client
+        .get_attester_key(&attester)
+        .expect("key was just registered");
+    assert_eq!(record.public_key, public_key);
+    assert_eq!(record.version, 1);
+    assert!(!record.revoked);
+}
+
+#[test]
+fn test_get_attester_key_returns_revoked_registration_distinct_from_never_registered() {
+    let s = offchain::setup([62u8; 32]);
+    s.env.mock_all_auths();
+
+    let attester = s.attestation.attester.clone();
+    let public_key = offchain::public_key(&s);
+    s.sas_client.register_attester_key(&attester, &public_key);
+    s.sas_client.revoke_attester_key(&attester);
+
+    let record = s
+        .sas_client
+        .get_attester_key(&attester)
+        .expect("a revoked record is retained, not deleted");
+    assert!(record.revoked);
+    assert_eq!(record.public_key, public_key);
+    assert_eq!(record.version, 1);
+}
+
+/// `live_until_ledger` recorded for one persistent contract-data entry, or
+/// `None` when no such entry exists. The SDK 20 test host neither exposes
+/// `get_ttl` nor evicts lapsed entries, so reading the ledger snapshot is the
+/// only way to observe a TTL extension directly.
+fn persistent_live_until<K>(env: &Env, key: &K) -> Option<u32>
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+{
+    use soroban_sdk::xdr::{ContractDataDurability, LedgerKey, ScVal};
+    use soroban_sdk::TryFromVal;
+
+    let target = ScVal::try_from_val(env, &key.into_val(env)).unwrap();
+    env.to_ledger_snapshot()
+        .ledger_entries
+        .iter()
+        .find_map(|(k, (_, live_until))| match &**k {
+            LedgerKey::ContractData(data)
+                if data.durability == ContractDataDurability::Persistent && data.key == target =>
+            {
+                *live_until
+            }
+            _ => None,
+        })
+}
+
+#[test]
+fn test_get_attester_key_renews_persistent_ttl_on_read() {
+    let s = offchain::setup([63u8; 32]);
+    s.env.mock_all_auths();
+
+    let attester = s.attestation.attester.clone();
+    let public_key = offchain::public_key(&s);
+    s.sas_client.register_attester_key(&attester, &public_key);
+
+    let key = (crate::ATTESTER_KEY, attester.clone());
+    let live_until_at_write =
+        persistent_live_until(&s.env, &key).expect("record written by register_attester_key");
+
+    // Advance the ledger so the entry's TTL decays well below the one-year
+    // window `register_attester_key` set it to.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
+    });
+    assert_eq!(persistent_live_until(&s.env, &key), Some(live_until_at_write));
+
+    let expected = s.env.ledger().sequence() + soroban_sas_common::LEDGERS_IN_ONE_YEAR;
+    let record = s
+        .sas_client
+        .get_attester_key(&attester)
+        .expect("key was registered");
+    assert_eq!(record.public_key, public_key);
+    assert_eq!(persistent_live_until(&s.env, &key), Some(expected));
+}
+
 #[test]
 fn test_register_attester_key_rejects_overwrite_while_active() {
     let s = offchain::setup([32u8; 32]);

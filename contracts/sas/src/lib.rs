@@ -1065,6 +1065,31 @@ impl SAS {
             None
         }
     }
+
+    /// Returns `attester`'s registered delegated-verification key record, or
+    /// `None` if one was never registered (#214).
+    ///
+    /// Every other piece of user-facing persistent state in the protocol has
+    /// a typed public reader; this closes that gap for the attester key
+    /// registry, which previously required parsing raw storage off-chain.
+    /// `Some(record)` is returned for both active and revoked registrations
+    /// — `record.revoked` distinguishes the two — so callers can tell "never
+    /// registered" apart from "registered, then revoked".
+    pub fn get_attester_key(
+        env: Env,
+        attester: Address,
+    ) -> Option<soroban_sas_common::AttesterKeyRecord> {
+        extend_instance_ttl(&env);
+        let key = (ATTESTER_KEY, attester);
+        let record: Option<soroban_sas_common::AttesterKeyRecord> =
+            env.storage().persistent().get(&key);
+        if record.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        record
+    }
 }
 
 #[cfg(test)]
