@@ -259,6 +259,21 @@ impl SAS {
             panic_with_error!(&env, SASError::DuplicateAttestation);
         }
 
+        // Reject any attestation whose `uid` does not match the
+        // content-addressed hash of its own fields, so a caller cannot
+        // forge, copy, or randomly pick a UID that isn't derived from what
+        // is actually being attested (#215).
+        let expected_uid = soroban_sas_common::attestation_uid(
+            &env,
+            &attestation.schema_uid,
+            &attestation.recipient,
+            &attestation.attester,
+            &attestation.data,
+        );
+        if attestation.uid != expected_uid {
+            panic_with_error!(&env, SASError::InvalidUID);
+        }
+
         if attestation.expiration_time != 0
             && attestation.expiration_time <= env.ledger().timestamp()
         {

@@ -120,17 +120,26 @@ fn test_verify_offchain_rejects_unknown_and_deprecated_schema() {
     assert_eq!(res, Err(Ok(SASError::InvalidSchema.into())));
 
     // On-chain attest with deprecated should also be InvalidSchema
+    let att2_recipient = Address::generate(&env);
+    let att2_data = Bytes::new(&env);
+    let att2_uid = soroban_sas_common::attestation_uid(
+        &env,
+        &schema_uid,
+        &att2_recipient,
+        &attester,
+        &att2_data,
+    );
     let att2 = Attestation {
-        uid: UID(BytesN::from_array(&env, &[43u8; 32])),
+        uid: att2_uid,
         schema_uid: schema_uid.clone(),
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
-        recipient: Address::generate(&env),
+        recipient: att2_recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data: att2_data,
     };
     env.mock_all_auths();
     let res = sas_client.try_attest(&att2);
@@ -211,8 +220,18 @@ mod revocability {
     }
 
     fn attestation(fx: &Fixture, schema_uid: &UID, att_seed: u8, revocable: bool) -> Attestation {
+        // att_seed folded into `data` so each caller still gets a distinct,
+        // correctly content-addressed UID (#215).
+        let data = Bytes::from_array(&fx.env, &[att_seed; 32]);
+        let uid = soroban_sas_common::attestation_uid(
+            &fx.env,
+            schema_uid,
+            &fx.recipient,
+            &fx.attester,
+            &data,
+        );
         Attestation {
-            uid: UID(BytesN::from_array(&fx.env, &[att_seed; 32])),
+            uid,
             schema_uid: schema_uid.clone(),
             time: 1000,
             expiration_time: 0,
@@ -221,7 +240,7 @@ mod revocability {
             recipient: fx.recipient.clone(),
             attester: fx.attester.clone(),
             revocable,
-            data: Bytes::new(&fx.env),
+            data,
         }
     }
 
@@ -270,6 +289,13 @@ mod revocability {
 
         let mut att = attestation(&fx, &schema_uid, 5, true);
         att.attester = attester;
+        att.uid = soroban_sas_common::attestation_uid(
+            &fx.env,
+            &att.schema_uid,
+            &att.recipient,
+            &att.attester,
+            &att.data,
+        );
 
         let nonce = 1u64;
         let domain = soroban_sas_common::AttestationDomain {
@@ -292,6 +318,7 @@ mod revocability {
         let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
 
         let ok_att = attestation(&fx, &schema_uid, 6, false);
+        let ok_uid = ok_att.uid.clone();
         let bad_att = attestation(&fx, &schema_uid, 7, true);
         let batch = soroban_sdk::vec![&fx.env, ok_att, bad_att];
 
@@ -301,7 +328,6 @@ mod revocability {
         // The whole batch is one atomic host transaction: the rejected
         // second entry must roll back the first entry too, not leave it
         // partially committed.
-        let ok_uid = UID(BytesN::from_array(&fx.env, &[6u8; 32]));
         assert!(!fx.env.as_contract(&fx.sas_client_id, || fx
             .env
             .storage()
@@ -475,8 +501,18 @@ mod resolver_semantics {
     }
 
     fn attestation(fx: &Fixture, schema_uid: &UID, att_seed: u8) -> Attestation {
+        // att_seed folded into `data` so each caller still gets a distinct,
+        // correctly content-addressed UID (#215).
+        let data = Bytes::from_array(&fx.env, &[att_seed; 32]);
+        let uid = soroban_sas_common::attestation_uid(
+            &fx.env,
+            schema_uid,
+            &fx.recipient,
+            &fx.attester,
+            &data,
+        );
         Attestation {
-            uid: UID(BytesN::from_array(&fx.env, &[att_seed; 32])),
+            uid,
             schema_uid: schema_uid.clone(),
             time: 1000,
             expiration_time: 0,
@@ -485,7 +521,7 @@ mod resolver_semantics {
             recipient: fx.recipient.clone(),
             attester: fx.attester.clone(),
             revocable: true,
-            data: Bytes::new(&fx.env),
+            data,
         }
     }
 

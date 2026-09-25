@@ -49,13 +49,6 @@ mod tests {
     }
 
     #[test]
-    fn uid_entropy_is_distinct_across_calls_with_a_frozen_clock() {
-        let a = crate::uid_entropy(1_000);
-        let b = crate::uid_entropy(1_000);
-        assert_ne!(a, b, "entropy must not depend solely on the wall clock");
-    }
-
-    #[test]
     fn rejects_empty_and_oversized_schemas_locally() {
         // #26 — an empty (or whitespace-only) schema is rejected before any
         // transaction is built, and so is one past the 1024-byte limit.
@@ -486,15 +479,14 @@ mod offchain_tests {
         let recipient = stellar_strkey::ed25519::PublicKey([5u8; 32]).to_string();
         let attester = stellar_strkey::ed25519::PublicKey([6u8; 32]).to_string();
 
-        let uid1 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef", 7);
-        let uid2 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef", 7);
+        let uid1 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef").unwrap();
+        let uid2 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef").unwrap();
         assert_eq!(uid1, uid2);
 
-        // Different entropy or content yields a different uid.
-        let uid3 = generate_uid(&env, &schema_uid, &recipient, &attester, b"deadbeef", 8);
+        // Different content yields a different uid (#215: content-addressed,
+        // no entropy).
+        let uid3 = generate_uid(&env, &schema_uid, &recipient, &attester, b"cafebabe").unwrap();
         assert_ne!(uid1, uid3);
-        let uid4 = generate_uid(&env, &schema_uid, &recipient, &attester, b"cafebabe", 7);
-        assert_ne!(uid1, uid4);
     }
 }
 
