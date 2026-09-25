@@ -45,6 +45,10 @@ pub mod mock1 {
             true
         }
 
+        pub fn is_authorized(_env: Env, _uid: UID, _attester: Address) -> bool {
+            true
+        }
+
         #[allow(non_snake_case)]
         pub fn SASREG(_env: Env) -> bool {
             true
@@ -72,6 +76,10 @@ pub mod mock2 {
         pub fn on_revoke(_env: Env, _attestation: Attestation) {}
 
         pub fn validate_schema(_env: Env, _uid: UID) -> bool {
+            false
+        }
+
+        pub fn is_authorized(_env: Env, _uid: UID, _attester: Address) -> bool {
             false
         }
         #[allow(non_snake_case)]
@@ -2273,4 +2281,109 @@ fn test_multi_attest_normalizes_time_to_ledger_timestamp() {
     });
     assert_eq!(stored1.time, ledger_ts);
     assert_eq!(stored2.time, ledger_ts);
+}
+
+#[test]
+fn test_delegated_issuance_and_revocation_e2e() {
+    use schema_registry::{SchemaRegistry, SchemaRegistryClient};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry_id = env.register_contract(None, SchemaRegistry);
+    let registry = SchemaRegistryClient::new(&env, &registry_id);
+    registry.init(&admin);
+
+    let sas_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &sas_id);
+    sas.init(&admin, &registry_id);
+
+    let resolver_id = env.register_contract(None, mock3::MockResolver);
+
+    let owner = Address::generate(&env);
+    let delegate = Address::generate(&env);
+    let unauthorized_user = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let schema_str = soroban_sdk::String::from_str(&env, "bool is_enterprise_member");
+    let schema_uid = registry.register(&owner, &schema_str, &resolver_id, &true);
+
+    // 1. Unauthorized address cannot issue an attestation against this schema
+    let unauthorized_att = attestation_fixture(&env, &unauthorized_user, &recipient, [101u8; 32]);
+    let unauthorized_att = Attestation {
+        schema_uid: schema_uid.clone(),
+        ..unauthorized_att
+    };
+    let res_unauth = sas.try_attest(&unauthorized_att);
+    assert_eq!(
+        res_unauth,
+        Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
+    );
+
+    // 2. Primary schema owner CAN issue an attestation
+    let owner_att = attestation_fixture(&env, &owner, &recipient, [102u8; 32]);
+    let owner_att = Attestation {
+        schema_uid: schema_uid.clone(),
+        ..owner_att
+    };
+    let owner_att_uid = sas.attest(&owner_att);
+    assert!(sas.verify_attestation(&owner_att_uid));
+
+    // 3. Delegate is added to allow-list by the schema owner
+    registry.add_delegate(&schema_uid, &delegate);
+
+    // 4. Authorized delegate CAN issue a valid attestation
+    let delegate_att = attestation_fixture(&env, &delegate, &recipient, [103u8; 32]);
+    let delegate_att = Attestation {
+        schema_uid: schema_uid.clone(),
+        ..delegate_att
+    };
+    let delegate_att_uid = sas.attest(&delegate_att);
+    assert!(sas.verify_attestation(&delegate_att_uid));
+
+    // 5. Authorized delegate CAN revoke their own attestation
+    env.ledger().with_mut(|li| li.timestamp = 2000);
+    sas.revoke(&delegate_att_uid);
+    assert!(!sas.verify_attestation(&delegate_att_uid));
+
+    // 6. Authorized delegate can revoke an attestation issued under the schema via revoke_by_delegate
+    let owner_att2 = attestation_fixture(&env, &owner, &recipient, [104u8; 32]);
+    let owner_att2 = Attestation {
+        schema_uid: schema_uid.clone(),
+        ..owner_att2
+    };
+    let owner_att2_uid = sas.attest(&owner_att2);
+    assert!(sas.verify_attestation(&owner_att2_uid));
+
+    sas.revoke_by_delegate(&owner_att2_uid, &delegate);
+    assert!(!sas.verify_attestation(&owner_att2_uid));
+
+    // 7. Schema owner removes delegate
+    registry.remove_delegate(&schema_uid, &delegate);
+
+    // 8. Removed delegate can NO LONGER issue attestations
+    let delegate_att2 = attestation_fixture(&env, &delegate, &recipient, [105u8; 32]);
+    let delegate_att2 = Attestation {
+        schema_uid: schema_uid.clone(),
+        ..delegate_att2
+    };
+    let res_removed = sas.try_attest(&delegate_att2);
+    assert_eq!(
+        res_removed,
+        Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
+    );
+
+    // 9. Unauthorized address cannot revoke via revoke_by_delegate
+    let owner_att3 = attestation_fixture(&env, &owner, &recipient, [106u8; 32]);
+    let owner_att3 = Attestation {
+        schema_uid: schema_uid.clone(),
+        ..owner_att3
+    };
+    let owner_att3_uid = sas.attest(&owner_att3);
+    let res_revoke_unauth = sas.try_revoke_by_delegate(&owner_att3_uid, &unauthorized_user);
+    assert_eq!(
+        res_revoke_unauth,
+        Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
+    );
 }

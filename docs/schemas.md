@@ -64,3 +64,21 @@ Because the whole invocation is one Soroban transaction, a `SASError::ResolverRe
 This applies uniformly to every attestation issuance path — `attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest` (a single resolver rejection fails the entire batch, consistent with its other atomic validation), and `replace_attestation` — since they all funnel through `attest_internal`.
 
 A resolver's failure is a normal, typed contract error (`SASError::ResolverRejected`), the same class of outcome as `SASError::InvalidSchema` or `SASError::NotRevocable` — callers should expect and handle it, not treat it as exceptional. There is deliberately no separate "resolver failed" event: a panic discards any event the same call would have published, so the typed error returned to the caller is the only — and sufficient — signal.
+
+## Delegated Issuance and Schema Allow-lists (#7)
+
+To support DAOs, enterprise organizations, and multi-issuer systems without sharing private keys or registering duplicate schemas, schema owners can maintain a dynamic allow-list of authorized delegates.
+
+### Management
+- `add_delegate(uid: UID, delegate: Address)`: Adds an address to the schema's allow-list. Requires authorization from the primary schema owner. Emits `SchemaDelegateAdded`.
+- `remove_delegate(uid: UID, delegate: Address)`: Removes an address from the schema's allow-list. Requires authorization from the primary schema owner. Emits `SchemaDelegateRemoved`.
+
+### Verification and Issuance
+- When an attestation is submitted to SAS, `attest_internal` queries the schema registry's `is_authorized(uid, attester)` method.
+- The issuance is accepted if `attester` is either the primary schema owner (recorded at registration) OR an authorized delegate in the allow-list, provided the schema exists and is not deprecated.
+- Unauthorized attesters are rejected with `SASError::Unauthorized`.
+- Cross-contract verification is encapsulated in a single `is_authorized` query to optimize gas and invocation limits.
+
+### Revocation
+- Authorized delegates can revoke their own attestations via `revoke(uid)`.
+- Authorized delegates and schema owners can revoke any attestation under the schema using `revoke_by_delegate(uid, delegate)` / `revoke_by_authorizer(uid, authorizer)`.

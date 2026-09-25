@@ -25,3 +25,6 @@ pub const REGISTRY_VERSION: Symbol = symbol_short!("VERSION");
 /// must be non-zero and not the current WASM's hash; unknown future
 /// versions are rejected.
 pub const UPGRADE_EVENT: Symbol = symbol_short!("UPGRADE");
+/// Storage key for schema delegate allow-lists.
+/// Stored under `(AUTHORIZED_DELEGATES, schema_uid, delegate_address) -> bool`.
+pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");

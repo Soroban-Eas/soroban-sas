@@ -65,8 +65,12 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
     println!("2. Registered schema \"bool is_verified_human\"");
     println!("   schema_uid: {}\n", hex::encode(schema_uid.0.to_array()));
 
-    // --- Step 2: issue an attestation against that schema. ---
+    // --- Step 2: schema owner authorizes a delegate. ---
     let attester = Address::generate(&env);
+    registry.add_delegate(&schema_uid, &attester);
+    println!("3. Schema owner authorized delegate: {attester:?}\n");
+
+    // --- Step 3: delegate issues an attestation against that schema. ---
     let recipient = Address::generate(&env);
     let attestation = Attestation {
         uid: demo_attestation_uid(&env, &schema_uid.0, &attester, &recipient),
@@ -82,7 +86,7 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
     };
     let attestation_uid = sas.attest(&attestation);
 
-    println!("3. Attester issued an attestation against that schema:");
+    println!("4. Authorized delegate issued an attestation against that schema:");
     println!("   attester:   {attester:?}");
     println!("   recipient:  {recipient:?}");
     println!(
@@ -90,9 +94,9 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
         hex::encode(attestation_uid.0.to_array())
     );
 
-    // --- Step 3: anyone can verify it on-chain. ---
+    // --- Step 4: anyone can verify it on-chain. ---
     let is_valid = sas.verify_attestation(&attestation_uid);
-    println!("4. verify_attestation(uid) -> {is_valid}\n");
+    println!("5. verify_attestation(uid) -> {is_valid}\n");
     assert!(is_valid);
 
     let record = sas.get_attestation(&attestation_uid).unwrap();
@@ -103,14 +107,14 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
         record.revocation_time != 0
     );
 
-    // --- Step 4: the attester revokes it; verification now reflects that.
+    // --- Step 5: the attester revokes it; verification now reflects that.
     // A fresh Env's ledger timestamp starts at 0, which would make the
     // recorded revocation_time indistinguishable from "never revoked" —
     // advance the clock first, exactly as a real network would have.
     env.ledger().with_mut(|li| li.timestamp = 1000);
     sas.revoke(&attestation_uid);
     let is_valid_after_revoke = sas.verify_attestation(&attestation_uid);
-    println!("5. Attester revoked it. verify_attestation(uid) -> {is_valid_after_revoke}\n");
+    println!("6. Attester revoked it. verify_attestation(uid) -> {is_valid_after_revoke}\n");
     assert!(!is_valid_after_revoke);
 
     println!("=== done ===\n");

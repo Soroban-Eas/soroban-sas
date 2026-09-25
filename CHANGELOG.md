@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Delegated issuance and dynamic schema allow-lists: schema owners can authorize
+  and revoke delegates via `add_delegate` and `remove_delegate` on `SchemaRegistry`.
+  Authorized delegates can issue and revoke attestations against the schema with
+  the same authority as the original owner (`is_authorized` cross-contract verification). (#7)
+- `SchemaDelegateAdded` and `SchemaDelegateRemoved` events emitted on delegate modification. (#7)
+- SDK client methods `add_delegate`, `remove_delegate`, `is_delegate`, and `is_authorized` in `soroban-sas-sdk`. (#7)
 - Meaningful benchmarks for UID, domain, attestation, and payload hashing
   across small, typical, and maximum payload sizes. (#183)
 - Runnable `basic_attestation` example with dry-run mode and optional

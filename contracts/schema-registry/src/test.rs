@@ -1,7 +1,7 @@
 use crate::{SchemaRegistry, SchemaRegistryClient};
 use soroban_sas_common::{
-    ContractUpgradedEvent, PreviousAddress, SchemaFeeUpdatedEvent, SchemaRegisteredEvent,
-    TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
+    ContractUpgradedEvent, PreviousAddress, SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent,
+    SchemaFeeUpdatedEvent, SchemaRegisteredEvent, TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
 };
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, IntoVal, String};
@@ -904,4 +904,170 @@ fn test_uid_golden_vectors() {
     let resolver2 = Address::generate(&env);
     let uid_other_resolver = client.register(&owner, &schema, &resolver2, &true);
     assert_ne!(uid_true, uid_other_resolver);
+}
+
+#[test]
+fn test_add_and_remove_delegate() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let delegate = Address::generate(&env);
+    let unrelated = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool is_admin");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+    assert_eq!(client.get_creator(&uid), Some(owner.clone()));
+
+    // Initially, delegate is not authorized
+    assert!(!client.is_delegate(&uid, &delegate));
+    assert!(client.is_authorized(&uid, &owner));
+    assert!(!client.is_authorized(&uid, &delegate));
+    assert!(!client.is_authorized(&uid, &unrelated));
+
+    // Owner adds delegate
+    client.add_delegate(&uid, &delegate);
+
+    assert!(client.is_delegate(&uid, &delegate));
+    assert!(client.is_authorized(&uid, &delegate));
+    assert!(client.is_authorized(&uid, &owner));
+    assert!(!client.is_authorized(&uid, &unrelated));
+
+    // Verify SchemaDelegateAdded event was emitted
+    let events = env.events().all();
+    let expected_event = SchemaDelegateAddedEvent {
+        schema_uid: uid.clone(),
+        delegate: delegate.clone(),
+        authorizer: owner.clone(),
+    };
+    assert_eq!(
+        soroban_sdk::vec![&env, events.last().unwrap()],
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("DELADD"), uid.clone()).into_val(&env),
+                expected_event.into_val(&env),
+            )
+        ]
+    );
+
+    // Owner removes delegate
+    client.remove_delegate(&uid, &delegate);
+
+    assert!(!client.is_delegate(&uid, &delegate));
+    assert!(!client.is_authorized(&uid, &delegate));
+    assert!(client.is_authorized(&uid, &owner));
+
+    // Verify SchemaDelegateRemoved event was emitted
+    let events_after = env.events().all();
+    let expected_removed_event = SchemaDelegateRemovedEvent {
+        schema_uid: uid.clone(),
+        delegate: delegate.clone(),
+        authorizer: owner.clone(),
+    };
+    assert_eq!(
+        soroban_sdk::vec![&env, events_after.last().unwrap()],
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("DELREM"), uid.clone()).into_val(&env),
+                expected_removed_event.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_multiple_delegates_allowlist() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let delegate1 = Address::generate(&env);
+    let delegate2 = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool verified");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    client.add_delegate(&uid, &delegate1);
+    client.add_delegate(&uid, &delegate2);
+
+    assert!(client.is_delegate(&uid, &delegate1));
+    assert!(client.is_delegate(&uid, &delegate2));
+    assert!(client.is_authorized(&uid, &delegate1));
+    assert!(client.is_authorized(&uid, &delegate2));
+
+    // Remove delegate1; delegate2 remains authorized
+    client.remove_delegate(&uid, &delegate1);
+    assert!(!client.is_delegate(&uid, &delegate1));
+    assert!(!client.is_authorized(&uid, &delegate1));
+    assert!(client.is_delegate(&uid, &delegate2));
+    assert!(client.is_authorized(&uid, &delegate2));
+}
+
+#[test]
+fn test_delegate_endpoints_reject_unknown_schema() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let delegate = Address::generate(&env);
+    let fake_uid = soroban_sas_common::UID(BytesN::from_array(&env, &[99u8; 32]));
+
+    env.mock_all_auths();
+
+    let res_add = client.try_add_delegate(&fake_uid, &delegate);
+    assert_eq!(
+        res_add,
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into()))
+    );
+
+    let res_rem = client.try_remove_delegate(&fake_uid, &delegate);
+    assert_eq!(
+        res_rem,
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into()))
+    );
+
+    assert!(!client.is_delegate(&fake_uid, &delegate));
+    assert!(!client.is_authorized(&fake_uid, &delegate));
+    assert_eq!(client.get_creator(&fake_uid), None);
+}
+
+#[test]
+fn test_deprecated_schema_revokes_authorization() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let owner = Address::generate(&env);
+    let delegate = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool active");
+    let resolver = Address::generate(&env);
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+    client.add_delegate(&uid, &delegate);
+
+    assert!(client.is_authorized(&uid, &owner));
+    assert!(client.is_authorized(&uid, &delegate));
+
+    // Deprecate the schema
+    client.deprecate(&uid, &owner);
+
+    // After deprecation, neither owner nor delegate is authorized to issue
+    assert!(!client.is_authorized(&uid, &owner));
+    assert!(!client.is_authorized(&uid, &delegate));
 }
