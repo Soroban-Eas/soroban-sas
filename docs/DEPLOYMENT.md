@@ -216,7 +216,7 @@ Concretely, the script:
 | Flag | Meaning |
 | --- | --- |
 | `--network testnet\|mainnet` | Target network (default `testnet`; sets RPC URL + passphrase defaults) |
-| `--secret-key S...` | Funded source account secret (falls back to `$SOROBAN_SECRET_KEY`, then `$ADMIN_SECRET_KEY`) |
+| `--secret-key S...` | Funded source account secret (falls back to `$SOROBAN_SECRET_KEY`, then `$ADMIN_SECRET_KEY`). **Security Note:** The script securely registers a named identity via stdin; the raw seed is never expanded into child-process `argv`, preventing exposure in process listings, crash diagnostics, and CI command tracing. Hardware or external signer flows can also be used by passing a pre-configured identity name instead of a raw secret key if the deployment script is updated to accept it. |
 | `--rpc-url URL` | Override the network's default RPC endpoint |
 | `--env-file FILE` | Where to write results (default `.env`) |
 | `--skip-build` | Reuse previously built WASM artifacts |

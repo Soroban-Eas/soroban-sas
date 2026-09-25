@@ -214,7 +214,7 @@ info "  indexer:  $WASM_INDEXER ($(wc -c <"$WASM_INDEXER") bytes)"
 # ---------------------------------------------------------------------------
 # Shared transaction arguments + helpers
 # ---------------------------------------------------------------------------
-NET_ARGS=(--source-account "$SECRET_KEY" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE")
+NET_ARGS=(--source-account "$IDENTITY_NAME" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE")
 
 # deploy_contract WASM LABEL -> echoes ONLY the new C... contract id on
 # stdout. All human-readable logging goes to stderr, because this function's
