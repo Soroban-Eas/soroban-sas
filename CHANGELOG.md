@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SchemaDeprecated { schema_uid, deprecated_by }` event on the first
   successful deprecation; repeated calls stay idempotent and do not
   re-publish the event. (#218)
+- `validate_schema_syntax` now rejects a schema with more than
+  `MAX_SCHEMA_FIELDS` (64) comma-separated fields. `MAX_SCHEMA_LENGTH`
+  bounds the string's byte length but not its field count, so a string
+  packed with many tiny fields could pack up to 256 fields into the 1024
+  byte budget and impose unbounded per-decode iteration cost on schema
+  resolvers and off-chain SDK parsers. (#217)
 - `Indexer`'s per-key UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) now live in
   persistent storage instead of instance storage, on the same
   `LEDGERS_IN_ONE_YEAR` renewal horizon as the chunk data they count. Instance

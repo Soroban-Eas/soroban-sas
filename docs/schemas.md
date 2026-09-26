@@ -22,6 +22,16 @@ schema string above. The validator rejects whitespace-only values, entries
 without at least one `name Type` pair, and strings that do not resemble a
 field declaration.
 
+Two ceilings bound the size of a schema string:
+- **Byte length**: at most 1024 bytes (`MAX_SCHEMA_LENGTH`).
+- **Field count**: at most 64 comma-separated fields (`MAX_SCHEMA_FIELDS`).
+  A byte-length limit alone doesn't bound field count — a string packed with
+  many tiny fields (e.g. `a B,b B,c B,...`, 4 bytes each) can still fit up to
+  256 fields inside 1024 bytes. Unbounded field counts cost resolvers and
+  off-chain SDK parsers O(n_fields) work on every decode of every
+  attestation issued under the schema, so this ceiling protects that budget.
+  Real identity, KYC, and governance schemas rarely exceed 20 fields.
+
 ## Verification
 When verifying an attestation off-chain or on-chain, the client decodes the raw `data` field using the associated schema definition. The schema enforces that every issued attestation strictly conforms to the expected layout.
 
