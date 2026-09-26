@@ -1,0 +1,28 @@
+# cargo-mutants configuration.
+#
+# Mutation testing injects small artificial bugs (flipping comparison
+# operators, negating conditionals, changing return values, ...) into the
+# workspace's contract and library crates, then re-runs the test suite to
+# check whether at least one test fails ("kills" the mutant). A mutant that
+# survives (tests still pass) marks a gap in test coverage that plain
+# line/branch coverage cannot detect.
+#
+# See docs: https://mutants.rs/config.html
+# Run locally with: cargo mutants --workspace
+# (see CONTRIBUTING.md for the full local workflow)
+
+# Per-mutant test timeout, in seconds. The workspace's unit test suite is
+# small, but cargo-mutants builds and runs it once per mutant, so a generous
+# timeout avoids false "timeout" outcomes on slower CI runners without
+# letting a genuinely hung build run forever.
+timeout = 120
+
+# Exclude test-only and generated code from mutation — mutating test helpers
+# or fuzz/bench harnesses does not exercise product code paths and only adds
+# noise to the report.
+exclude_re = [
+    "^tests/",
+    "^fuzz/",
+    "^benches/",
+    "test_snapshots/",
+]

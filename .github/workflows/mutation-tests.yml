@@ -1,0 +1,78 @@
+name: Mutation Tests
+
+# Mutation testing with cargo-mutants injects small artificial bugs into
+# workspace crates and checks that the existing test suite catches them.
+# This complements line/branch coverage, which only proves code ran, not
+# that a test would fail if the code were subtly wrong (see .cargo/mutants.toml
+# and CONTRIBUTING.md for the local workflow).
+#
+# This job is informational-only for now (does not gate PR merges): mutation
+# testing on the full workspace can take a long time, and the goal is to
+# build up to >=80% mutant kill rate on contract crates before Mainnet,
+# rather than block every PR on it immediately.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutation-tests:
+    name: cargo-mutants (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Informational only: report the outcome without failing the workflow,
+    # so this can run on every PR without blocking merges while the
+    # workspace works toward the >=80% kill-rate goal in the issue tracker.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.79.0
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-mutants-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-mutants-
+            ${{ runner.os }}-cargo-
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --version 24.7.0 --locked
+      - name: Run cargo-mutants across the workspace
+        run: |
+          cargo mutants --workspace --no-shuffle --json --output mutants-out \
+            --package schema-registry \
+            --package sas \
+            --package soroban-sas-indexer \
+            --package soroban-sas-common \
+            --package soroban-sas-sdk
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-report
+          path: |
+            mutants-out/mutants.json
+            mutants-out/outcomes.json
+            mutants-out/caught.txt
+            mutants-out/missed.txt
+            mutants-out/timeout.txt
+            mutants-out/unviable.txt
+          if-no-files-found: warn

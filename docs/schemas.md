@@ -37,6 +37,20 @@ A schema's `revocable` flag is a ceiling on what attestations issued under it ar
 
 This is enforced once, inside `attest_internal`, before the attestation is stored or the resolver is invoked — every issuance path (`attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest`, and `replace_attestation`) shares this same check, so none of them can bypass it. Note this only constrains issuance: it does not change how `revoke`/`multi_revoke`/`replace_attestation` behave once an attestation exists, which continue to key off the attestation's own `revocable` flag.
 
+## Payload Size
+
+The `data` field of every attestation is bounded by `MAX_ATTESTATION_DATA_BYTES`
+(currently 10 000 bytes), enforced in `attest_internal` before any resolver callback
+is invoked. Resolver contracts implementing `on_attest` can rely on this guarantee:
+the `attestation.data` field they receive will never exceed this ceiling.
+
+Schema authors should design their data encodings to fit within this budget. The
+ceiling is intentional — it keeps SHA-256 hashing, XDR encoding, event emission,
+and cross-contract invocation costs within Soroban's measured budget envelope.
+
+Changes to `MAX_ATTESTATION_DATA_BYTES` are a protocol-level breaking change and
+require a versioned upgrade.
+
 ## Resolver Callbacks
 Schemas can optionally specify a `resolver` contract address. If specified, the SAS contract will invoke callbacks on the resolver to enforce schema-specific rules or synchronize dependent state.
 
