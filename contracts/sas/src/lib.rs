@@ -303,6 +303,9 @@ impl SAS {
 
         // Bound payload size before any storage, hashing, or cross-contract
         // calls so oversized attestations fail fast with a typed error. (#157)
+        // Resolvers implementing `on_attest` can rely on this ceiling already
+        // having been enforced — see the "Payload Size" section of
+        // docs/schemas.md for the resolver-facing guarantee this provides.
         if attestation.data.len() > MAX_ATTESTATION_DATA_BYTES {
             panic_with_error!(&env, SASError::PayloadTooLarge);
         }
