@@ -192,3 +192,7 @@ Existing deployments with historical delegation nonces require a separately
 reviewed migration that enumerates known attesters and copies each watermark.
 New deployments use the typed key directly. This migration is not performed by
 the generic upgrade entrypoint.
+
+
+## Verification
+Ensure you verify hashes using `scripts/verify_wasm_hashes.sh` against `CHANGELOG.md`.

@@ -105,6 +105,13 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
         return Err(SASError::InvalidSchema);
     };
 
+    
+    for i in 0..schema_len {
+        let byte = buf[i];
+        if byte >= b'A' && byte <= b'Z' {
+            return Err(SASError::InvalidSchemaFormat);
+        }
+    }
     let mut field_count = 0u32;
     while start < end {
         let mut field_end = start;
