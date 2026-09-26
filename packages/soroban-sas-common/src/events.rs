@@ -41,6 +41,8 @@ pub const SCHEMA_OWNERSHIP_TRANSFERRED: Symbol = symbol_short!("SCHOWN");
 pub const BATCH_ATTESTED: Symbol = symbol_short!("BATCHATT");
 /// First topic of every `BatchRevoked` event.
 pub const BATCH_REVOKED: Symbol = symbol_short!("BATCHREV");
+/// First topic of every `IndexerStrictUpdated` event.
+pub const INDEXER_STRICT_UPDATED: Symbol = symbol_short!("IDXSTRUP");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -316,4 +318,19 @@ pub struct FeeConfigUpdatedEvent {
     pub new_token: PreviousAddress,
     pub new_amount: Option<i128>,
     pub authorizer: Address,
+}
+
+/// Payload of the `IndexerStrictUpdated` event.
+///
+/// Published with topics `(INDEXER_STRICT_UPDATED, admin)` on a successful
+/// `SAS::set_indexer_strict` (#251). `old_strict`/`new_strict` are `false`
+/// for fail-open (the default) and `true` for fail-closed, so an off-chain
+/// monitor can detect a toggle of the Indexer availability policy without
+/// polling `get_indexer_strict`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndexerStrictUpdatedEvent {
+    pub old_strict: bool,
+    pub new_strict: bool,
+    pub admin: Address,
 }

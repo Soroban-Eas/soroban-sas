@@ -591,7 +591,13 @@ impl SAS {
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
+        let old_strict: bool = env
+            .storage()
+            .instance()
+            .get(&INDEXER_STRICT)
+            .unwrap_or(false);
         env.storage().instance().set(&INDEXER_STRICT, &strict);
+        events::publish_indexer_strict_updated(&env, old_strict, strict, admin);
         extend_instance_ttl(&env);
     }
 

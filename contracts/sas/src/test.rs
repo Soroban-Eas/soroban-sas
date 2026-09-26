@@ -3,8 +3,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
     hash_delegated_revocation, AdminTransferCompletedEvent, AdminTransferProposedEvent,
     Attestation, AttestationDomain, AttestationIssuedEvent, AttestationRevokedEvent,
-    BatchAttestedEvent, BatchRevokedEvent, ContractUpgradedEvent, IndexerUpdatedEvent,
-    PreviousAddress, SASError, UID,
+    BatchAttestedEvent, BatchRevokedEvent, ContractUpgradedEvent, IndexerStrictUpdatedEvent,
+    IndexerUpdatedEvent, PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -2477,6 +2477,98 @@ fn test_set_indexer_requires_admin_auth() {
     let indexer = Address::generate(&env);
     let res = sas_client.try_set_indexer(&indexer);
     assert!(res.is_err());
+}
+
+#[test]
+fn test_set_indexer_strict_emits_event_toggling_false_to_true() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    assert!(!sas_client.get_indexer_strict());
+
+    sas_client.set_indexer_strict(&true);
+    assert!(sas_client.get_indexer_strict());
+
+    let expected = IndexerStrictUpdatedEvent {
+        old_strict: false,
+        new_strict: true,
+        admin: admin.clone(),
+    };
+    let events = env.events().all();
+    assert_eq!(
+        events.slice(events.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                sas_id,
+                (symbol_short!("IDXSTRUP"), admin).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_set_indexer_strict_emits_event_toggling_true_to_false() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    sas_client.set_indexer_strict(&true);
+    sas_client.set_indexer_strict(&false);
+    assert!(!sas_client.get_indexer_strict());
+
+    let expected = IndexerStrictUpdatedEvent {
+        old_strict: true,
+        new_strict: false,
+        admin: admin.clone(),
+    };
+    let events = env.events().all();
+    assert_eq!(
+        events.slice(events.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                sas_id,
+                (symbol_short!("IDXSTRUP"), admin).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_set_indexer_strict_requires_admin_auth_and_emits_no_event_on_failure() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    env.set_auths(&[]);
+
+    let events_before = env.events().all().len();
+    let res = sas_client.try_set_indexer_strict(&true);
+    assert!(res.is_err());
+
+    // The unauthorized attempt must not have changed the policy nor
+    // published an `IndexerStrictUpdated` event.
+    env.mock_all_auths();
+    assert!(!sas_client.get_indexer_strict());
+    assert_eq!(env.events().all().len(), events_before);
 }
 
 #[test]
