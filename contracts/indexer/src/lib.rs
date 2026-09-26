@@ -446,7 +446,6 @@ impl Indexer {
     /// predecessors become `Replaced` and are filtered out in active-only
     /// mode but still appear in historical mode via the forward/reverse
     /// links (`get_replacement` / `get_replaces`).
-
     pub fn get_recipient_filtered(
         env: Env,
         recipient: Address,

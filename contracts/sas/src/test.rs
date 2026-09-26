@@ -1,9 +1,9 @@
 use crate::{SASClient, SAS};
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
-    hash_delegated_revocation, Attestation, AttestationDomain, AttestationIssuedEvent,
-    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent,
-    PreviousAddress, SASError, UID,
+    hash_delegated_revocation, AdminTransferCompletedEvent, AdminTransferProposedEvent,
+    Attestation, AttestationDomain, AttestationIssuedEvent, AttestationRevokedEvent,
+    BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent, PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -183,8 +183,7 @@ fn test_happy_path_attestation() {
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let ref_uid = UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -298,8 +297,7 @@ fn test_revocation_success() {
 
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
     let attestation = Attestation {
         uid: uid.clone(),
         schema_uid,
@@ -692,8 +690,7 @@ fn test_resolver_callback() {
 
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1509,7 +1506,10 @@ fn test_get_attester_key_renews_persistent_ttl_on_read() {
     s.env.ledger().with_mut(|li| {
         li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
     });
-    assert_eq!(persistent_live_until(&s.env, &key), Some(live_until_at_write));
+    assert_eq!(
+        persistent_live_until(&s.env, &key),
+        Some(live_until_at_write)
+    );
 
     let expected = s.env.ledger().sequence() + soroban_sas_common::LEDGERS_IN_ONE_YEAR;
     let record = s
@@ -1766,8 +1766,7 @@ fn test_comprehensive_lifecycle() {
     let recipient = Address::generate(&env);
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1813,9 +1812,7 @@ fn test_attest_emits_attestation_issued_event() {
     let recipient = Address::generate(&env);
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid = soroban_sas_common::attestation_uid(
-        &env, &schema_uid, &recipient, &attester, &data,
-    );
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1867,8 +1864,7 @@ fn test_revoke_emits_attestation_revoked_event() {
     let recipient = Address::generate(&env);
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -2418,8 +2414,7 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
 
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
     let attestation = Attestation {
         uid,
         schema_uid,
@@ -2573,6 +2568,192 @@ fn test_delegated_issuance_and_revocation_e2e() {
     );
 }
 
+#[test]
+fn test_admin_transfer_happy_path() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let old_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas.init(&old_admin, &registry_id);
+
+    // Old admin can set fee initially
+    sas.set_fee(&token, &100);
+
+    // Step 1: propose_admin
+    sas.propose_admin(&new_admin);
+
+    // Verify AdminTransferProposed event
+    let events = env.events().all();
+    let expected_prop = AdminTransferProposedEvent {
+        current_admin: old_admin.clone(),
+        proposed_admin: new_admin.clone(),
+    };
+    assert_eq!(
+        events.slice(events.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("ADMPROP"), old_admin.clone()).into_val(&env),
+                expected_prop.into_val(&env),
+            )
+        ]
+    );
+
+    // Step 2: accept_admin
+    sas.accept_admin();
+
+    // Verify AdminTransferCompleted event
+    let events_after = env.events().all();
+    let expected_comp = AdminTransferCompletedEvent {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+    };
+    assert_eq!(
+        events_after.slice(events_after.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("ADMCOMP"), old_admin.clone()).into_val(&env),
+                expected_comp.into_val(&env),
+            )
+        ]
+    );
+
+    // New admin can perform admin actions
+    sas.set_fee(&token, &200);
+
+    // Old admin cannot perform admin actions
+    env.set_auths(&[]);
+    assert!(sas.try_set_fee(&token, &300).is_err());
+}
+
+#[test]
+fn test_admin_transfer_cancellation_via_reproposal() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    let candidate1 = Address::generate(&env);
+    let candidate2 = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    // Propose candidate1
+    sas.propose_admin(&candidate1);
+
+    // Overwrite proposal by proposing candidate2
+    sas.propose_admin(&candidate2);
+
+    // candidate2 accepts
+    sas.accept_admin();
+
+    let new_indexer = Address::generate(&env);
+    sas.set_indexer(&new_indexer);
+    assert_eq!(sas.get_indexer(), Some(new_indexer));
+}
+
+#[test]
+fn test_accept_admin_no_proposal_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    let res = sas.try_accept_admin();
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::NotInitialized.into()))
+    );
+}
+
+#[test]
+fn test_accept_admin_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    let candidate = Address::generate(&env);
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    sas.propose_admin(&candidate);
+
+    // Disable mock auths
+    env.set_auths(&[]);
+    let res = sas.try_accept_admin();
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_get_delegation_nonce() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    // 1. Never-delegated attester returns None
+    assert_eq!(sas.get_delegation_nonce(&attester), None);
+
+    // 2. Perform one delegated attest with nonce 1
+    let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+    let public_key = signing_key.verifying_key().to_bytes();
+    let public_key_bytesn = BytesN::from_array(&env, &public_key);
+    sas.register_attester_key(&attester, &public_key_bytesn);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [42u8; 32]);
+    let domain = AttestationDomain {
+        network_id: env.ledger().network_id(),
+        contract: contract_id.clone(),
+        nonce: 1,
+    };
+    let hash = soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain);
+    let signature = signing_key.sign(&hash.to_array());
+    let sig_bytesn = BytesN::from_array(&env, &signature.to_bytes());
+
+    sas.attest_by_delegation(&attestation, &1, &sig_bytesn, &public_key_bytesn);
+
+    assert_eq!(sas.get_delegation_nonce(&attester), Some(1));
+
+    // 3. Perform multiple delegated operations with higher nonce (e.g. 5)
+    let attestation2 = attestation_fixture(&env, &attester, &recipient, [43u8; 32]);
+    let domain2 = AttestationDomain {
+        network_id: env.ledger().network_id(),
+        contract: contract_id.clone(),
+        nonce: 5,
+    };
+    let hash2 = soroban_sas_common::hash_offchain_attestation(&env, &attestation2, &domain2);
+    let signature2 = signing_key.sign(&hash2.to_array());
+    let sig_bytesn2 = BytesN::from_array(&env, &signature2.to_bytes());
+
+    sas.attest_by_delegation(&attestation2, &5, &sig_bytesn2, &public_key_bytesn);
+
+    assert_eq!(sas.get_delegation_nonce(&attester), Some(5));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // #215 — Attestation.uid must be content-addressed on issuance
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2641,9 +2822,9 @@ fn test_attest_by_delegation_rejects_a_uid_that_does_not_match_its_content() {
     let signature = offchain::sign(&s, &tampered, nonce);
     let public_key = offchain::public_key(&s);
 
-    let res =
-        s.sas_client
-            .try_attest_by_delegation(&tampered, &nonce, &signature, &public_key);
+    let res = s
+        .sas_client
+        .try_attest_by_delegation(&tampered, &nonce, &signature, &public_key);
     assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
 }
 
@@ -2716,7 +2897,12 @@ fn test_multi_attest_emits_batch_attested_summary_as_last_event() {
     let issued = |uid: UID, attester: Address| {
         (
             sas_id.clone(),
-            (symbol_short!("ATTESTED"), schema_uid.clone(), attester.clone()).into_val(&env),
+            (
+                symbol_short!("ATTESTED"),
+                schema_uid.clone(),
+                attester.clone(),
+            )
+                .into_val(&env),
             AttestationIssuedEvent {
                 uid,
                 schema_uid: schema_uid.clone(),
@@ -2754,12 +2940,7 @@ fn test_multi_attest_does_not_emit_batch_attested_on_a_reverted_call() {
     let mut batch = soroban_sdk::vec![&env];
     for i in 0..(crate::MAX_MULTI_ATTEST + 1) {
         let seed = (i % 256) as u8;
-        batch.push_back(attestation_fixture(
-            &env,
-            &attester,
-            &recipient,
-            [seed; 32],
-        ));
+        batch.push_back(attestation_fixture(&env, &attester, &recipient, [seed; 32]));
     }
 
     env.mock_all_auths();

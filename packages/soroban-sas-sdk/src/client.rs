@@ -24,6 +24,7 @@ use std::sync::Arc;
 /// archived entries surface as `Archived` with restoration metadata rather
 /// than `NotFound`.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum AttestationResult {
     /// Live entry, TTL was bumped on read.
     Live(Attestation),
@@ -169,6 +170,28 @@ impl SASClient {
         rpc: &RpcClient,
     ) -> Result<Option<(Address, i128)>, SdkError> {
         invoke_read_only(env, rpc, &self.contract_id, "get_fee", vec![])
+    }
+
+    /// Reads the highest delegation nonce consumed for `attester` via `simulateTransaction`
+    /// (a pure read) (#236).
+    ///
+    /// Return value semantics:
+    /// - `Ok(None)`: No nonce has been consumed; any nonce ≥ 1 is valid for the next operation.
+    /// - `Ok(Some(n))`: `n` is the highest nonce consumed so far; the next valid nonce is any value strictly greater than `n` (i.e. > `n`).
+    pub fn fetch_delegation_nonce(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &Address,
+    ) -> Result<Option<u64>, SdkError> {
+        let arg = simulate::encode_arg(env, attester)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_delegation_nonce",
+            vec![arg],
+        )
     }
 
     /// Calls `SchemaRegistry::get_schema(uid)` on `registry_contract_id` via
@@ -623,6 +646,35 @@ impl SASClient {
             owner_secret_seed,
             registry_contract_id,
             "remove_delegate",
+            args,
+        )
+    }
+
+    /// Calls `SchemaRegistry::transfer_schema_ownership(uid, new_owner)` (#229).
+    /// Requires `owner_secret_seed` to be the current schema owner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn transfer_schema_ownership(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        new_owner: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let new_owner_addr = parse_address(env, new_owner, AddressKind::Either, "new_owner")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &new_owner_addr)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            owner_secret_seed,
+            registry_contract_id,
+            "transfer_schema_ownership",
             args,
         )
     }

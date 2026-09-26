@@ -19,6 +19,7 @@ mod events;
 pub struct SAS;
 
 pub const SAS_ADMIN: Symbol = symbol_short!("ADMIN");
+pub const PENDING_ADMIN: Symbol = symbol_short!("PEND_ADM");
 pub const SCHEMA_REGISTRY: Symbol = symbol_short!("REGISTRY");
 pub const INDEXER: Symbol = symbol_short!("INDEXER");
 pub const TREASURY: Symbol = symbol_short!("TREASURY");
@@ -119,6 +120,42 @@ impl SAS {
         env.storage().instance().set(&SAS_ADMIN, &admin);
         env.storage().instance().set(&SCHEMA_REGISTRY, &registry);
         extend_instance_ttl(&env);
+    }
+
+    /// Step 1 of two-step admin transfer (#228).
+    /// Current admin authorizes proposing `new_admin`.
+    /// Overwrites any pending proposal (allows cancellation by re-proposing self or another).
+    /// Emits `AdminTransferProposed`.
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        extend_instance_ttl(&env);
+        let current_admin = require_admin(&env);
+        current_admin.require_auth();
+
+        env.storage().instance().set(&PENDING_ADMIN, &new_admin);
+        extend_instance_ttl(&env);
+
+        events::publish_admin_transfer_proposed(&env, &current_admin, &new_admin);
+    }
+
+    /// Step 2 of two-step admin transfer (#228).
+    /// Pending admin authorizes accepting ownership.
+    /// Panics `NotInitialized` if no proposal is pending.
+    /// Overwrites `SAS_ADMIN` with `pending_admin` and removes `PENDING_ADMIN`.
+    /// Emits `AdminTransferCompleted`.
+    pub fn accept_admin(env: Env) {
+        extend_instance_ttl(&env);
+        let pending_admin: Address = match env.storage().instance().get(&PENDING_ADMIN) {
+            Some(admin) => admin,
+            None => panic_with_error!(&env, SASError::NotInitialized),
+        };
+        pending_admin.require_auth();
+
+        let old_admin = require_admin(&env);
+        env.storage().instance().set(&SAS_ADMIN, &pending_admin);
+        env.storage().instance().remove(&PENDING_ADMIN);
+        extend_instance_ttl(&env);
+
+        events::publish_admin_transfer_completed(&env, &old_admin, &pending_admin);
     }
 
     /// Returns the bound indexer, if one has been configured.
@@ -394,7 +431,7 @@ impl SAS {
             return LEDGERS_IN_ONE_YEAR;
         }
         let seconds_remaining = expiration_time - now;
-        let ledgers_remaining = ((seconds_remaining + 4) / 5) as u32;
+        let ledgers_remaining = seconds_remaining.div_ceil(5) as u32;
         let max_ttl = LEDGERS_IN_ONE_YEAR * 5;
         ledgers_remaining
             .saturating_add(LEDGERS_IN_ONE_YEAR)
@@ -1106,6 +1143,22 @@ impl SAS {
         } else {
             None
         }
+    }
+
+    /// Returns the highest delegation nonce consumed for `attester`, or `None`
+    /// if no delegated operation has ever been performed for this attester (#236).
+    ///
+    /// Extends instance TTL on every call.
+    ///
+    /// Nonce semantics:
+    /// - `None`: No nonce has been consumed; any nonce ≥ 1 is valid for the next operation.
+    /// - `Some(n)`: `n` is the highest nonce consumed so far; the next valid nonce is any value strictly greater than `n` (i.e. > `n`).
+    pub fn get_delegation_nonce(env: Env, attester: Address) -> Option<u64> {
+        extend_instance_ttl(&env);
+        let key = (DELEGATION_NONCE, attester);
+        let nonce = env.storage().instance().get::<_, u64>(&key);
+        extend_instance_ttl(&env);
+        nonce
     }
 
     /// Returns `attester`'s registered delegated-verification key record, or

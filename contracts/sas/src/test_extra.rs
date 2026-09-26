@@ -720,6 +720,7 @@ mod revoke_resolver_semantics {
         }
     }
 
+    #[allow(dead_code)]
     struct Fixture {
         env: Env,
         sas_client_id: Address,
