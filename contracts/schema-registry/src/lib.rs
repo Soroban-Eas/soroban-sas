@@ -430,6 +430,44 @@ impl SchemaRegistry {
     ///
     /// See `docs/schemas.md` for the schema syntax specification.
 
+
+    pub fn transfer_ownership(env: Env, sender: Address, uid: UID, new_owner: Address) {
+        sender.require_auth();
+        extend_instance_ttl(&env);
+        
+        // Ensure schema exists
+        let _record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        });
+
+        // Validate sender is current creator/owner
+        let creator: Option<Address> = env.storage().persistent().get(&(SCHEMA_CREATOR, uid.clone()));
+        let mut authorized = false;
+        if let Some(ref c) = creator {
+            if *c == sender {
+                authorized = true;
+            }
+        }
+        
+        // Admins can also transfer ownership (optional, but robust)
+        if !authorized {
+            let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
+            if let Some(a) = admin {
+                if a == sender {
+                    authorized = true;
+                }
+            }
+        }
+
+        if !authorized {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        // Set new owner
+        env.storage().persistent().set(&(SCHEMA_CREATOR, uid.clone()), &new_owner);
+        env.events().publish((SCHEMA_OWNERSHIP_TRANSFERRED, uid), (sender, new_owner));
+    }
+
     pub fn deprecate_schema(env: Env, sender: Address, uid: UID) {
         sender.require_auth();
         extend_instance_ttl(&env);
