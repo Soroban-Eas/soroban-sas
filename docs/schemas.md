@@ -37,6 +37,21 @@ A schema's `revocable` flag is a ceiling on what attestations issued under it ar
 
 This is enforced once, inside `attest_internal`, before the attestation is stored or the resolver is invoked — every issuance path (`attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest`, and `replace_attestation`) shares this same check, so none of them can bypass it. Note this only constrains issuance: it does not change how `revoke`/`multi_revoke`/`replace_attestation` behave once an attestation exists, which continue to key off the attestation's own `revocable` flag.
 
+## Deprecation Authorization
+
+`SchemaRegistry::deprecate(uid: UID, authorizer: Address)` marks a schema as deprecated. Once deprecated:
+- `get_schema` and `validate_schema` return `None` / `false` for the schema.
+- `is_authorized` rejects every attester, so no further attestations can be issued under it.
+- Existing attestations already issued under the schema are unaffected in storage, but `verify_offchain_attestation` and issuance checks that re-validate the schema will treat it as gone.
+
+Because deprecation is irreversible (there is no `undeprecate`) and immediately invalidates issuance for every holder of the schema, only two parties may call it:
+- **The schema's creator** (the address recorded at `register`/`register_with_value`, or the current owner after `transfer_schema_ownership`).
+- **The registry admin** (set at `SchemaRegistry::init`), to support governance-level moderation of schemas it did not create.
+
+`authorizer` must `require_auth()` and must be one of the two above, or the call panics with `SASError::Unauthorized` before any state is written. Calling `deprecate` on an unknown UID panics with `SASError::SchemaNotFound` and writes no tombstone. Repeated calls against an already-deprecated schema are idempotent no-ops (no panic, no duplicate event).
+
+A successful (state-changing) call emits `SchemaDeprecated` — see `docs/events.md`.
+
 ## Resolver Callbacks
 Schemas can optionally specify a `resolver` contract address. If specified, the SAS contract will invoke callbacks on the resolver to enforce schema-specific rules or synchronize dependent state.
 

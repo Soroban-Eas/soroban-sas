@@ -106,7 +106,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frequently queried but rarely updated index is not archived out from under
   its callers. Reads of a missing chunk return empty without creating storage
   or trapping. (#79)
+- `SchemaRegistry::deprecate` now requires authorization from the schema's
+  creator or the registry admin before writing the deprecation tombstone,
+  closing a privilege-escalation gap where any account could deprecate any
+  schema and invalidate every attestation issued under it. Emits a
+  `SchemaDeprecated { schema_uid, deprecated_by }` event on the first
+  successful deprecation; repeated calls stay idempotent and do not
+  re-publish the event. (#218)
 
 ### Known Issues
-- `SchemaRegistry::deprecate` currently lacks an authorization check.
 - Delegated attest/revoke signatures do not bind the full attestation payload or a nonce, permitting potential replay.
