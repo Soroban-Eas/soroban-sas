@@ -29,7 +29,7 @@ jobs:
       - run: cargo fuzz build indexer_chunking_fuzz
       - run: cargo fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400 -rss_limit_mb=4096
 
-  # Ten independent shards total ten million executions. Keep the expensive
+  # One hundred shards total ten million executions. Keep the expensive
   # campaign scheduled/manual, while every PR replays seeds and runs a smoke test.
   indexer-campaign:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -37,7 +37,9 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
+      max-parallel: 10
       matrix:
+        group: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v4
@@ -46,10 +48,10 @@ jobs:
         with:
           toolchain: nightly-2024-06-13
       - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz run indexer_chunking_fuzz -- -runs=1000000 -seed=${{ matrix.shard }} -max_len=14400 -rss_limit_mb=4096
+      - run: cargo fuzz run indexer_chunking_fuzz -- -runs=100000 -seed=$((10 * ${{ matrix.group }} + ${{ matrix.shard }})) -max_len=14400 -rss_limit_mb=4096
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: indexer-crashes-${{ matrix.shard }}
+          name: indexer-crashes-${{ matrix.group }}-${{ matrix.shard }}
           path: fuzz/artifacts/indexer_chunking_fuzz/
           if-no-files-found: ignore

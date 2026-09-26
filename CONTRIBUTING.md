@@ -72,7 +72,15 @@ cover complete reads, counts, physical chunk lengths, and transitions at
 99/100/101, 200/201, and 300/301. Committed seeds include 0, 1, 100, 101, 200,
 201, 300, and 301 insertions. The zero seed is one incomplete record.
 
-Every PR runs a 1,000-execution smoke test. Scheduled/manual CI runs ten
-one-million-execution shards (ten million total) and uploads crash artifacts
+Every PR runs a 1,000-execution smoke test. Scheduled/manual CI runs 100
+100,000-execution shards (ten million total), with at most ten running at once, and uploads crash artifacts
 on failure. Campaign completion must be confirmed in Actions; configuration
 alone is not evidence that ten million executions passed.
+
+On Apple Silicon, AddressSanitizer can fail during linking due to a
+[known Soroban SDK limitation](https://github.com/stellar/stellar-docs/issues/2238).
+Use the thread sanitizer locally; Linux CI retains AddressSanitizer:
+
+```sh
+cargo +nightly-2024-06-13 fuzz run --sanitizer thread --codegen-units 16 indexer_chunking_fuzz -- -runs=1000 -max_len=14400
+```
