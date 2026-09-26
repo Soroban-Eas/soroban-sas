@@ -2,6 +2,17 @@ use crate::errors::SASError;
 use soroban_sdk::{Address, Bytes, Env, String};
 
 const MAX_SCHEMA_LENGTH: u32 = 1024;
+/// Maximum number of comma-separated fields a schema string may declare.
+///
+/// `MAX_SCHEMA_LENGTH` bounds the string's byte length, but a string packed
+/// with many tiny fields (e.g. `a B,b B,c B,...`, 4 bytes per field) can
+/// still fit up to 256 fields into that budget. Unbounded field counts cost
+/// resolvers and off-chain SDK parsers O(n_fields) work on every decode of
+/// every attestation issued under the schema — a single pathological
+/// registration then imposes that cost on every subsequent caller
+/// indefinitely. Real identity, KYC, and governance schemas rarely exceed 20
+/// fields, so this ceiling cannot break any reasonable schema.
+pub const MAX_SCHEMA_FIELDS: u32 = 64;
 const ZERO_ACCOUNT_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const ZERO_CONTRACT_STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
 
@@ -144,6 +155,9 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
             return Err(SASError::InvalidSchema);
         }
         field_count += 1;
+        if field_count > MAX_SCHEMA_FIELDS {
+            return Err(SASError::InvalidSchema);
+        }
 
         if field_end >= end {
             break;

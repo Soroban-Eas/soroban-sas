@@ -1554,6 +1554,68 @@ impl IndexerClient {
         let arg = simulate::encode_arg(env, &uid)?;
         invoke_read_only(env, rpc, &self.contract_id, "get_replacement", vec![arg])
     }
+
+    /// Calls `Indexer::get_count_by_recipient(address)` via
+    /// `simulateTransaction`. Returns `0` for a key that has never been
+    /// indexed. Lets callers compute pagination totals
+    /// (`ceil(count / page_size)`) without fetching every UID under
+    /// `recipient` just to learn how many there are (#220).
+    pub fn get_count_by_recipient(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        recipient: &str,
+    ) -> Result<u32, SdkError> {
+        let recipient = parse_address(env, recipient, AddressKind::Either, "recipient")?;
+        let arg = simulate::encode_arg(env, &recipient)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_count_by_recipient",
+            vec![arg],
+        )
+    }
+
+    /// Calls `Indexer::get_count_by_schema(schema_uid)` via
+    /// `simulateTransaction`. See [`IndexerClient::get_count_by_recipient`]
+    /// for semantics.
+    pub fn get_count_by_schema(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        schema_uid: &[u8; 32],
+    ) -> Result<u32, SdkError> {
+        let schema_uid = UID(BytesN::from_array(env, schema_uid));
+        let arg = simulate::encode_arg(env, &schema_uid)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_count_by_schema",
+            vec![arg],
+        )
+    }
+
+    /// Calls `Indexer::get_count_by_attester(address)` via
+    /// `simulateTransaction`. See [`IndexerClient::get_count_by_recipient`]
+    /// for semantics.
+    pub fn get_count_by_attester(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &str,
+    ) -> Result<u32, SdkError> {
+        let attester = parse_address(env, attester, AddressKind::Either, "attester")?;
+        let arg = simulate::encode_arg(env, &attester)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_count_by_attester",
+            vec![arg],
+        )
+    }
 }
 
 /// Decodes the first entry of a `getLedgerEntries` response as a
@@ -2421,6 +2483,14 @@ mod tests {
             match client.get_attestations_by_attester(&env, &rpc, bad) {
                 Err(SdkError::DecodingError(_)) => {}
                 other => panic!("get_attestations_by_attester({bad:?}) = {other:?}"),
+            }
+            match client.get_count_by_recipient(&env, &rpc, bad) {
+                Err(SdkError::DecodingError(_)) => {}
+                other => panic!("get_count_by_recipient({bad:?}) = {other:?}"),
+            }
+            match client.get_count_by_attester(&env, &rpc, bad) {
+                Err(SdkError::DecodingError(_)) => {}
+                other => panic!("get_count_by_attester({bad:?}) = {other:?}"),
             }
         }
     }

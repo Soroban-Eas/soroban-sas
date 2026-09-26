@@ -6,12 +6,12 @@
 use soroban_sas_common::{events::CONTRACT_UPGRADED, ContractUpgradedEvent};
 use soroban_sas_common::{
     events::{
-        SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_FEE_UPDATED,
+        SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_DEPRECATED, SCHEMA_FEE_UPDATED,
         SCHEMA_OWNERSHIP_TRANSFERRED, TREASURY_UPDATED,
     },
     validate_schema_syntax, PreviousAddress, SASError, SchemaDelegateAddedEvent,
-    SchemaDelegateRemovedEvent, SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent,
-    SchemaRecord, TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
+    SchemaDelegateRemovedEvent, SchemaDeprecatedEvent, SchemaFeeUpdatedEvent,
+    SchemaOwnershipTransferredEvent, SchemaRecord, TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
 };
 #[cfg(test)]
 use soroban_sdk::BytesN;
@@ -294,6 +294,15 @@ impl SchemaRegistry {
             LEDGERS_IN_ONE_YEAR,
             LEDGERS_IN_ONE_YEAR,
         );
+
+        env.events().publish(
+            (SCHEMA_DEPRECATED, uid.clone()),
+            SchemaDeprecatedEvent {
+                schema_uid: uid,
+                deprecated_by: authorizer,
+            },
+        );
+
         extend_instance_ttl(&env);
     }
 

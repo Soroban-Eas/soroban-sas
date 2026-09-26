@@ -1,8 +1,8 @@
 use crate::{SchemaRegistry, SchemaRegistryClient};
 use soroban_sas_common::{
     ContractUpgradedEvent, PreviousAddress, SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent,
-    SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent, SchemaRegisteredEvent,
-    TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
+    SchemaDeprecatedEvent, SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent,
+    SchemaRegisteredEvent, TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
 };
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, IntoVal, String};
@@ -552,6 +552,46 @@ fn test_deprecate() {
 
     // Check it's no longer active
     assert!(client.get_schema(&uid).is_none());
+}
+
+#[test]
+fn test_deprecate_emits_schema_deprecated_event_once() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.init(&admin);
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    client.deprecate(&uid, &owner);
+
+    let events = env.events().all();
+    let expected = SchemaDeprecatedEvent {
+        schema_uid: uid.clone(),
+        deprecated_by: owner.clone(),
+    };
+    assert_eq!(
+        soroban_sdk::vec![&env, events.last().unwrap()],
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("SCHDEP"), uid.clone()).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+
+    // Repeat call is an idempotent no-op: no second SchemaDeprecated event.
+    let event_count_before = env.events().all().len();
+    client.deprecate(&uid, &owner);
+    assert_eq!(env.events().all().len(), event_count_before);
 }
 
 #[test]

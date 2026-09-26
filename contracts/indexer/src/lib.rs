@@ -128,11 +128,26 @@ fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_ve
 /// The counter is the authoritative length of the index; the chunk vectors
 /// only carry the payload. Reads derive their chunk cursor from it so the
 /// write and read paths share one model.
+///
+/// Stored in **persistent** storage, on the same TTL horizon as the chunk
+/// entries it counts (see `index_address_uid` / `index_uid_uid`). Instance
+/// storage expires independently of persistent storage; if the counter lived
+/// there and instance storage lapsed, every per-key count would silently
+/// reset to zero while the chunk data survived, corrupting the index with
+/// duplicate UIDs on the next write (#219). Renewing on every read, not just
+/// every write, keeps a heavily-read/rarely-written key's counter alive as
+/// long as its chunks.
 fn index_total<K>(env: &Env, count_key: &K) -> u32
 where
     K: IntoVal<Env, Val>,
 {
-    env.storage().instance().get(count_key).unwrap_or(0)
+    let count: Option<u32> = env.storage().persistent().get(count_key);
+    if count.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    }
+    count.unwrap_or(0)
 }
 
 /// Reads one index chunk, renewing the entry's TTL when it exists.
@@ -186,7 +201,10 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
         .extend_ttl(&storage_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 
     total += 1;
-    env.storage().instance().set(&count_key, &total);
+    env.storage().persistent().set(&count_key, &total);
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
     extend_instance_ttl(env);
 }
 
@@ -215,7 +233,10 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
         .extend_ttl(&storage_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 
     total += 1;
-    env.storage().instance().set(&count_key, &total);
+    env.storage().persistent().set(&count_key, &total);
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
     extend_instance_ttl(env);
 }
 
@@ -437,6 +458,31 @@ impl Indexer {
     pub fn get_attestation_status(env: Env, uid: UID) -> Option<IndexStatus> {
         extend_instance_ttl(&env);
         env.storage().persistent().get(&(STATUS_KEY, uid))
+    }
+
+    /// Total number of UIDs indexed under `address` as a recipient, across
+    /// every chunk. `0` if the key has never been indexed. A pure read: like
+    /// [`Indexer::index_total`], it renews the counter's TTL when found but
+    /// creates no storage for a key that was never indexed. Lets callers
+    /// compute pagination totals (`ceil(count / page_size)`) without
+    /// fetching every UID just to learn how many there are (#220).
+    pub fn get_count_by_recipient(env: Env, address: Address) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(RECIPIENT_TOTAL, address))
+    }
+
+    /// Total number of UIDs indexed under `schema_uid`. See
+    /// [`Indexer::get_count_by_recipient`] for semantics.
+    pub fn get_count_by_schema(env: Env, schema_uid: UID) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(SCHEMA_TOTAL, schema_uid))
+    }
+
+    /// Total number of UIDs indexed under `address` as an attester. See
+    /// [`Indexer::get_count_by_recipient`] for semantics.
+    pub fn get_count_by_attester(env: Env, address: Address) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(ATTESTER_TOTAL, address))
     }
 
     /// Complete recipient history, oldest first.

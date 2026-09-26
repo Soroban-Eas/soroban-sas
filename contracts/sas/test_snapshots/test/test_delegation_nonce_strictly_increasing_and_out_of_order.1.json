@@ -32,10 +32,11 @@
     [],
     [],
     [],
+    [],
     []
   ],
   "ledger": {
-    "protocol_version": 20,
+    "protocol_version": 21,
     "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -645,12 +646,22 @@
                       },
                       {
                         "key": {
-                          "vec": [
+                          "symbol": "VERSION"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "map": [
                             {
-                              "symbol": "DELNONCE"
-                            },
-                            {
-                              "address": "GB3NQGZTXJZB36E3RYFQ54TMGTVXF2LYSUIEI6MM2YEKJ5W36LTNMGUS"
+                              "key": {
+                                "symbol": "attester"
+                              },
+                              "val": {
+                                "address": "GB3NQGZTXJZB36E3RYFQ54TMGTVXF2LYSUIEI6MM2YEKJ5W36LTNMGUS"
+                              }
                             }
                           ]
                         },
@@ -698,7 +709,7 @@
             },
             "ext": "v0"
           },
-          15
+          6311999
         ]
       ],
       [
@@ -3610,6 +3621,55 @@
                   "bytes": "08db50c551e4460e8f1de9ce37351699f8e6fb9fbae7184b89668dc96eed79cb"
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "get_delegation_nonce"
+              }
+            ],
+            "data": {
+              "address": "GB3NQGZTXJZB36E3RYFQ54TMGTVXF2LYSUIEI6MM2YEKJ5W36LTNMGUS"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_delegation_nonce"
+              }
+            ],
+            "data": {
+              "u64": 13
             }
           }
         }

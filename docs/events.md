@@ -221,6 +221,15 @@ Emitted by the schema registry on a successful `transfer_schema_ownership`.
 
 `transfer_schema_ownership` requires authorization from `old_owner` (the current schema creator). Deprecated schemas cannot be transferred. Once transferred, `new_owner` becomes the creator/owner who may manage delegates and deprecate the schema.
 
+## SchemaDeprecated
+
+Emitted by the schema registry on a successful (state-changing) `deprecate`.
+
+- Topics: `("SCHDEP", schema_uid: UID)`
+- Data: `SchemaDeprecatedEvent { schema_uid: UID, deprecated_by: Address }`
+
+`deprecate` requires authorization from `deprecated_by`, who must be either the schema's creator or the registry admin (see `docs/schemas.md#deprecation-authorization`). Only the call that actually flips the schema from active to deprecated emits this event; a repeat call against an already-deprecated schema is a silent idempotent no-op and does not re-publish it.
+
 ## Security-sensitive configuration changes
 
 `IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and

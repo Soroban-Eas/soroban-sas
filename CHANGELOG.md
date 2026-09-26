@@ -106,7 +106,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frequently queried but rarely updated index is not archived out from under
   its callers. Reads of a missing chunk return empty without creating storage
   or trapping. (#79)
+- `SchemaRegistry::deprecate` now requires authorization from the schema's
+  creator or the registry admin before writing the deprecation tombstone,
+  closing a privilege-escalation gap where any account could deprecate any
+  schema and invalidate every attestation issued under it. Emits a
+  `SchemaDeprecated { schema_uid, deprecated_by }` event on the first
+  successful deprecation; repeated calls stay idempotent and do not
+  re-publish the event. (#218)
+- `Indexer::get_count_by_recipient`, `get_count_by_schema`, and
+  `get_count_by_attester` return the total number of UIDs indexed under a
+  key without fetching any of them, letting callers compute pagination
+  totals (`ceil(count / page_size)`) up front. Backed by the same
+  persistent counter `index_total` derives chunk cursors from (see #219),
+  renewed on read, and unaffected by `Active` -> `Revoked`/`Replaced`
+  status transitions. Adds matching `IndexerClient::get_count_by_recipient`
+  / `get_count_by_schema` / `get_count_by_attester` helpers to
+  `soroban-sas-sdk`. (#220)
+- `validate_schema_syntax` now rejects a schema with more than
+  `MAX_SCHEMA_FIELDS` (64) comma-separated fields. `MAX_SCHEMA_LENGTH`
+  bounds the string's byte length but not its field count, so a string
+  packed with many tiny fields could pack up to 256 fields into the 1024
+  byte budget and impose unbounded per-decode iteration cost on schema
+  resolvers and off-chain SDK parsers. (#217)
+- `Indexer`'s per-key UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) now live in
+  persistent storage instead of instance storage, on the same
+  `LEDGERS_IN_ONE_YEAR` renewal horizon as the chunk data they count. Instance
+  storage expires independently of persistent storage, so a counter left in
+  instance storage could silently reset to zero while its chunks survived —
+  the next `index_attestation` for that key would then recompute chunk 0 from
+  a stale cursor and duplicate a UID into it. (#219)
 
 ### Known Issues
-- `SchemaRegistry::deprecate` currently lacks an authorization check.
 - Delegated attest/revoke signatures do not bind the full attestation payload or a nonce, permitting potential replay.

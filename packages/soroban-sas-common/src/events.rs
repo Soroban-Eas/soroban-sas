@@ -41,6 +41,8 @@ pub const SCHEMA_OWNERSHIP_TRANSFERRED: Symbol = symbol_short!("SCHOWN");
 pub const BATCH_ATTESTED: Symbol = symbol_short!("BATCHATT");
 /// First topic of every `BatchRevoked` event.
 pub const BATCH_REVOKED: Symbol = symbol_short!("BATCHREV");
+/// First topic of every `SchemaDeprecated` event.
+pub const SCHEMA_DEPRECATED: Symbol = symbol_short!("SCHDEP");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -285,6 +287,19 @@ pub type SchemaOwnershipTransferred = SchemaOwnershipTransferredEvent;
 pub struct BatchAttestedEvent {
     pub count: u32,
     pub attester_count: u32,
+}
+
+/// Payload of the `SchemaDeprecated` event.
+///
+/// Published with topics `(SCHEMA_DEPRECATED, schema_uid)` when
+/// `SchemaRegistry::deprecate` transitions a schema from active to
+/// deprecated. Not republished on an idempotent repeat call, so consumers
+/// can treat this event as the single, authoritative deprecation moment.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaDeprecatedEvent {
+    pub schema_uid: UID,
+    pub deprecated_by: Address,
 }
 
 /// Payload of the `BatchRevoked` event.
