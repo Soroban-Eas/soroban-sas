@@ -1079,6 +1079,40 @@ impl SASClient {
         )
     }
 
+    /// Calls `SAS::attest_with_value(attestation, token, value)`: like
+    /// [`attest`](Self::attest), but pays the configured attestation fee
+    /// (a Stellar Asset Contract transfer of `value` units of `token`) as
+    /// part of the same invocation. `token` is a strkey contract address
+    /// (`C...`); the contract itself validates that `token`/`value` match
+    /// its configured fee policy (`SASError::FeeMismatch` otherwise).
+    pub fn attest_with_value(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        attestation: Attestation,
+        token: &str,
+        value: i128,
+    ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        let token_address = parse_address(env, token, AddressKind::Contract, "token")?;
+        let args = vec![
+            simulate::encode_arg(env, &attestation)?,
+            simulate::encode_arg(env, &token_address)?,
+            simulate::encode_arg(env, &value)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "attest_with_value",
+            args,
+        )
+    }
+
     /// Calls `SAS::multi_attest(attestations)`: encodes each attestation into
     /// one Soroban vector argument, signs the batch invoke with `secret_seed`,
     /// submits it, and polls until it settles.
