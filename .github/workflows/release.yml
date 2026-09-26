@@ -61,3 +61,55 @@ jobs:
             target/wasm32-unknown-unknown/release/schema_registry.opt.wasm
             target/wasm32-unknown-unknown/release/soroban_sas_indexer.opt.wasm
             target/wasm32-unknown-unknown/release/checksums.sha256
+
+  gas-report:
+    name: Gas & Resource Report
+    runs-on: ubuntu-latest
+    services:
+      stellar-quickstart:
+        image: stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784
+        options: >-
+          --health-cmd "curl -s -f -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getHealth\"}' http://localhost:8000/soroban/rpc | grep -q healthy"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@v4.1.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.79.0
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Install stellar-cli and wasm-opt
+        run: |
+          cargo install --locked stellar-cli --version 22.0.1
+          cargo install --locked wasm-opt
+      - name: Configure local network and fund an admin account
+        run: |
+          stellar network add standalone \
+            --rpc-url http://localhost:8000/soroban/rpc \
+            --network-passphrase "Standalone Network ; February 2017"
+          stellar keys generate --global gas-report-admin --network standalone --fund
+          echo "SECRET_KEY=$(stellar keys show gas-report-admin)" >> "$GITHUB_ENV"
+      - name: Run gas analysis
+        env:
+          RPC_URL: http://localhost:8000/soroban/rpc
+          SOROBAN_NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+        run: ./tools/analyze_gas.sh --rpc-url "$RPC_URL"
+      - name: Upload gas report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas_report
+          path: gas_report.md
