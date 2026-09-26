@@ -225,6 +225,12 @@ TMPDIR=/tmp cargo test --workspace
 ## Documentation
 
 - Documentation on Schema Syntax and Payloads: `docs/schemas.md`
+- [Attestation Lifecycle](docs/attestations.md): issuance, expiration,
+  revocation, and replacement semantics, including `replace_attestation`'s
+  expiration monotonicity rule.
+- [Batch Attestations (Merkle Commitments)](docs/batch-attestations.md):
+  when to use off-chain Merkle batching instead of on-chain `multi_attest`,
+  the normative leaf/node hashing rules, and a selective-disclosure example.
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.

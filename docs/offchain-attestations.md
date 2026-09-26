@@ -12,6 +12,12 @@ example in a mobile wallet) and selectively reveal it; any verifier — a
 Soroban contract or an off-chain service — can check it against the issuer's
 ed25519 public key.
 
+For batching many attestations behind a single on-chain commitment instead of
+signing them individually, see [Batch Attestations (Merkle
+Commitments)](batch-attestations.md), which covers `soroban-sas-common`'s
+Merkle tree primitives and when to prefer them over `multi_attest` or
+individually signed off-chain attestations.
+
 ## Versioning and Compatibility
 
 The v1 protocol is locked by golden test vectors in
