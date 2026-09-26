@@ -1,0 +1,104 @@
+name: WASM Build & Checksum
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wasm-build:
+    name: WASM Build & Checksum
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.79.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-
+
+      - name: Install stellar-cli
+        uses: stellar/stellar-cli@v28.0.0
+        with:
+          version: '28.0.0'
+
+      - name: Build contracts (WASM)
+        run: |
+          cargo build -p schema-registry --release --target wasm32-unknown-unknown
+          cargo build -p sas --release --target wasm32-unknown-unknown
+          cargo build -p soroban-sas-indexer --release --target wasm32-unknown-unknown
+
+      - name: Optimize WASM binaries
+        run: |
+          cd target/wasm32-unknown-unknown/release
+          stellar contract optimize --wasm schema_registry.wasm
+          stellar contract optimize --wasm sas.wasm
+          stellar contract optimize --wasm soroban_sas_indexer.wasm
+          for contract in schema_registry sas soroban_sas_indexer; do
+            if [ ! -f "${contract}.optimized.wasm" ] && [ -f "${contract}.wasm" ]; then
+              cp "${contract}.wasm" "${contract}.optimized.wasm"
+            fi
+          done
+
+      - name: Compute and print checksums
+        id: checksums
+        run: |
+          cd target/wasm32-unknown-unknown/release
+          sha256sum schema_registry.optimized.wasm sas.optimized.wasm soroban_sas_indexer.optimized.wasm | tee checksums.sha256
+          echo "hashes<<EOF" >> "$GITHUB_OUTPUT"
+          cat checksums.sha256 >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "### WASM Artifacts SHA-256 Checksums" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat checksums.sha256 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-artifacts
+          path: |
+            target/wasm32-unknown-unknown/release/schema_registry.optimized.wasm
+            target/wasm32-unknown-unknown/release/sas.optimized.wasm
+            target/wasm32-unknown-unknown/release/soroban_sas_indexer.optimized.wasm
+            target/wasm32-unknown-unknown/release/checksums.sha256
+          if-no-files-found: error
+
+      - name: Append checksums to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            target/wasm32-unknown-unknown/release/schema_registry.optimized.wasm
+            target/wasm32-unknown-unknown/release/sas.optimized.wasm
+            target/wasm32-unknown-unknown/release/soroban_sas_indexer.optimized.wasm
+            target/wasm32-unknown-unknown/release/checksums.sha256
+          append_body: true
+          body: |
+            ### WASM Artifacts SHA-256 Checksums
+            ```
+            ${{ steps.checksums.outputs.hashes }}
+            ```
