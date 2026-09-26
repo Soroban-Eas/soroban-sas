@@ -65,6 +65,7 @@ impl SchemaBuilder {
             resolver,
             revocable: self.revocable,
             schema,
+            deprecated: false,
         })
     }
 }
