@@ -429,6 +429,77 @@ impl SchemaRegistry {
     /// Registers a new schema in the registry, free of charge.
     ///
     /// See `docs/schemas.md` for the schema syntax specification.
+
+
+    pub fn transfer_ownership(env: Env, sender: Address, uid: UID, new_owner: Address) {
+        sender.require_auth();
+        extend_instance_ttl(&env);
+        
+        // Ensure schema exists
+        let _record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        });
+
+        // Validate sender is current creator/owner
+        let creator: Option<Address> = env.storage().persistent().get(&(SCHEMA_CREATOR, uid.clone()));
+        let mut authorized = false;
+        if let Some(ref c) = creator {
+            if *c == sender {
+                authorized = true;
+            }
+        }
+        
+        // Admins can also transfer ownership (optional, but robust)
+        if !authorized {
+            let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
+            if let Some(a) = admin {
+                if a == sender {
+                    authorized = true;
+                }
+            }
+        }
+
+        if !authorized {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        // Set new owner
+        env.storage().persistent().set(&(SCHEMA_CREATOR, uid.clone()), &new_owner);
+        env.events().publish((SCHEMA_OWNERSHIP_TRANSFERRED, uid), (sender, new_owner));
+    }
+
+    pub fn deprecate_schema(env: Env, sender: Address, uid: UID) {
+        sender.require_auth();
+        extend_instance_ttl(&env);
+        
+        let mut record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        });
+
+        let creator: Option<Address> = env.storage().persistent().get(&(SCHEMA_CREATOR, uid.clone()));
+        let mut authorized = false;
+        if let Some(c) = creator {
+            if c == sender {
+                authorized = true;
+            }
+        }
+        if !authorized {
+            let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
+            if let Some(a) = admin {
+                if a == sender {
+                    authorized = true;
+                }
+            }
+        }
+        if !authorized {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        record.deprecated = true;
+        env.storage().persistent().set(&uid, &record);
+        env.events().publish((SCHEMA_DEPRECATED, uid), sender);
+    }
+
     pub fn register(
         env: Env,
         owner: Address,
@@ -525,6 +596,7 @@ impl SchemaRegistry {
             resolver,
             revocable,
             schema,
+            deprecated: false,
         };
         env.storage().persistent().set(&uid, &record);
         env.storage()

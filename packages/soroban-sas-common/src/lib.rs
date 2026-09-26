@@ -132,6 +132,7 @@ pub struct SchemaRecord {
     pub resolver: Address,
     pub revocable: bool,
     pub schema: String,
+    pub deprecated: bool,
 }
 
 #[contracttype]

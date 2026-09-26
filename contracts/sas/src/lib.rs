@@ -656,6 +656,37 @@ impl SAS {
     /// (`NotInitialized` otherwise), and reports a still-failing Indexer as
     /// `SASError::IndexerUnavailable` so callers know to retry later. On
     /// success emits `Reindexed(uid)`.
+
+    pub fn bulk_reindex(env: Env, uids: soroban_sdk::Vec<UID>) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
+        if uids.len() > 100 {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+        
+        let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) else {
+            panic_with_error!(&env, SASError::NotInitialized);
+        };
+
+        let mut failed = soroban_sdk::Vec::new(&env);
+        for uid in uids.iter() {
+            if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
+                let outcome = env.try_invoke_contract::<(), soroban_sdk::Error>(
+                    &indexer,
+                    &soroban_sdk::Symbol::new(&env, "index_attestation"),
+                    soroban_sdk::vec![&env, attestation.into_val(&env)],
+                );
+                if outcome.is_err() {
+                    failed.push_back(uid);
+                } else {
+                    env.events().publish((soroban_sas_common::events::REINDEXED, uid), ());
+                }
+            } else {
+                failed.push_back(uid);
+            }
+        }
+        failed
+    }
+
     pub fn reindex_attestation(env: Env, uid: UID) {
         extend_instance_ttl(&env);
         let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {

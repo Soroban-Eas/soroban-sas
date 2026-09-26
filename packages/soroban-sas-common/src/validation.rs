@@ -20,16 +20,16 @@ fn is_ascii_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\n' | b'\r' | b'\t' | 0x0b | 0x0c)
 }
 
-fn trim_bounds(bytes: &Bytes, mut start: u32, mut end: u32) -> Option<(u32, u32)> {
+fn trim_bounds(bytes: &[u8], mut start: u32, mut end: u32) -> Option<(u32, u32)> {
     while start < end {
-        if !is_ascii_whitespace(bytes.get(start)?) {
+        if !is_ascii_whitespace(bytes.get(start as usize).copied()?) {
             break;
         }
         start += 1;
     }
 
     while end > start {
-        if !is_ascii_whitespace(bytes.get(end - 1)?) {
+        if !is_ascii_whitespace(bytes.get((end - 1) as usize).copied()?) {
             break;
         }
         end -= 1;
@@ -42,12 +42,12 @@ fn trim_bounds(bytes: &Bytes, mut start: u32, mut end: u32) -> Option<(u32, u32)
     }
 }
 
-fn is_valid_identifier(bytes: &Bytes, start: u32, end: u32) -> bool {
+fn is_valid_identifier(bytes: &[u8], start: u32, end: u32) -> bool {
     if start >= end {
         return false;
     }
 
-    let Some(first) = bytes.get(start) else {
+    let Some(first) = bytes.get(start as usize).copied() else {
         return false;
     };
     if !(first.is_ascii_alphabetic() || first == b'_') {
@@ -55,7 +55,7 @@ fn is_valid_identifier(bytes: &Bytes, start: u32, end: u32) -> bool {
     }
 
     for index in (start + 1)..end {
-        let Some(byte) = bytes.get(index) else {
+        let Some(byte) = bytes.get(index as usize).copied() else {
             return false;
         };
         if !(byte.is_ascii_alphanumeric() || byte == b'_') {
@@ -66,14 +66,14 @@ fn is_valid_identifier(bytes: &Bytes, start: u32, end: u32) -> bool {
     true
 }
 
-fn is_valid_type(bytes: &Bytes, start: u32, end: u32) -> bool {
+fn is_valid_type(bytes: &[u8], start: u32, end: u32) -> bool {
     if start >= end {
         return false;
     }
 
     let mut has_alpha = false;
     for index in start..end {
-        let Some(byte) = bytes.get(index) else {
+        let Some(byte) = bytes.get(index as usize).copied() else {
             return false;
         };
         if byte.is_ascii_alphabetic() {
@@ -99,17 +99,24 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
     }
     let mut buf = [0u8; 1024]; // Hardcoded to MAX_SCHEMA_LENGTH
     schema.copy_into_slice(&mut buf[..schema_len]);
-    let schema_bytes = Bytes::from_slice(env, &buf[..schema_len]);
+    let schema_bytes = &buf[..schema_len]; // Use native slice directly
 
-    let Some((mut start, end)) = trim_bounds(&schema_bytes, 0, schema_bytes.len()) else {
+    let Some((mut start, end)) = trim_bounds(schema_bytes, 0, schema_len as u32) else {
         return Err(SASError::InvalidSchema);
     };
 
+    for i in 0..schema_len {
+        let byte = buf[i];
+        if byte >= b'A' && byte <= b'Z' {
+            return Err(SASError::InvalidSchemaFormat);
+        }
+    }
+    
     let mut field_count = 0u32;
     while start < end {
         let mut field_end = start;
         while field_end < end {
-            let Some(byte) = schema_bytes.get(field_end) else {
+            let Some(byte) = schema_bytes.get(field_end as usize).copied() else {
                 return Err(SASError::InvalidSchema);
             };
             if byte == b',' {
@@ -118,13 +125,17 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
             field_end += 1;
         }
 
-        let Some((field_start, field_end)) = trim_bounds(&schema_bytes, start, field_end) else {
+        let Some((field_start, fe)) = trim_bounds(schema_bytes, start, field_end) else {
             return Err(SASError::InvalidSchema);
         };
+        // Ensure field lengths are within strict limits (Issue 287)
+        if fe - field_start > 64 {
+            return Err(SASError::InvalidSchema);
+        }
 
         let mut split_index = field_start;
-        while split_index < field_end {
-            let Some(byte) = schema_bytes.get(split_index) else {
+        while split_index < fe {
+            let Some(byte) = schema_bytes.get(split_index as usize).copied() else {
                 return Err(SASError::InvalidSchema);
             };
             if is_ascii_whitespace(byte) {
@@ -133,13 +144,17 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
             split_index += 1;
         }
 
-        if split_index == field_start || split_index >= field_end {
+        if split_index == field_start || split_index >= fe {
             return Err(SASError::InvalidSchema);
+        }
+        let identifier_len = split_index - field_start;
+        if identifier_len > 32 {
+            return Err(SASError::InvalidSchema); // Strict length
         }
 
         let mut ty_start = split_index;
-        while ty_start < field_end {
-            let Some(byte) = schema_bytes.get(ty_start) else {
+        while ty_start < fe {
+            let Some(byte) = schema_bytes.get(ty_start as usize).copied() else {
                 return Err(SASError::InvalidSchema);
             };
             if !is_ascii_whitespace(byte) {
@@ -148,9 +163,14 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
             ty_start += 1;
         }
 
-        if ty_start >= field_end
-            || !is_valid_identifier(&schema_bytes, field_start, split_index)
-            || !is_valid_type(&schema_bytes, ty_start, field_end)
+        let type_len = fe - ty_start;
+        if type_len > 32 {
+            return Err(SASError::InvalidSchema); // Strict length
+        }
+
+        if ty_start >= fe
+            || !is_valid_identifier(schema_bytes, field_start, split_index)
+            || !is_valid_type(schema_bytes, ty_start, fe)
         {
             return Err(SASError::InvalidSchema);
         }
@@ -164,7 +184,7 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
         }
         start = field_end + 1;
         while start < end {
-            let Some(byte) = schema_bytes.get(start) else {
+            let Some(byte) = schema_bytes.get(start as usize).copied() else {
                 return Err(SASError::InvalidSchema);
             };
             if !is_ascii_whitespace(byte) {
