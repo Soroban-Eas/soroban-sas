@@ -248,6 +248,60 @@ impl SASClient {
         invoke_read_only(env, rpc, &self.contract_id, "get_fee", vec![])
     }
 
+    /// Calls `SAS::set_fee(token, amount)` on this client's SAS contract.
+    /// The token must be a contract address and `amount` must be positive.
+    /// Requires `admin_secret_seed`'s account to be the SAS administrator.
+    pub fn set_fee(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        admin_secret_seed: &[u8; 32],
+        token: &str,
+        amount: i128,
+    ) -> Result<GetTransactionResult, SdkError> {
+        if amount <= 0 {
+            return Err(SdkError::InvalidInput(
+                "fee amount must be greater than 0".to_string(),
+            ));
+        }
+        let token = parse_address(env, token, AddressKind::Contract, "token")?;
+        let args = vec![
+            simulate::encode_arg(env, &token)?,
+            simulate::encode_arg(env, &amount)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            admin_secret_seed,
+            &self.contract_id,
+            "set_fee",
+            args,
+        )
+    }
+
+    /// Calls `SAS::clear_fee()` on this client's SAS contract, removing the
+    /// payment requirement. Requires `admin_secret_seed`'s account to be the
+    /// SAS administrator.
+    pub fn clear_fee(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        admin_secret_seed: &[u8; 32],
+    ) -> Result<GetTransactionResult, SdkError> {
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            admin_secret_seed,
+            &self.contract_id,
+            "clear_fee",
+            vec![],
+        )
+    }
+
     /// Reads the highest delegation nonce consumed for `attester` via `simulateTransaction`
     /// (a pure read) (#236).
     ///
