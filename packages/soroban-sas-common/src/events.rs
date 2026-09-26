@@ -31,6 +31,10 @@ pub const CONTRACT_UPGRADED: Symbol = symbol_short!("UPGRADED");
 pub const SCHEMA_DELEGATE_ADDED: Symbol = symbol_short!("DELADD");
 /// First topic of every `SchemaDelegateRemoved` event.
 pub const SCHEMA_DELEGATE_REMOVED: Symbol = symbol_short!("DELREM");
+/// First topic of every `BatchAttested` event.
+pub const BATCH_ATTESTED: Symbol = symbol_short!("BATCHATT");
+/// First topic of every `BatchRevoked` event.
+pub const BATCH_REVOKED: Symbol = symbol_short!("BATCHREV");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -218,4 +222,41 @@ pub struct SchemaDelegateRemovedEvent {
     pub schema_uid: UID,
     pub delegate: Address,
     pub authorizer: Address,
+}
+
+/// Payload of the `BatchAttested` event.
+///
+/// Published with topics `(BATCH_ATTESTED,)` as the **last** event of a
+/// successful `SAS::multi_attest` call — after every per-item
+/// `AttestationIssued` event, so consumers see the batch's members before
+/// its summary. Not emitted at all if the batch call reverts (#213): a
+/// summary always describes a batch that was fully committed, never a
+/// partial one.
+///
+/// `count` is the number of attestations issued by the call;
+/// `attester_count` is the number of *distinct* attester addresses among
+/// them (an attester issuing three attestations in one batch counts once).
+/// This distinguishes one batch call from several independent calls when an
+/// indexer restarts from an earlier ledger, and avoids the need to
+/// heuristically group sequential per-item events by schema/attester to
+/// answer "how many attestations did this transaction issue".
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchAttestedEvent {
+    pub count: u32,
+    pub attester_count: u32,
+}
+
+/// Payload of the `BatchRevoked` event.
+///
+/// Published with topics `(BATCH_REVOKED,)` as the **last** event of a
+/// successful `SAS::multi_revoke` call, after every per-item
+/// `AttestationRevoked` event — the revocation counterpart to
+/// `BatchAttestedEvent`; see its doc comment for the field semantics and
+/// ordering/failure guarantees, which are identical here.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchRevokedEvent {
+    pub count: u32,
+    pub attester_count: u32,
 }

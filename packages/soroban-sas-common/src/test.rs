@@ -11,6 +11,44 @@ fn test_uid_deterministic() {
     assert_ne!(uid1, uid3);
 }
 
+#[test]
+fn test_attestation_uid_is_deterministic_and_content_addressed() {
+    let env = soroban_sdk::Env::default();
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let other_schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[3u8; 32]));
+    let recipient = account_address(&env, &[3u8; 32]);
+    let other_recipient = account_address(&env, &[4u8; 32]);
+    let attester = account_address(&env, &[5u8; 32]);
+    let other_attester = account_address(&env, &[6u8; 32]);
+    let data = soroban_sdk::Bytes::from_slice(&env, &[1, 2, 3]);
+    let other_data = soroban_sdk::Bytes::from_slice(&env, &[4, 5, 6]);
+
+    let uid = crate::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid_again = crate::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    assert_eq!(uid, uid_again, "identical inputs must produce the same UID");
+
+    assert_ne!(
+        uid,
+        crate::attestation_uid(&env, &other_schema_uid, &recipient, &attester, &data),
+        "a different schema_uid must produce a different UID"
+    );
+    assert_ne!(
+        uid,
+        crate::attestation_uid(&env, &schema_uid, &other_recipient, &attester, &data),
+        "a different recipient must produce a different UID"
+    );
+    assert_ne!(
+        uid,
+        crate::attestation_uid(&env, &schema_uid, &recipient, &other_attester, &data),
+        "a different attester must produce a different UID"
+    );
+    assert_ne!(
+        uid,
+        crate::attestation_uid(&env, &schema_uid, &recipient, &attester, &other_data),
+        "a different data must produce a different UID"
+    );
+}
+
 use crate::validation::validate_recipient;
 use crate::validation::validate_schema_syntax;
 use crate::validation::validate_ttl;

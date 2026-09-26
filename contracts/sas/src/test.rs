@@ -2,7 +2,8 @@ use crate::{SASClient, SAS};
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
     hash_delegated_revocation, Attestation, AttestationDomain, AttestationIssuedEvent,
-    AttestationRevokedEvent, IndexerUpdatedEvent, PreviousAddress, SASError, UID,
+    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent,
+    PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -10,16 +11,20 @@ use soroban_sdk::testutils::Ledger;
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, IntoVal};
 
 /// Builds a minimal valid attestation for `attester`/`recipient`, keyed by
-/// `uid_seed` so each test can own a distinct UID.
+/// `uid_seed` (folded into `data` so each test can own a distinct,
+/// correctly content-addressed UID; see `recompute_uid`).
 fn attestation_fixture(
     env: &Env,
     attester: &Address,
     recipient: &Address,
     uid_seed: [u8; 32],
 ) -> Attestation {
+    let schema_uid = UID(BytesN::from_array(env, &[2u8; 32]));
+    let data = Bytes::from_array(env, &uid_seed);
+    let uid = soroban_sas_common::attestation_uid(env, &schema_uid, recipient, attester, &data);
     Attestation {
-        uid: UID(BytesN::from_array(env, &uid_seed)),
-        schema_uid: UID(BytesN::from_array(env, &[2u8; 32])),
+        uid,
+        schema_uid,
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -27,8 +32,22 @@ fn attestation_fixture(
         recipient: recipient.clone(),
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(env),
+        data,
     }
+}
+
+/// Recomputes and overwrites `attestation.uid` from its current
+/// `schema_uid`/`recipient`/`attester`/`data`. Call this after mutating any
+/// of those fields on a fixture built by `attestation_fixture`, since the
+/// contract now rejects a `uid` that doesn't match its content (#215).
+fn recompute_uid(env: &Env, attestation: &mut Attestation) {
+    attestation.uid = soroban_sas_common::attestation_uid(
+        env,
+        &attestation.schema_uid,
+        &attestation.recipient,
+        &attestation.attester,
+        &attestation.data,
+    );
 }
 
 pub mod mock1 {
@@ -161,9 +180,11 @@ fn test_happy_path_attestation() {
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let ref_uid = UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    let data = Bytes::new(&env);
+    let uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -175,7 +196,7 @@ fn test_happy_path_attestation() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     env.mock_all_auths();
@@ -275,10 +296,13 @@ fn test_revocation_success() {
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data = Bytes::new(&env);
+    let uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
     let attestation = Attestation {
         uid: uid.clone(),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        schema_uid,
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -286,7 +310,7 @@ fn test_revocation_success() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     env.mock_all_auths();
@@ -323,11 +347,14 @@ mod replace {
 
         let attester = Address::generate(&env);
         let recipient = Address::generate(&env);
-        let old_uid = UID(BytesN::from_array(&env, &[1u8; 32]));
+        let schema_uid = UID(BytesN::from_array(&env, &[2u8; 32]));
+        let data = Bytes::new(&env);
+        let old_uid =
+            soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
         let old_attestation = Attestation {
             uid: old_uid.clone(),
-            schema_uid: UID(BytesN::from_array(&env, &[2u8; 32])),
+            schema_uid,
             time: 1000,
             expiration_time: 0,
             revocation_time: 0,
@@ -335,7 +362,7 @@ mod replace {
             recipient: recipient.clone(),
             attester: attester.clone(),
             revocable,
-            data: Bytes::new(&env),
+            data,
         };
 
         sas_client.attest(&old_attestation);
@@ -358,10 +385,23 @@ mod replace {
     impl Fixture {
         /// A replacement attestation reusing this fixture's attester and
         /// recipient (the invariants `replace_attestation` enforces).
-        pub fn new_attestation(&self, uid: [u8; 32]) -> Attestation {
+        pub fn new_attestation(&self, uid_seed: [u8; 32]) -> Attestation {
+            let schema_uid = UID(BytesN::from_array(&self.env, &[3u8; 32]));
+            // uid_seed folded into `data` so each caller still gets a
+            // distinct, correctly content-addressed UID (#215).
+            let mut data = alloc::vec![7u8, 7, 7];
+            data.extend_from_slice(&uid_seed);
+            let data = Bytes::from_slice(&self.env, &data);
+            let uid = soroban_sas_common::attestation_uid(
+                &self.env,
+                &schema_uid,
+                &self.recipient,
+                &self.attester,
+                &data,
+            );
             Attestation {
-                uid: UID(BytesN::from_array(&self.env, &uid)),
-                schema_uid: UID(BytesN::from_array(&self.env, &[3u8; 32])),
+                uid,
+                schema_uid,
                 time: 2000,
                 expiration_time: 0,
                 revocation_time: 0,
@@ -371,7 +411,7 @@ mod replace {
                 recipient: self.recipient.clone(),
                 attester: self.attester.clone(),
                 revocable: true,
-                data: Bytes::from_slice(&self.env, &[7, 7, 7]),
+                data,
             }
         }
     }
@@ -516,12 +556,17 @@ fn test_multi_attest_returns_both_uids() {
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let uid1 = UID(soroban_sdk::BytesN::from_array(&env, &[3u8; 32]));
-    let uid2 = UID(soroban_sdk::BytesN::from_array(&env, &[4u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data1 = Bytes::from_slice(&env, &[3u8]);
+    let data2 = Bytes::from_slice(&env, &[4u8]);
+    let uid1 =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data1);
+    let uid2 =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data2);
 
     let att1 = Attestation {
         uid: uid1.clone(),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        schema_uid: schema_uid.clone(),
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -529,12 +574,12 @@ fn test_multi_attest_returns_both_uids() {
         recipient: recipient.clone(),
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data: data1,
     };
 
     let att2 = Attestation {
         uid: uid2.clone(),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        schema_uid,
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -542,7 +587,7 @@ fn test_multi_attest_returns_both_uids() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data: data2,
     };
 
     env.mock_all_auths();
@@ -645,11 +690,14 @@ fn test_resolver_callback() {
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[5u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data = Bytes::new(&env);
+    let uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        schema_uid,
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -657,7 +705,7 @@ fn test_resolver_callback() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     env.mock_all_auths();
@@ -1111,17 +1159,22 @@ mod offchain {
             stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes()).to_string();
         let attester = Address::from_string(&SorobanString::from_str(&env, &attester_strkey));
 
+        let schema_uid = UID(BytesN::from_array(&env, &[2u8; 32]));
+        let recipient = Address::generate(&env);
+        let data = Bytes::from_slice(&env, &[1, 2, 3]);
+        let uid =
+            soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
         let attestation = Attestation {
-            uid: UID(BytesN::from_array(&env, &[42u8; 32])),
-            schema_uid: UID(BytesN::from_array(&env, &[2u8; 32])),
+            uid,
+            schema_uid,
             time: 1000,
             expiration_time: 0,
             revocation_time: 0,
             ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
-            recipient: Address::generate(&env),
+            recipient,
             attester,
             revocable: true,
-            data: Bytes::from_slice(&env, &[1, 2, 3]),
+            data,
         };
 
         Setup {
@@ -1363,6 +1416,108 @@ fn test_register_attester_key_requires_auth() {
         .sas_client
         .try_register_attester_key(&s.attestation.attester, &offchain::public_key(&s));
     assert!(res.is_err());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #214 — get_attester_key public read entrypoint
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_attester_key_returns_none_for_never_registered_attester() {
+    let s = offchain::setup([60u8; 32]);
+    let never_registered = Address::generate(&s.env);
+    assert_eq!(s.sas_client.get_attester_key(&never_registered), None);
+}
+
+#[test]
+fn test_get_attester_key_returns_active_registration() {
+    let s = offchain::setup([61u8; 32]);
+    s.env.mock_all_auths();
+
+    let attester = s.attestation.attester.clone();
+    let public_key = offchain::public_key(&s);
+    s.sas_client.register_attester_key(&attester, &public_key);
+
+    let record = s
+        .sas_client
+        .get_attester_key(&attester)
+        .expect("key was just registered");
+    assert_eq!(record.public_key, public_key);
+    assert_eq!(record.version, 1);
+    assert!(!record.revoked);
+}
+
+#[test]
+fn test_get_attester_key_returns_revoked_registration_distinct_from_never_registered() {
+    let s = offchain::setup([62u8; 32]);
+    s.env.mock_all_auths();
+
+    let attester = s.attestation.attester.clone();
+    let public_key = offchain::public_key(&s);
+    s.sas_client.register_attester_key(&attester, &public_key);
+    s.sas_client.revoke_attester_key(&attester);
+
+    let record = s
+        .sas_client
+        .get_attester_key(&attester)
+        .expect("a revoked record is retained, not deleted");
+    assert!(record.revoked);
+    assert_eq!(record.public_key, public_key);
+    assert_eq!(record.version, 1);
+}
+
+/// `live_until_ledger` recorded for one persistent contract-data entry, or
+/// `None` when no such entry exists. The SDK 20 test host neither exposes
+/// `get_ttl` nor evicts lapsed entries, so reading the ledger snapshot is the
+/// only way to observe a TTL extension directly.
+fn persistent_live_until<K>(env: &Env, key: &K) -> Option<u32>
+where
+    K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+{
+    use soroban_sdk::xdr::{ContractDataDurability, LedgerKey, ScVal};
+    use soroban_sdk::TryFromVal;
+
+    let target = ScVal::try_from_val(env, &key.into_val(env)).unwrap();
+    env.to_ledger_snapshot()
+        .ledger_entries
+        .iter()
+        .find_map(|(k, (_, live_until))| match &**k {
+            LedgerKey::ContractData(data)
+                if data.durability == ContractDataDurability::Persistent && data.key == target =>
+            {
+                *live_until
+            }
+            _ => None,
+        })
+}
+
+#[test]
+fn test_get_attester_key_renews_persistent_ttl_on_read() {
+    let s = offchain::setup([63u8; 32]);
+    s.env.mock_all_auths();
+
+    let attester = s.attestation.attester.clone();
+    let public_key = offchain::public_key(&s);
+    s.sas_client.register_attester_key(&attester, &public_key);
+
+    let key = (crate::ATTESTER_KEY, attester.clone());
+    let live_until_at_write =
+        persistent_live_until(&s.env, &key).expect("record written by register_attester_key");
+
+    // Advance the ledger so the entry's TTL decays well below the one-year
+    // window `register_attester_key` set it to.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
+    });
+    assert_eq!(persistent_live_until(&s.env, &key), Some(live_until_at_write));
+
+    let expected = s.env.ledger().sequence() + soroban_sas_common::LEDGERS_IN_ONE_YEAR;
+    let record = s
+        .sas_client
+        .get_attester_key(&attester)
+        .expect("key was registered");
+    assert_eq!(record.public_key, public_key);
+    assert_eq!(persistent_live_until(&s.env, &key), Some(expected));
 }
 
 #[test]
@@ -1609,11 +1764,14 @@ fn test_comprehensive_lifecycle() {
 
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[10u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data = Bytes::new(&env);
+    let uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        schema_uid,
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -1621,7 +1779,7 @@ fn test_comprehensive_lifecycle() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     env.mock_all_auths();
@@ -1653,8 +1811,11 @@ fn test_attest_emits_attestation_issued_event() {
 
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[11u8; 32]));
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data = Bytes::new(&env);
+    let uid = soroban_sas_common::attestation_uid(
+        &env, &schema_uid, &recipient, &attester, &data,
+    );
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1666,7 +1827,7 @@ fn test_attest_emits_attestation_issued_event() {
         recipient: recipient.clone(),
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     env.mock_all_auths();
@@ -1704,11 +1865,14 @@ fn test_revoke_emits_attestation_revoked_event() {
 
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[12u8; 32]));
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data = Bytes::new(&env);
+    let uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        schema_uid,
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
@@ -1716,7 +1880,7 @@ fn test_revoke_emits_attestation_revoked_event() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     env.mock_all_auths();
@@ -1865,7 +2029,14 @@ fn test_delegation_nonce_strictly_increasing_and_out_of_order() {
 
     // Next increasing nonce 11 succeeds
     let mut att3 = s.attestation.clone();
-    att3.uid = UID(BytesN::from_array(&s.env, &[100u8; 32]));
+    att3.data = Bytes::from_slice(&s.env, &[100u8]);
+    att3.uid = soroban_sas_common::attestation_uid(
+        &s.env,
+        &att3.schema_uid,
+        &att3.recipient,
+        &att3.attester,
+        &att3.data,
+    );
     let sig11 = offchain::sign(&s, &att3, 11);
     let uid3 = s
         .sas_client
@@ -1880,12 +2051,26 @@ fn test_delegation_nonce_strictly_increasing_and_out_of_order() {
 
     // Concurrent distinct increasing nonces: 12 and 13 in any order both succeed if increasing
     let mut att4 = s.attestation.clone();
-    att4.uid = UID(BytesN::from_array(&s.env, &[101u8; 32]));
+    att4.data = Bytes::from_slice(&s.env, &[101u8]);
+    att4.uid = soroban_sas_common::attestation_uid(
+        &s.env,
+        &att4.schema_uid,
+        &att4.recipient,
+        &att4.attester,
+        &att4.data,
+    );
     let sig12 = offchain::sign(&s, &att4, 12);
     s.sas_client
         .attest_by_delegation(&att4, &12, &sig12, &public_key);
     let mut att5 = s.attestation.clone();
-    att5.uid = UID(BytesN::from_array(&s.env, &[102u8; 32]));
+    att5.data = Bytes::from_slice(&s.env, &[102u8]);
+    att5.uid = soroban_sas_common::attestation_uid(
+        &s.env,
+        &att5.schema_uid,
+        &att5.recipient,
+        &att5.attester,
+        &att5.data,
+    );
     let sig13 = offchain::sign(&s, &att5, 13);
     s.sas_client
         .attest_by_delegation(&att5, &13, &sig13, &public_key);
@@ -1935,7 +2120,13 @@ fn test_delegation_nonce_storage_bounded_and_describes_concurrent_behavior() {
         Address::from_string(&soroban_sdk::String::from_str(&s.env, &other_strkey));
     let mut other_att = s.attestation.clone();
     other_att.attester = other_attester.clone();
-    other_att.uid = UID(BytesN::from_array(&s.env, &[200u8; 32]));
+    other_att.uid = soroban_sas_common::attestation_uid(
+        &s.env,
+        &other_att.schema_uid,
+        &other_att.recipient,
+        &other_att.attester,
+        &other_att.data,
+    );
     let domain = soroban_sas_common::AttestationDomain {
         network_id: s.env.ledger().network_id(),
         contract: s.sas_id.clone(),
@@ -2184,6 +2375,7 @@ fn test_attest_accepts_payload_at_max_size() {
     let at_limit = soroban_sas_common::MAX_ATTESTATION_DATA_BYTES as usize;
     let buf = alloc::vec![0u8; at_limit];
     attestation.data = Bytes::from_slice(&env, &buf);
+    recompute_uid(&env, &mut attestation);
     let uid = sas_client.attest(&attestation);
     assert_eq!(uid, attestation.uid);
     assert!(sas_client.verify_attestation(&attestation.uid));
@@ -2230,9 +2422,13 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
     let ledger_ts = 7_777u64;
     env.ledger().with_mut(|li| li.timestamp = ledger_ts);
 
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    let data = Bytes::new(&env);
+    let uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
     let attestation = Attestation {
-        uid: UID(soroban_sdk::BytesN::from_array(&env, &[71u8; 32])),
-        schema_uid: UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32])),
+        uid,
+        schema_uid,
         time: 1, // caller-provided, must be overwritten
         expiration_time: 0,
         revocation_time: 0,
@@ -2240,7 +2436,7 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
         recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
 
     let nonce = 1u64;
@@ -2316,11 +2512,10 @@ fn test_delegated_issuance_and_revocation_e2e() {
     let schema_uid = registry.register(&owner, &schema_str, &resolver_id, &true);
 
     // 1. Unauthorized address cannot issue an attestation against this schema
-    let unauthorized_att = attestation_fixture(&env, &unauthorized_user, &recipient, [101u8; 32]);
-    let unauthorized_att = Attestation {
-        schema_uid: schema_uid.clone(),
-        ..unauthorized_att
-    };
+    let mut unauthorized_att =
+        attestation_fixture(&env, &unauthorized_user, &recipient, [101u8; 32]);
+    unauthorized_att.schema_uid = schema_uid.clone();
+    recompute_uid(&env, &mut unauthorized_att);
     let res_unauth = sas.try_attest(&unauthorized_att);
     assert_eq!(
         res_unauth,
@@ -2328,11 +2523,9 @@ fn test_delegated_issuance_and_revocation_e2e() {
     );
 
     // 2. Primary schema owner CAN issue an attestation
-    let owner_att = attestation_fixture(&env, &owner, &recipient, [102u8; 32]);
-    let owner_att = Attestation {
-        schema_uid: schema_uid.clone(),
-        ..owner_att
-    };
+    let mut owner_att = attestation_fixture(&env, &owner, &recipient, [102u8; 32]);
+    owner_att.schema_uid = schema_uid.clone();
+    recompute_uid(&env, &mut owner_att);
     let owner_att_uid = sas.attest(&owner_att);
     assert!(sas.verify_attestation(&owner_att_uid));
 
@@ -2340,11 +2533,9 @@ fn test_delegated_issuance_and_revocation_e2e() {
     registry.add_delegate(&schema_uid, &delegate);
 
     // 4. Authorized delegate CAN issue a valid attestation
-    let delegate_att = attestation_fixture(&env, &delegate, &recipient, [103u8; 32]);
-    let delegate_att = Attestation {
-        schema_uid: schema_uid.clone(),
-        ..delegate_att
-    };
+    let mut delegate_att = attestation_fixture(&env, &delegate, &recipient, [103u8; 32]);
+    delegate_att.schema_uid = schema_uid.clone();
+    recompute_uid(&env, &mut delegate_att);
     let delegate_att_uid = sas.attest(&delegate_att);
     assert!(sas.verify_attestation(&delegate_att_uid));
 
@@ -2354,11 +2545,9 @@ fn test_delegated_issuance_and_revocation_e2e() {
     assert!(!sas.verify_attestation(&delegate_att_uid));
 
     // 6. Authorized delegate can revoke an attestation issued under the schema via revoke_by_delegate
-    let owner_att2 = attestation_fixture(&env, &owner, &recipient, [104u8; 32]);
-    let owner_att2 = Attestation {
-        schema_uid: schema_uid.clone(),
-        ..owner_att2
-    };
+    let mut owner_att2 = attestation_fixture(&env, &owner, &recipient, [104u8; 32]);
+    owner_att2.schema_uid = schema_uid.clone();
+    recompute_uid(&env, &mut owner_att2);
     let owner_att2_uid = sas.attest(&owner_att2);
     assert!(sas.verify_attestation(&owner_att2_uid));
 
@@ -2369,11 +2558,9 @@ fn test_delegated_issuance_and_revocation_e2e() {
     registry.remove_delegate(&schema_uid, &delegate);
 
     // 8. Removed delegate can NO LONGER issue attestations
-    let delegate_att2 = attestation_fixture(&env, &delegate, &recipient, [105u8; 32]);
-    let delegate_att2 = Attestation {
-        schema_uid: schema_uid.clone(),
-        ..delegate_att2
-    };
+    let mut delegate_att2 = attestation_fixture(&env, &delegate, &recipient, [105u8; 32]);
+    delegate_att2.schema_uid = schema_uid.clone();
+    recompute_uid(&env, &mut delegate_att2);
     let res_removed = sas.try_attest(&delegate_att2);
     assert_eq!(
         res_removed,
@@ -2381,15 +2568,285 @@ fn test_delegated_issuance_and_revocation_e2e() {
     );
 
     // 9. Unauthorized address cannot revoke via revoke_by_delegate
-    let owner_att3 = attestation_fixture(&env, &owner, &recipient, [106u8; 32]);
-    let owner_att3 = Attestation {
-        schema_uid: schema_uid.clone(),
-        ..owner_att3
-    };
+    let mut owner_att3 = attestation_fixture(&env, &owner, &recipient, [106u8; 32]);
+    owner_att3.schema_uid = schema_uid.clone();
+    recompute_uid(&env, &mut owner_att3);
     let owner_att3_uid = sas.attest(&owner_att3);
     let res_revoke_unauth = sas.try_revoke_by_delegate(&owner_att3_uid, &unauthorized_user);
     assert_eq!(
         res_revoke_unauth,
         Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #215 — Attestation.uid must be content-addressed on issuance
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_attest_rejects_a_uid_that_does_not_match_its_content() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [110u8; 32]);
+    // Forged: an unrelated 32 bytes instead of the content-addressed hash.
+    attestation.uid = UID(BytesN::from_array(&env, &[0xffu8; 32]));
+
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+    assert!(!sas_client.verify_attestation(&attestation.uid));
+}
+
+#[test]
+fn test_attest_rejects_a_uid_copied_from_a_different_attestation() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let other = attestation_fixture(&env, &attester, &recipient, [111u8; 32]);
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [112u8; 32]);
+    // Copy a UID that is valid for a *different* attestation's content.
+    attestation.uid = other.uid;
+
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+}
+
+#[test]
+fn test_attest_rejects_the_zero_uid_when_content_does_not_hash_to_it() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [113u8; 32]);
+    attestation.uid = UID(BytesN::from_array(&env, &[0u8; 32]));
+
+    let res = sas_client.try_attest(&attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+}
+
+#[test]
+fn test_attest_accepts_a_correctly_content_addressed_uid() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let attestation = attestation_fixture(&env, &attester, &recipient, [114u8; 32]);
+    let expected_uid = soroban_sas_common::attestation_uid(
+        &env,
+        &attestation.schema_uid,
+        &attestation.recipient,
+        &attestation.attester,
+        &attestation.data,
+    );
+    assert_eq!(attestation.uid, expected_uid);
+
+    let returned_uid = sas_client.attest(&attestation);
+    assert_eq!(returned_uid, expected_uid);
+    assert!(sas_client.verify_attestation(&expected_uid));
+}
+
+#[test]
+fn test_attest_by_delegation_rejects_a_uid_that_does_not_match_its_content() {
+    let s = offchain::setup([115u8; 32]);
+    let mut tampered = s.attestation.clone();
+    tampered.uid = UID(BytesN::from_array(&s.env, &[0xeeu8; 32]));
+    // Sign over the tampered attestation itself, so this specifically
+    // exercises the on-chain content-addressing check rather than the
+    // (already-covered) signature-binding check.
+    let nonce = 1u64;
+    let signature = offchain::sign(&s, &tampered, nonce);
+    let public_key = offchain::public_key(&s);
+
+    let res =
+        s.sas_client
+            .try_attest_by_delegation(&tampered, &nonce, &signature, &public_key);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+}
+
+#[test]
+fn test_attest_with_value_rejects_a_uid_that_does_not_match_its_content() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let mut attestation = attestation_fixture(&env, &attester, &recipient, [116u8; 32]);
+    attestation.uid = UID(BytesN::from_array(&env, &[0xaau8; 32]));
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    let res = sas_client.try_attest_with_value(&attestation, &token, &0i128);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+}
+
+#[test]
+fn test_multi_attest_rejects_a_batch_containing_a_uid_that_does_not_match_its_content() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let good = attestation_fixture(&env, &attester, &recipient, [117u8; 32]);
+    let good_uid = good.uid.clone();
+    let mut bad = attestation_fixture(&env, &attester, &recipient, [118u8; 32]);
+    bad.uid = UID(BytesN::from_array(&env, &[0xbbu8; 32]));
+
+    env.mock_all_auths();
+    let batch = soroban_sdk::vec![&env, good, bad];
+    let res = sas_client.try_multi_attest(&batch);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+
+    // Atomic: the batch's earlier, individually-valid entry must not have
+    // been committed either.
+    assert!(!sas_client.verify_attestation(&good_uid));
+}
+
+#[test]
+fn test_replace_attestation_rejects_a_replacement_uid_that_does_not_match_its_content() {
+    let f = replace::setup(true);
+    let mut new_attestation = f.new_attestation([119u8; 32]);
+    new_attestation.uid = UID(BytesN::from_array(&f.env, &[0xccu8; 32]));
+
+    let res = f
+        .sas_client
+        .try_replace_attestation(&f.old_uid, &new_attestation);
+    assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
+
+    // The old attestation must remain untouched (no partial commit).
+    assert!(f.sas_client.verify_attestation(&f.old_uid));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #213 — BatchAttested / BatchRevoked summary events
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_multi_attest_emits_batch_attested_summary_as_last_event() {
+    let (env, sas_client, sas_id, _admin, attester_a, recipient) = fee_test_env();
+    let attester_b = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+
+    // Mixed batch: two items from attester_a, one from attester_b, so
+    // attester_count (2) must differ from count (3).
+    let a1 = attestation_fixture(&env, &attester_a, &recipient, [120u8; 32]);
+    let a2 = attestation_fixture(&env, &attester_a, &recipient, [121u8; 32]);
+    let b1 = attestation_fixture(&env, &attester_b, &recipient, [122u8; 32]);
+    let (uid1, uid2, uid3) = (a1.uid.clone(), a2.uid.clone(), b1.uid.clone());
+
+    env.mock_all_auths();
+    let batch = soroban_sdk::vec![&env, a1, a2, b1];
+    sas_client.multi_attest(&batch);
+
+    let issued = |uid: UID, attester: Address| {
+        (
+            sas_id.clone(),
+            (symbol_short!("ATTESTED"), schema_uid.clone(), attester.clone()).into_val(&env),
+            AttestationIssuedEvent {
+                uid,
+                schema_uid: schema_uid.clone(),
+                attester,
+                recipient: recipient.clone(),
+            }
+            .into_val(&env),
+        )
+    };
+    assert_eq!(
+        env.events().all(),
+        soroban_sdk::vec![
+            &env,
+            issued(uid1, attester_a.clone()),
+            issued(uid2, attester_a),
+            issued(uid3, attester_b),
+            (
+                sas_id,
+                (symbol_short!("BATCHATT"),).into_val(&env),
+                BatchAttestedEvent {
+                    count: 3,
+                    attester_count: 2,
+                }
+                .into_val(&env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn test_multi_attest_does_not_emit_batch_attested_on_a_reverted_call() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    // Oversized batch: rejected up front, before any item (and so no
+    // per-item event) is touched.
+    let mut batch = soroban_sdk::vec![&env];
+    for i in 0..(crate::MAX_MULTI_ATTEST + 1) {
+        let seed = (i % 256) as u8;
+        batch.push_back(attestation_fixture(
+            &env,
+            &attester,
+            &recipient,
+            [seed; 32],
+        ));
+    }
+
+    env.mock_all_auths();
+    let res = sas_client.try_multi_attest(&batch);
+    assert_eq!(res, Err(Ok(SASError::BatchTooLarge.into())));
+    assert!(env.events().all().is_empty());
+}
+
+#[test]
+fn test_multi_revoke_emits_batch_revoked_summary_as_last_event() {
+    let (env, sas_client, sas_id, _admin, attester_a, recipient) = fee_test_env();
+    let attester_b = Address::generate(&env);
+
+    let a1 = attestation_fixture(&env, &attester_a, &recipient, [124u8; 32]);
+    let a2 = attestation_fixture(&env, &attester_a, &recipient, [125u8; 32]);
+    let b1 = attestation_fixture(&env, &attester_b, &recipient, [126u8; 32]);
+    let (uid1, uid2, uid3) = (a1.uid.clone(), a2.uid.clone(), b1.uid.clone());
+
+    env.mock_all_auths();
+    sas_client.attest(&a1);
+    sas_client.attest(&a2);
+    sas_client.attest(&b1);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    let uids = soroban_sdk::vec![&env, uid1.clone(), uid2.clone(), uid3.clone()];
+    sas_client.multi_revoke(&uids);
+
+    let revoked_at = 5000u64;
+    let revoked = |uid: UID| {
+        (
+            sas_id.clone(),
+            (symbol_short!("REVOKED"), uid.clone()).into_val(&env),
+            AttestationRevokedEvent {
+                uid,
+                timestamp: revoked_at,
+            }
+            .into_val(&env),
+        )
+    };
+    let all_events = env.events().all();
+    // Only the tail — the 3 AttestationRevoked events plus the BatchRevoked
+    // summary — matters here; the 3 AttestationIssued events from the
+    // earlier `attest` calls are asserted elsewhere.
+    let tail_start = all_events.len() - 4;
+    let tail: soroban_sdk::Vec<_> = all_events.slice(tail_start..);
+    assert_eq!(
+        tail,
+        soroban_sdk::vec![
+            &env,
+            revoked(uid1),
+            revoked(uid2),
+            revoked(uid3),
+            (
+                sas_id,
+                (symbol_short!("BATCHREV"),).into_val(&env),
+                BatchRevokedEvent {
+                    count: 3,
+                    attester_count: 2,
+                }
+                .into_val(&env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn test_multi_revoke_does_not_emit_batch_revoked_on_a_reverted_call() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    let attestation = attestation_fixture(&env, &attester, &recipient, [127u8; 32]);
+    env.mock_all_auths();
+    sas_client.attest(&attestation);
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    // Duplicate uid within the batch aborts the whole call before any
+    // revocation (and thus the summary) is committed.
+    let uids = soroban_sdk::vec![&env, attestation.uid.clone(), attestation.uid.clone()];
+    let res = sas_client.try_multi_revoke(&uids);
+    assert!(res.is_err());
+
+    let all_events = env.events().all();
+    // Only the earlier successful `attest` call's event remains; nothing
+    // from the reverted `multi_revoke`.
+    assert_eq!(all_events.len(), 1);
 }

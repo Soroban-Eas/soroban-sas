@@ -51,7 +51,7 @@
                         "symbol": "data"
                       },
                       "val": {
-                        "bytes": ""
+                        "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
                       }
                     },
                     {
@@ -125,7 +125,7 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                            "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
                           }
                         ]
                       }
@@ -163,7 +163,7 @@
                         "symbol": "data"
                       },
                       "val": {
-                        "bytes": ""
+                        "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
                       }
                     },
                     {
@@ -237,7 +237,7 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                            "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                           }
                         ]
                       }
@@ -377,7 +377,7 @@
             "key": {
               "vec": [
                 {
-                  "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                  "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                 }
               ]
             },
@@ -394,7 +394,7 @@
                 "key": {
                   "vec": [
                     {
-                      "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                      "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                     }
                   ]
                 },
@@ -414,139 +414,7 @@
                         "symbol": "data"
                       },
                       "val": {
-                        "bytes": ""
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "expiration_time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "recipient"
-                      },
-                      "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "ref_uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "revocable"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "revocation_time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "schema_uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "0909090909090909090909090909090909090909090909090909090909090909"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
-                          }
-                        ]
-                      }
-                    }
-                  ]
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          6307200
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "vec": [
-                {
-                  "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "vec": [
-                    {
-                      "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "map": [
-                    {
-                      "key": {
-                        "symbol": "attester"
-                      },
-                      "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "data"
-                      },
-                      "val": {
-                        "bytes": ""
+                        "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
                       }
                     },
                     {
@@ -620,7 +488,139 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                            "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "attester"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "data"
+                      },
+                      "val": {
+                        "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "expiration_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "recipient"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "ref_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocable"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocation_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "schema_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0909090909090909090909090909090909090909090909090909090909090909"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
                           }
                         ]
                       }
@@ -1067,7 +1067,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": ""
+                    "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
                   }
                 },
                 {
@@ -1141,7 +1141,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                        "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
                       }
                     ]
                   }
@@ -1336,7 +1336,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": ""
+                    "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
                   }
                 },
                 {
@@ -1410,7 +1410,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                        "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
                       }
                     ]
                   }
@@ -1502,7 +1502,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                        "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
                       }
                     ]
                   }
@@ -1532,7 +1532,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+                  "bytes": "cf462c12269bccd10bd4727fde5b56900be6f30229626d9483ee9875fc9fec48"
                 }
               ]
             }
@@ -1574,7 +1574,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": ""
+                    "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
                   }
                 },
                 {
@@ -1648,7 +1648,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                        "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                       }
                     ]
                   }
@@ -1843,7 +1843,7 @@
                     "symbol": "data"
                   },
                   "val": {
-                    "bytes": ""
+                    "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
                   }
                 },
                 {
@@ -1917,7 +1917,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                        "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                       }
                     ]
                   }
@@ -2009,7 +2009,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                        "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                       }
                     ]
                   }
@@ -2039,7 +2039,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "0404040404040404040404040404040404040404040404040404040404040404"
+                  "bytes": "78aa4d9bde64992b26fd582b6bb71a604ac4b04e9844ca42bddfa75d31dff258"
                 }
               ]
             }

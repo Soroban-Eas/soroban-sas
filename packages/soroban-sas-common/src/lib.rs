@@ -84,6 +84,30 @@ pub fn schema_uid(env: &Env, schema: &String, resolver: &Address, revocable: boo
     UID(env.crypto().sha256(&payload))
 }
 
+/// Derives an attestation's content-addressed UID:
+/// `sha256(xdr(schema_uid) || xdr(recipient) || xdr(attester) || xdr(data))`,
+/// each field XDR-encoded. This is the canonical way to compute the `uid` an
+/// attestation must carry on issuance — see `SAS::attest_internal`, which
+/// rejects any attestation whose `uid` field doesn't match this hash (#215).
+///
+/// Exposed here so off-chain callers — the SDK, the CLI — can compute the
+/// same UID they must submit, without duplicating the hashing scheme.
+pub fn attestation_uid(
+    env: &Env,
+    schema_uid: &UID,
+    recipient: &Address,
+    attester: &Address,
+    data: &Bytes,
+) -> UID {
+    use soroban_sdk::xdr::ToXdr;
+    let mut payload = Bytes::new(env);
+    payload.append(&schema_uid.clone().to_xdr(env));
+    payload.append(&recipient.clone().to_xdr(env));
+    payload.append(&attester.clone().to_xdr(env));
+    payload.append(&data.clone().to_xdr(env));
+    UID(env.crypto().sha256(&payload))
+}
+
 /// A delegated-verification key registered for an attester via
 /// `SAS::register_attester_key`/`rotate_attester_key`/`revoke_attester_key`.
 ///

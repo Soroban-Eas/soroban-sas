@@ -72,8 +72,9 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
 
     // --- Step 3: delegate issues an attestation against that schema. ---
     let recipient = Address::generate(&env);
+    let data = Bytes::new(&env);
     let attestation = Attestation {
-        uid: demo_attestation_uid(&env, &schema_uid.0, &attester, &recipient),
+        uid: soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data),
         schema_uid: schema_uid.clone(),
         time: 0, // normalized to ledger time by the contract
         expiration_time: 0,
@@ -82,7 +83,7 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
         recipient: recipient.clone(),
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data,
     };
     let attestation_uid = sas.attest(&attestation);
 
@@ -118,20 +119,4 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
     assert!(!is_valid_after_revoke);
 
     println!("=== done ===\n");
-}
-
-/// A content-addressed UID for the demo attestation, following the same
-/// hash-of-fields shape `AttestationRequestBuilder` uses in the SDK.
-fn demo_attestation_uid(
-    env: &Env,
-    schema_uid: &BytesN<32>,
-    attester: &Address,
-    recipient: &Address,
-) -> UID {
-    use soroban_sdk::xdr::ToXdr;
-    let mut payload = Bytes::new(env);
-    payload.append(&schema_uid.clone().to_xdr(env));
-    payload.append(&attester.clone().to_xdr(env));
-    payload.append(&recipient.clone().to_xdr(env));
-    UID(env.crypto().sha256(&payload))
 }
