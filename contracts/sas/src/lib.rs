@@ -335,6 +335,9 @@ impl SAS {
         if let Err(err) = soroban_sas_common::validate_recipient(&env, &attestation.recipient) {
             panic_with_error!(&env, err);
         }
+        if let Err(err) = soroban_sas_common::validate_recipient(&env, &attestation.attester) {
+            panic_with_error!(&env, err);
+        }
         if attestation.recipient == attestation.attester {
             panic_with_error!(&env, SASError::InvalidRecipient);
         }
@@ -1210,3 +1213,5 @@ mod demo;
 mod test;
 #[cfg(test)]
 mod test_extra;
+#[cfg(test)]
+mod test_issue_242;
