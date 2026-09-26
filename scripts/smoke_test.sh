@@ -79,6 +79,18 @@ for candidate in soroban stellar; do
     fi
 done
 [[ -n "$CLI_BIN" ]] || die "neither 'soroban' nor 'stellar' CLI found"
+command -v jq >/dev/null 2>&1 || die "'jq' is required for the off-chain attestation smoke test"
+
+# Prefer an installed SAS CLI, but keep the smoke test runnable directly from
+# a source checkout.
+if command -v soroban-sas >/dev/null 2>&1; then
+    SAS_CLI=(soroban-sas)
+elif command -v soroban-sas-cli >/dev/null 2>&1; then
+    SAS_CLI=(soroban-sas-cli)
+else
+    command -v cargo >/dev/null 2>&1 || die "neither 'soroban-sas' nor 'cargo' found"
+    SAS_CLI=(cargo run --quiet -p soroban-sas-cli --)
+fi
 
 info "using CLI: $CLI_BIN"
 info "SAS contract: $SAS_ID"
@@ -162,6 +174,111 @@ if [[ "$VERIFY_REVOKED" != "false" ]]; then
     die "verify_attestation should return false after revocation, got: $VERIFY_REVOKED"
 fi
 info "PASS: attestation is revoked"
+
+# ---------------------------------------------------------------------------
+# Step 6: Off-chain attestation sign and verify
+# ---------------------------------------------------------------------------
+step "Step 6: Off-chain attestation sign and verify"
+
+OFFCHAIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/soroban-sas-smoke.XXXXXX")"
+trap 'rm -rf "$OFFCHAIN_DIR"' EXIT
+ATTESTATION_FILE="$OFFCHAIN_DIR/attestation.json"
+SIGNED_FILE="$OFFCHAIN_DIR/signed.json"
+TAMPERED_FILE="$OFFCHAIN_DIR/signed-tampered.json"
+SCHEMA_UID_HEX="$(printf '%s' "$SCHEMA_UID" | tr -d '"')"
+
+# The schema UID and account addresses come from this deployment; all other
+# payload fields are deliberately fixed so a failure is reproducible.
+if jq -n \
+    --arg schema_uid "$SCHEMA_UID_HEX" \
+    --arg account "$ADMIN_ADDRESS" \
+    '{
+        uid: ("03" * 32),
+        schema_uid: $schema_uid,
+        time: 0,
+        expiration_time: 0,
+        ref_uid: ("00" * 32),
+        recipient: $account,
+        attester: $account,
+        revocable: true,
+        data: "deadbeef"
+    }' >"$ATTESTATION_FILE"; then
+    info "PASS: wrote minimal off-chain attestation JSON"
+else
+    die "FAIL: could not write minimal off-chain attestation JSON"
+fi
+
+if "${SAS_CLI[@]}" offchain sign \
+    --data-file "$ATTESTATION_FILE" \
+    --secret-key "$SECRET_KEY" \
+    --nonce 7 \
+    --network-passphrase "$NETWORK_PASSPHRASE" \
+    --contract-id "$SAS_ID" \
+    --output "$SIGNED_FILE" >/dev/null; then
+    [[ -s "$SIGNED_FILE" ]] || die "FAIL: offchain sign succeeded without producing signed.json"
+    info "PASS: signed.json produced with a real ed25519 key"
+else
+    die "FAIL: offchain sign rejected the attestation"
+fi
+
+if "${SAS_CLI[@]}" offchain verify --file "$SIGNED_FILE" >/dev/null; then
+    info "PASS: signed.json passes local signature verification"
+else
+    die "FAIL: valid signed.json failed local signature verification"
+fi
+
+# Build the contract value from signed.json itself. This intentionally avoids
+# duplicating or hardcoding any signature/public-key hex in the smoke test.
+SIGNED_ATTESTATION="$(jq -c '.attestation | {
+    uid: {bytes: .uid},
+    schema_uid: {bytes: .schema_uid},
+    time,
+    expiration_time,
+    revocation_time: 0,
+    ref_uid: {bytes: .ref_uid},
+    recipient,
+    attester,
+    revocable,
+    data: {bytes: .data}
+}' "$SIGNED_FILE")"
+OFFCHAIN_NONCE="$(jq -r '.nonce' "$SIGNED_FILE")"
+OFFCHAIN_PUBLIC_KEY="$(jq -r '.public_key' "$SIGNED_FILE")"
+OFFCHAIN_SIGNATURE="$(jq -r '.signature' "$SIGNED_FILE")"
+
+if ! ONCHAIN_RESULT="$(invoke "$SAS_ID" verify_offchain_attestation \
+    --attestation "$SIGNED_ATTESTATION" \
+    --nonce "$OFFCHAIN_NONCE" \
+    --public_key "$OFFCHAIN_PUBLIC_KEY" \
+    --signature "$OFFCHAIN_SIGNATURE")"; then
+    die "FAIL: valid signed.json was rejected by the on-chain verifier"
+fi
+if [[ "$ONCHAIN_RESULT" == "true" ]]; then
+    info "PASS: signed.json passes on-chain verification without a registered attester key"
+else
+    die "FAIL: valid signed.json should verify on-chain, got: $ONCHAIN_RESULT"
+fi
+
+if ! jq '.signature = ((if .signature[0:2] == "00" then "01" else "00" end) + .signature[2:])' \
+    "$SIGNED_FILE" >"$TAMPERED_FILE"; then
+    die "FAIL: could not create tampered signed attestation"
+fi
+
+if "${SAS_CLI[@]}" offchain verify --file "$TAMPERED_FILE" >/dev/null 2>&1; then
+    die "FAIL: tampered signature unexpectedly passed local verification"
+else
+    info "PASS: tampered signature rejected by local verification"
+fi
+
+TAMPERED_SIGNATURE="$(jq -r '.signature' "$TAMPERED_FILE")"
+if invoke "$SAS_ID" verify_offchain_attestation \
+    --attestation "$SIGNED_ATTESTATION" \
+    --nonce "$OFFCHAIN_NONCE" \
+    --public_key "$OFFCHAIN_PUBLIC_KEY" \
+    --signature "$TAMPERED_SIGNATURE" >/dev/null 2>&1; then
+    die "FAIL: tampered signature unexpectedly passed on-chain verification"
+else
+    info "PASS: tampered signature rejected by on-chain verifier"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary
