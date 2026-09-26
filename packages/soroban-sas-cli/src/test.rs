@@ -792,3 +792,199 @@ mod online_verification_tests {
         assert!(res.is_ok());
     }
 }
+
+#[cfg(test)]
+mod by_attester_query_tests {
+    use clap::{CommandFactory, Parser};
+    use soroban_sas_common::UID;
+    use soroban_sdk::xdr::{Limits, WriteXdr};
+    use soroban_sdk::BytesN;
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    use crate::{
+        format_attestations_by_attester, run_query, Cli, Commands, OutputFormat, QueryCommands,
+    };
+
+    const ATTESTER: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+
+    #[test]
+    fn parses_query_by_attester_flags() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "query",
+            "by-attester",
+            "--address",
+            ATTESTER,
+            "--contract-id",
+            CONTRACT,
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        let Some(Commands::Query {
+            action:
+                QueryCommands::ByAttester {
+                    address,
+                    contract_id,
+                    rpc_url,
+                },
+        }) = cli.command
+        else {
+            panic!("expected query by-attester command");
+        };
+        assert_eq!(address, ATTESTER);
+        assert_eq!(contract_id, CONTRACT);
+        assert_eq!(
+            rpc_url.as_deref(),
+            Some("https://soroban-testnet.stellar.org")
+        );
+    }
+
+    #[test]
+    fn by_attester_help_documents_the_command_and_flags() {
+        let mut root = Cli::command();
+        let query = root.find_subcommand_mut("query").unwrap();
+        let query_help = query.render_long_help().to_string();
+        assert!(query_help.contains("by-attester"));
+
+        let by_attester = query.find_subcommand_mut("by-attester").unwrap();
+        let help = by_attester.render_long_help().to_string();
+        assert!(help.contains("--address"));
+        assert!(help.contains("Attester/issuer account address"));
+        assert!(help.contains("--contract-id"));
+        assert!(help.contains("Indexer contract address"));
+        assert!(help.contains("--rpc-url"));
+        assert!(help.contains("Soroban RPC endpoint URL"));
+    }
+
+    #[test]
+    fn network_shorthand_parses_without_an_explicit_rpc_url() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--network",
+            "testnet",
+            "query",
+            "by-attester",
+            "--address",
+            ATTESTER,
+            "--contract-id",
+            CONTRACT,
+        ])
+        .unwrap();
+        assert_eq!(cli.network.as_deref(), Some("testnet"));
+        let Some(Commands::Query {
+            action: QueryCommands::ByAttester { rpc_url, .. },
+        }) = cli.command
+        else {
+            panic!("expected query by-attester command");
+        };
+        assert!(rpc_url.is_none());
+        assert_eq!(
+            crate::resolve_rpc_url(rpc_url, cli.network.as_deref()).unwrap(),
+            "https://soroban-testnet.stellar.org"
+        );
+    }
+
+    #[test]
+    fn formatter_produces_required_human_and_json_shapes() {
+        let env = soroban_sdk::Env::default();
+        let uids = soroban_sdk::vec![
+            &env,
+            UID(BytesN::from_array(&env, &[1u8; 32])),
+            UID(BytesN::from_array(&env, &[2u8; 32])),
+        ];
+        let (human, data) = format_attestations_by_attester(ATTESTER, &uids);
+        assert_eq!(
+            human,
+            format!(
+                "Attestations found: 2\n{}\n{}",
+                hex::encode([1u8; 32]),
+                hex::encode([2u8; 32])
+            )
+        );
+        let envelope = serde_json::json!({ "status": "ok", "data": data });
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["data"]["attester"], ATTESTER);
+        assert_eq!(
+            envelope["data"]["uids"],
+            serde_json::json!([hex::encode([1u8; 32]), hex::encode([2u8; 32])])
+        );
+        assert!(envelope["data"].get("count").is_none());
+    }
+
+    #[test]
+    fn formatter_handles_an_empty_result() {
+        let env = soroban_sdk::Env::default();
+        let uids = soroban_sdk::Vec::<UID>::new(&env);
+        let (human, data) = format_attestations_by_attester(ATTESTER, &uids);
+        assert_eq!(human, "Attestations found: 0");
+        assert_eq!(data["attester"], ATTESTER);
+        assert_eq!(data["uids"], serde_json::json!([]));
+    }
+
+    fn spawn_mock_rpc(response_body: String) -> (String, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                let read = reader.read_line(&mut line).unwrap();
+                if read == 0 || line == "\r\n" || line == "\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    content_length = value.trim().parse().unwrap();
+                }
+            }
+            let mut request_body = vec![0u8; content_length];
+            reader.read_exact(&mut request_body).unwrap();
+            let mut stream = stream;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(), response_body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            String::from_utf8(request_body).unwrap()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn run_query_uses_the_sdk_simulation_decode_path() {
+        let env = soroban_sdk::Env::default();
+        let expected = soroban_sdk::vec![
+            &env,
+            UID(BytesN::from_array(&env, &[7u8; 32])),
+            UID(BytesN::from_array(&env, &[8u8; 32])),
+        ];
+        let result_xdr = soroban_sas_sdk::simulate::encode_arg(&env, &expected)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let response = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let (rpc_url, server) = spawn_mock_rpc(response);
+
+        run_query(
+            QueryCommands::ByAttester {
+                address: ATTESTER.to_string(),
+                contract_id: CONTRACT.to_string(),
+                rpc_url: Some(rpc_url),
+            },
+            OutputFormat::Json,
+            None,
+        )
+        .unwrap();
+
+        let request: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+        assert_eq!(request["method"], "simulateTransaction");
+        assert!(request["params"]["transaction"].as_str().is_some());
+    }
+}
