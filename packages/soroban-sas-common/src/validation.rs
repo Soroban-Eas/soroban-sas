@@ -94,7 +94,10 @@ fn is_valid_type(bytes: &[u8], start: u32, end: u32) -> bool {
 
 pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError> {
     let schema_len = schema.len() as usize;
-    if schema_len == 0 || schema_len > MAX_SCHEMA_LENGTH as usize {
+    if schema_len == 0 {
+        return Err(SASError::EmptySchema);
+    }
+    if schema_len > MAX_SCHEMA_LENGTH as usize {
         return Err(SASError::InvalidSchema);
     }
     let mut buf = [0u8; 1024]; // Hardcoded to MAX_SCHEMA_LENGTH
@@ -198,7 +201,7 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
     }
 
     if field_count == 0 {
-        return Err(SASError::InvalidSchema);
+        return Err(SASError::EmptySchema);
     }
 
     Ok(())

@@ -111,3 +111,7 @@ To support DAOs, enterprise organizations, and multi-issuer systems without shar
 ### Revocation
 - Authorized delegates can revoke their own attestations via `revoke(uid)`.
 - Authorized delegates and schema owners can revoke any attestation under the schema using `revoke_by_delegate(uid, delegate)` / `revoke_by_authorizer(uid, authorizer)`.
+
+## Schema ID Collision Resistance
+
+Schema UID derivation hashes the schema string, resolver address, and revocability boolean flag together using SHA-256. This deterministic formulation guarantees robust ID collision resistance: two independent entities creating the exact same schema structure will not collide if they specify different resolvers or different revocability toggles. Furthermore, strict capitalization boundaries and whitespace trimmings during schema string validation prevent bad actors from intentionally creating semantically identical duplicates disguised by format drift. 
