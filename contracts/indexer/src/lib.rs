@@ -546,3 +546,7 @@ impl Indexer {
 
 #[cfg(test)]
 mod test;
+
+// Native test harness only; never exported in the contract WASM.
+#[cfg(any(test, feature = "testutils"))]
+pub mod chunking_test_support;

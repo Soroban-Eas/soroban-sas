@@ -724,8 +724,6 @@ mod revoke_resolver_semantics {
     struct Fixture {
         env: Env,
         sas_client_id: Address,
-        attester: Address,
-        recipient: Address,
     }
 
     /// Registers `Resolver` as the resolver of a fresh, revocable schema,
@@ -778,8 +776,6 @@ mod revoke_resolver_semantics {
             Fixture {
                 env,
                 sas_client_id: sas_id,
-                attester,
-                recipient,
             },
             uid,
         )

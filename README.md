@@ -28,6 +28,11 @@ For an in-depth look at how state is managed, the interactions between various s
 
 Details about our security perimeter, administrative capabilities, and known vulnerabilities can be found in the [Security Assumptions and Threat Model](docs/security.md) guide.
 
+SAS fee changes emit `FeeConfigUpdated` events with previous and new values;
+see [Contract Events](docs/events.md) for payloads and SDK parsing. Dependency
+security checks and indexer fuzzing commands are described in
+[Contributing](CONTRIBUTING.md).
+
 ## Project Status
 
 The workspace has evolved beyond initial mocks and now includes comprehensive domain logic for the smart contracts:

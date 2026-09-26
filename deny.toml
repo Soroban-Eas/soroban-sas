@@ -1,0 +1,38 @@
+# cargo-deny 0.20.x: vulnerabilities are errors by default; licenses not
+# explicitly allowed are rejected (including GPL/AGPL/LGPL-only dependencies).
+[advisories]
+db-path = "~/.cargo/advisory-dbs"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+unmaintained = "none"
+# Existing upstream exceptions, also recorded in .cargo/audit.toml. Revisit when
+# the pinned Soroban SDK is upgraded; these are accepted risks, not fixes.
+ignore = [
+    # soroban-env-host 20.3.0 requires curve25519-dalek <=4.1.2; fixed in 4.1.3.
+    "RUSTSEC-2024-0344",
+    # Legacy url/idna in the Rust 1.79-compatible ureq dependency tree.
+    "RUSTSEC-2024-0421",
+    # time's fix needs serde versions excluded by soroban-env-common's exact pin.
+    "RUSTSEC-2026-0009",
+]
+
+[licenses]
+include-dev = true
+allow = ["Apache-2.0", "MIT", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Unicode-DFS-2016", "CC0-1.0", "Unicode-3.0", "Apache-2.0 WITH LLVM-exception"]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+# Workspace packages are explicitly unpublished pending a project license.
+# Only their own license metadata is excluded; dependencies remain checked.
+[licenses.private]
+ignore = true
+
+# Mozilla root certificate data used by ureq/rustls, not a copyleft code license.
+[[licenses.exceptions]]
+name = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]

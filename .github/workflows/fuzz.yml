@@ -1,0 +1,57 @@
+name: Indexer Fuzzing
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUSTUP_TOOLCHAIN: nightly-2024-06-13
+
+jobs:
+  indexer-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build indexer_chunking_fuzz
+      - run: cargo fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400 -rss_limit_mb=4096
+
+  # One hundred shards total ten million executions. Keep the expensive
+  # campaign scheduled/manual, while every PR replays seeds and runs a smoke test.
+  indexer-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        group: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run indexer_chunking_fuzz -- -runs=100000 -seed=$((10 * ${{ matrix.group }} + ${{ matrix.shard }})) -max_len=14400 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: indexer-crashes-${{ matrix.group }}-${{ matrix.shard }}
+          path: fuzz/artifacts/indexer_chunking_fuzz/
+          if-no-files-found: ignore

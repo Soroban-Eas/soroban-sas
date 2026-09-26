@@ -3057,3 +3057,144 @@ fn test_multi_revoke_does_not_emit_batch_revoked_on_a_reverted_call() {
     // from the reverted `multi_revoke`.
     assert_eq!(all_events.len(), 1);
 }
+
+mod fee_config_events {
+    use super::*;
+    use soroban_sas_common::{FeeConfigUpdatedEvent, FEECFG_UPDATED};
+    use soroban_sdk::TryFromVal;
+
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        let registry = env.register_contract(None, mock1::MockRegistry);
+        let sas = env.register_contract(None, SAS);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        SASClient::new(&env, &sas).init(&admin, &registry);
+        (env, sas, admin)
+    }
+
+    fn assert_event(env: &Env, sas: &Address, expected: FeeConfigUpdatedEvent) {
+        let (contract, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(contract, *sas);
+        assert_eq!(
+            topics,
+            (FEECFG_UPDATED, expected.authorizer.clone()).into_val(env)
+        );
+        assert_eq!(
+            FeeConfigUpdatedEvent::try_from_val(env, &data).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn first_set_fee_emits_absent_old_value() {
+        let (env, sas, admin) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::None,
+                old_amount: None,
+                new_token: PreviousAddress::Some(token.clone()),
+                new_amount: Some(25),
+                authorizer: admin,
+            },
+        );
+        assert_eq!(client.get_fee(), Some((token, 25)));
+    }
+
+    #[test]
+    fn subsequent_set_fee_emits_previous_token_and_amount() {
+        let (env, sas, admin) = setup();
+        let old_token = Address::generate(&env);
+        let new_token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&old_token, &25);
+        client.set_fee(&new_token, &i128::MAX);
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::Some(old_token),
+                old_amount: Some(25),
+                new_token: PreviousAddress::Some(new_token.clone()),
+                new_amount: Some(i128::MAX),
+                authorizer: admin,
+            },
+        );
+        assert_eq!(client.get_fee(), Some((new_token, i128::MAX)));
+    }
+
+    #[test]
+    fn clear_fee_emits_previous_value_and_absent_new_value() {
+        let (env, sas, admin) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        client.clear_fee();
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::Some(token),
+                old_amount: Some(25),
+                new_token: PreviousAddress::None,
+                new_amount: None,
+                authorizer: admin,
+            },
+        );
+        assert_eq!(client.get_fee(), None);
+    }
+
+    #[test]
+    fn clear_unconfigured_fee_emits_absent_values() {
+        let (env, sas, admin) = setup();
+        SASClient::new(&env, &sas).clear_fee();
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::None,
+                old_amount: None,
+                new_token: PreviousAddress::None,
+                new_amount: None,
+                authorizer: admin,
+            },
+        );
+    }
+
+    #[test]
+    fn invalid_amount_emits_no_event_and_preserves_fee() {
+        let (env, sas, _) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        let before = env.events().all();
+        for amount in [0, -1, i128::MIN] {
+            assert_eq!(
+                client.try_set_fee(&token, &amount),
+                Err(Ok(SASError::InvalidValue.into()))
+            );
+            assert_eq!(env.events().all(), before);
+            assert_eq!(client.get_fee(), Some((token.clone(), 25)));
+        }
+    }
+
+    #[test]
+    fn unauthorized_fee_changes_emit_no_event_and_preserve_fee() {
+        let (env, sas, _) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        let before = env.events().all();
+        env.set_auths(&[]);
+        assert!(client.try_set_fee(&token, &50).is_err());
+        assert_eq!(env.events().all(), before);
+        assert!(client.try_clear_fee().is_err());
+        assert_eq!(env.events().all(), before);
+        assert_eq!(client.get_fee(), Some((token, 25)));
+    }
+}

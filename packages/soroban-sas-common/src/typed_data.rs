@@ -526,3 +526,208 @@ mod golden_vectors {
         );
     }
 }
+
+#[cfg(test)]
+mod field_mutations {
+    use super::*;
+    use crate::UID;
+    use soroban_sdk::{
+        xdr::{Hash, ScAddress},
+        TryFromVal,
+    };
+
+    fn address(env: &Env, seed: u8) -> Address {
+        Address::try_from_val(env, &ScAddress::Contract(Hash([seed; 32]))).unwrap()
+    }
+
+    fn fixture(env: &Env) -> (Attestation, AttestationDomain) {
+        (
+            Attestation {
+                uid: UID(BytesN::from_array(env, &[1; 32])),
+                schema_uid: UID(BytesN::from_array(env, &[2; 32])),
+                time: 1_700_000_000,
+                expiration_time: 1_800_000_000,
+                revocation_time: 0,
+                ref_uid: UID(BytesN::from_array(env, &[3; 32])),
+                recipient: address(env, 4),
+                attester: address(env, 5),
+                revocable: true,
+                data: Bytes::from_slice(env, b"fixed payload"),
+            },
+            AttestationDomain {
+                network_id: BytesN::from_array(env, &[6; 32]),
+                contract: address(env, 7),
+                nonce: 42,
+            },
+        )
+    }
+
+    #[test]
+    fn uid_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.uid = UID(BytesN::from_array(&env, &[8; 32]));
+        assert_ne!(base.uid, changed.uid);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn schema_uid_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.schema_uid = UID(BytesN::from_array(&env, &[8; 32]));
+        assert_ne!(base.schema_uid, changed.schema_uid);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn time_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.time = base.time + 1;
+        assert_ne!(base.time, changed.time);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn expiration_time_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.expiration_time = base.expiration_time + 1;
+        assert_ne!(base.expiration_time, changed.expiration_time);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn ref_uid_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.ref_uid = UID(BytesN::from_array(&env, &[8; 32]));
+        assert_ne!(base.ref_uid, changed.ref_uid);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn recipient_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.recipient = address(&env, 8);
+        assert_ne!(base.recipient, changed.recipient);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn attester_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.attester = address(&env, 8);
+        assert_ne!(base.attester, changed.attester);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn revocable_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.revocable = !base.revocable;
+        assert_ne!(base.revocable, changed.revocable);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn data_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.data = Bytes::from_slice(&env, b"fixed payloae");
+        assert_ne!(base.data, changed.data);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn revocation_time_does_not_change_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = base.clone();
+        changed.revocation_time = 123;
+        assert_ne!(base.revocation_time, changed.revocation_time);
+        assert_eq!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &changed, &domain)
+        );
+    }
+
+    #[test]
+    fn network_id_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = domain.clone();
+        changed.network_id = BytesN::from_array(&env, &[8; 32]);
+        assert_ne!(domain.network_id, changed.network_id);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &base, &changed)
+        );
+    }
+
+    #[test]
+    fn contract_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = domain.clone();
+        changed.contract = address(&env, 8);
+        assert_ne!(domain.contract, changed.contract);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &base, &changed)
+        );
+    }
+
+    #[test]
+    fn nonce_changes_digest() {
+        let env = Env::default();
+        let (base, domain) = fixture(&env);
+        let mut changed = domain.clone();
+        changed.nonce = domain.nonce + 1;
+        assert_ne!(domain.nonce, changed.nonce);
+        assert_ne!(
+            hash_offchain_attestation(&env, &base, &domain),
+            hash_offchain_attestation(&env, &base, &changed)
+        );
+    }
+}

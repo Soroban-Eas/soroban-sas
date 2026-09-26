@@ -873,3 +873,26 @@ fn test_filtered_pagination_skips_a_full_chunk_of_revoked_uids() {
     let tail = client.get_recipient_page_filtered(&recipient, &MAX_CHUNK_SIZE, &5, &false);
     assert_eq!(tail.len(), 1);
 }
+
+#[test]
+fn test_chunk_boundaries_99_100_101_and_multiple_keys() {
+    extern crate std;
+    let mut pairs = std::vec::Vec::new();
+    for i in 0u32..101 {
+        for key in [[0; 4], [1; 4]] {
+            let mut uid = [0; 32];
+            uid[..4].copy_from_slice(&i.to_be_bytes());
+            pairs.push((key, uid));
+        }
+    }
+    chunking_test_support::check_chunking(&pairs);
+}
+
+#[test]
+fn test_chunking_seed_boundaries() {
+    extern crate std;
+    for count in [0, 1, 100, 101, 200, 201, 300, 301] {
+        let pairs = std::vec![([0; 4], [7; 32]); count];
+        chunking_test_support::check_chunking(&pairs);
+    }
+}
