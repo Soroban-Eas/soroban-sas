@@ -100,6 +100,8 @@ cargo run -p soroban-sas-cli -- --output json attest attest \
   --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
   --contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json query by-recipient --address G... --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json query by-attester \
+  --address G... --contract-id C... --rpc-url URL
 ```
 
 Detailed usage and flags for every subcommand are available via:

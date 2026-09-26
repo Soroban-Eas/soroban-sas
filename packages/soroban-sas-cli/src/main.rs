@@ -736,10 +736,24 @@ enum AttestCommands {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::enum_variant_names)] // Mirrors the public `query by-*` command names.
 enum QueryCommands {
     /// Query attestations by recipient address
     ByRecipient {
         #[arg(long, help = "Recipient account address (G...)")]
+        address: String,
+        #[arg(
+            long,
+            help = "Indexer contract address (C...)",
+            env = "INDEXER_CONTRACT_ID"
+        )]
+        contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Query attestations by attester address
+    ByAttester {
+        #[arg(long, help = "Attester/issuer account address (G...)")]
         address: String,
         #[arg(
             long,
@@ -1302,6 +1316,19 @@ fn run_query(
                 .map_err(|e| e.to_string())?;
             print_uids(&uids, output)
         }
+        QueryCommands::ByAttester {
+            address,
+            contract_id,
+            rpc_url,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
+            let uids = client
+                .get_attestations_by_attester(&env, &rpc, &address)
+                .map_err(|e| e.to_string())?;
+            print_attestations_by_attester(&address, &uids, output)
+        }
         QueryCommands::BySchema {
             uid,
             contract_id,
@@ -1317,6 +1344,35 @@ fn run_query(
             print_uids(&uids, output)
         }
     }
+}
+
+fn format_attestations_by_attester(
+    attester: &str,
+    uids: &soroban_sdk::Vec<soroban_sas_common::UID>,
+) -> (String, serde_json::Value) {
+    let hex_uids: Vec<String> = uids
+        .iter()
+        .map(|uid| hex::encode(uid.0.to_array()))
+        .collect();
+    let mut human = format!("Attestations found: {}", hex_uids.len());
+    for uid in &hex_uids {
+        human.push('\n');
+        human.push_str(uid);
+    }
+    let data = serde_json::json!({
+        "attester": attester,
+        "uids": hex_uids,
+    });
+    (human, data)
+}
+
+fn print_attestations_by_attester(
+    attester: &str,
+    uids: &soroban_sdk::Vec<soroban_sas_common::UID>,
+    output: OutputFormat,
+) -> Result<(), String> {
+    let (human, data) = format_attestations_by_attester(attester, uids);
+    emit_ok(output, || println!("{human}"), data)
 }
 
 fn print_uids(
