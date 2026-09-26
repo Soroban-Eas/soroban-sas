@@ -163,6 +163,32 @@ pub mod mock4 {
 }
 
 #[test]
+fn test_admin_returns_initialized_admin() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    assert_eq!(sas_client.admin(), admin);
+}
+
+#[test]
+fn test_admin_before_init_returns_not_initialized() {
+    let env = Env::default();
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    assert_eq!(
+        sas_client.try_admin(),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
+}
+
+#[test]
 fn test_happy_path_attestation() {
     let env = Env::default();
 

@@ -82,6 +82,15 @@ impl SAS {
         true
     }
 
+    /// Returns the current contract administrator.
+    ///
+    /// Panics with [`SASError::NotInitialized`] when the contract has not
+    /// been initialized yet.
+    pub fn admin(env: Env) -> Address {
+        extend_instance_ttl(&env);
+        require_admin(&env)
+    }
+
     pub fn init(env: Env, admin: Address, registry: Address) {
         extend_instance_ttl(&env);
         if env.storage().instance().has(&SAS_ADMIN) {

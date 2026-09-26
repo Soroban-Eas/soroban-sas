@@ -145,6 +145,12 @@ impl SASClient {
         &self.submission_policy
     }
 
+    /// Calls `SAS::admin()` via `simulateTransaction` to read the current
+    /// contract administrator without requiring a signing key.
+    pub fn fetch_admin(&self, env: &Env, rpc: &RpcClient) -> Result<Address, SdkError> {
+        invoke_read_only(env, rpc, &self.contract_id, "admin", vec![])
+    }
+
     /// Calls `SAS::verify_attestation(uid)` via `simulateTransaction` — a
     /// pure read: no signing key or transaction submission required.
     pub fn verify_attestation(
@@ -1580,6 +1586,24 @@ mod tests {
             revocable: true,
             data: Bytes::new(env),
         }
+    }
+
+    #[test]
+    fn fetch_admin_decodes_contract_result() {
+        let env = Env::default();
+        let expected_admin = Address::generate(&env);
+        let result_xdr = simulate::encode_arg(&env, &expected_admin)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let rpc = RpcClient::new(spawn_mock_rpc_server(body));
+        let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+        let client = SASClient::new(contract_id);
+
+        assert_eq!(client.fetch_admin(&env, &rpc).unwrap(), expected_admin);
     }
 
     #[test]
