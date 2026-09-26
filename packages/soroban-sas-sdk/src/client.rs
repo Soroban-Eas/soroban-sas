@@ -10,9 +10,11 @@ use crate::strkey::{parse_address, AddressKind};
 use crate::transaction::{SubmissionPolicy, TransactionSubmitter};
 use soroban_sas_common::{Attestation, SchemaRecord, UID};
 use soroban_sdk::xdr::{
-    ContractDataDurability, Hash, LedgerEntryData, LedgerKey, LedgerKeyContractData, Limits,
-    ReadXdr, ScAddress, ScVal, SorobanTransactionData, TransactionExt, TransactionResult,
-    TransactionResultResult, VecM, WriteXdr,
+    ContractDataDurability, ExtensionPoint, Hash, LedgerEntryData, LedgerKey,
+    LedgerKeyContractData, Limits, Memo, MuxedAccount, Operation, OperationBody, Preconditions,
+    ReadXdr, RestoreFootprintOp, ScAddress, ScVal, SequenceNumber, SorobanTransactionData,
+    Transaction, TransactionExt, TransactionResult, TransactionResultResult, Uint256, VecM,
+    WriteXdr,
 };
 use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
 use std::sync::Arc;
@@ -24,6 +26,7 @@ use std::sync::Arc;
 /// archived entries surface as `Archived` with restoration metadata rather
 /// than `NotFound`.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum AttestationResult {
     /// Live entry, TTL was bumped on read.
     Live(Attestation),
@@ -113,6 +116,16 @@ pub struct SASClient {
     /// once against a resynchronised value. When `None`, each write reads
     /// the sequence straight from RPC (the previous, race-prone behaviour).
     sequence_manager: Option<Arc<SequenceManager>>,
+    /// Optional configured RPC client for convenient single-client operations.
+    rpc: Option<RpcClient>,
+    /// Optional configured network passphrase for transaction signing.
+    network_passphrase: Option<String>,
+    /// Optional configured signing key (32-byte secret seed) for write operations.
+    secret_seed: Option<[u8; 32]>,
+    /// Optional configured Schema Registry contract ID.
+    registry_contract_id: Option<String>,
+    /// Optional configured Env for SDK operations.
+    env: Option<Env>,
 }
 
 impl SASClient {
@@ -123,6 +136,11 @@ impl SASClient {
             contract_id,
             submission_policy: SubmissionPolicy::default(),
             sequence_manager: None,
+            rpc: None,
+            network_passphrase: None,
+            secret_seed: None,
+            registry_contract_id: None,
+            env: None,
         }
     }
 
@@ -138,6 +156,59 @@ impl SASClient {
     pub fn with_sequence_manager(mut self, manager: Arc<SequenceManager>) -> Self {
         self.sequence_manager = Some(manager);
         self
+    }
+
+    /// Configures the RPC client for this [`SASClient`].
+    pub fn with_rpc(mut self, rpc: RpcClient) -> Self {
+        self.rpc = Some(rpc);
+        self
+    }
+
+    /// Configures the [`Env`] for this [`SASClient`].
+    pub fn with_env(mut self, env: Env) -> Self {
+        self.env = Some(env);
+        self
+    }
+
+    /// Configures the signing key (32-byte secret seed) for transactions submitted by
+    /// this [`SASClient`].
+    pub fn with_signing_key(mut self, secret_seed: [u8; 32]) -> Self {
+        self.secret_seed = Some(secret_seed);
+        self
+    }
+
+    /// Configures the network passphrase for transactions submitted by this [`SASClient`].
+    pub fn with_network_passphrase(mut self, passphrase: impl Into<String>) -> Self {
+        self.network_passphrase = Some(passphrase.into());
+        self
+    }
+
+    /// Configures the Schema Registry contract ID on this [`SASClient`].
+    ///
+    /// Required for schema operations such as [`fetch_schema`](Self::fetch_schema).
+    pub fn with_registry(mut self, registry_contract_id: impl Into<String>) -> Self {
+        self.registry_contract_id = Some(registry_contract_id.into());
+        self
+    }
+
+    /// Returns the configured registry contract ID, if set.
+    pub fn registry_contract_id(&self) -> Option<&str> {
+        self.registry_contract_id.as_deref()
+    }
+
+    /// Returns the configured RPC client, if set.
+    pub fn rpc(&self) -> Option<&RpcClient> {
+        self.rpc.as_ref()
+    }
+
+    /// Returns the configured signing key (secret seed), if set.
+    pub fn signing_key(&self) -> Option<&[u8; 32]> {
+        self.secret_seed.as_ref()
+    }
+
+    /// Returns the configured network passphrase, if set.
+    pub fn network_passphrase(&self) -> Option<&str> {
+        self.network_passphrase.as_deref()
     }
 
     /// The submission policy currently in effect.
@@ -169,6 +240,28 @@ impl SASClient {
         rpc: &RpcClient,
     ) -> Result<Option<(Address, i128)>, SdkError> {
         invoke_read_only(env, rpc, &self.contract_id, "get_fee", vec![])
+    }
+
+    /// Reads the highest delegation nonce consumed for `attester` via `simulateTransaction`
+    /// (a pure read) (#236).
+    ///
+    /// Return value semantics:
+    /// - `Ok(None)`: No nonce has been consumed; any nonce ≥ 1 is valid for the next operation.
+    /// - `Ok(Some(n))`: `n` is the highest nonce consumed so far; the next valid nonce is any value strictly greater than `n` (i.e. > `n`).
+    pub fn fetch_delegation_nonce(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &Address,
+    ) -> Result<Option<u64>, SdkError> {
+        let arg = simulate::encode_arg(env, attester)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_delegation_nonce",
+            vec![arg],
+        )
     }
 
     /// Calls `SchemaRegistry::get_schema(uid)` on `registry_contract_id` via
@@ -203,6 +296,44 @@ impl SASClient {
         let attester = parse_address(env, attester, AddressKind::Either, "attester")?;
         let arg = simulate::encode_arg(env, &attester)?;
         invoke_read_only(env, rpc, &self.contract_id, "get_attester_key", vec![arg])
+    }
+
+    /// Computes the canonical Schema UID from its components.
+    ///
+    /// Delegates directly to [`soroban_sas_common::schema_uid`] so SDK consumers
+    /// never duplicate the derivation logic.
+    pub fn compute_schema_uid(env: &Env, schema: &str, resolver: &Address, revocable: bool) -> UID {
+        let schema_str = SorobanString::from_str(env, schema);
+        soroban_sas_common::schema_uid(env, &schema_str, resolver, revocable)
+    }
+
+    /// Fetches a schema record by its UID from the configured Schema Registry contract.
+    ///
+    /// Simulates `SchemaRegistry::get_schema(schema_uid)` against the registry
+    /// contract bound to this [`SASClient`] via [`with_registry`](Self::with_registry).
+    ///
+    /// Requires both an RPC client (via [`with_rpc`](Self::with_rpc)) and a registry
+    /// contract address (via [`with_registry`](Self::with_registry)) to be configured.
+    ///
+    /// Returns `Ok(None)` when the schema does not exist in the registry, or
+    /// `Ok(Some(SchemaRecord))` with all fields correctly deserialised.
+    ///
+    /// See also [`compute_schema_uid`](Self::compute_schema_uid) and
+    /// [`soroban_sas_common::schema_uid`].
+    pub fn fetch_schema(&self, schema_uid: &[u8; 32]) -> Result<Option<SchemaRecord>, SdkError> {
+        let registry_id = self.registry_contract_id.as_deref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "registry address is required on SASClient; configure it via with_registry(...)"
+                    .to_string(),
+            )
+        })?;
+        let rpc = self.rpc.as_ref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "RPC client is required on SASClient; configure it via with_rpc(...)".to_string(),
+            )
+        })?;
+        let env = self.env.clone().unwrap_or_default();
+        self.get_schema(&env, rpc, registry_id, schema_uid)
     }
 
     /// Fetches the full `Attestation` record for `uid` via the
@@ -306,6 +437,148 @@ impl SASClient {
             Some(att) => Ok(AttestationResult::Live(att)),
             None => Ok(AttestationResult::NotFound),
         }
+    }
+
+    /// Fetches the attestation status for `uid`, distinguishing live, missing, and
+    /// archived attestations.
+    ///
+    /// Requires an RPC client to be configured via [`with_rpc`](Self::with_rpc).
+    pub fn fetch_attestation_status(&self, uid: &[u8; 32]) -> Result<AttestationResult, SdkError> {
+        let rpc = self.rpc.as_ref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "RPC client is required on SASClient; configure it via with_rpc(...)".to_string(),
+            )
+        })?;
+        let env = self.env.clone().unwrap_or_default();
+        self.fetch_attestation(&env, rpc, uid)
+    }
+
+    /// Restores an archived attestation so it can be queried again.
+    ///
+    /// **Important:** Restoration is distinct from re-issuance. It does not
+    /// re-issue or create a new attestation — it only restores the existing archived
+    /// storage entry via a `RestoreFootprintOp` transaction so that
+    /// [`get_attestation`](Self::get_attestation) or
+    /// [`fetch_attestation`](Self::fetch_attestation) can read it again.
+    ///
+    /// Requires a signing key ([`with_signing_key`](Self::with_signing_key)), an RPC client
+    /// ([`with_rpc`](Self::with_rpc)), and a network passphrase
+    /// ([`with_network_passphrase`](Self::with_network_passphrase)) to be configured on
+    /// this [`SASClient`].
+    ///
+    /// Returns [`SdkError::InvalidInput`] if the entry is not currently archived
+    /// (e.g. if it is live or missing / not found).
+    pub fn restore_attestation(&self, uid: [u8; 32]) -> Result<GetTransactionResult, SdkError> {
+        let rpc = self.rpc.as_ref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "RPC client is required on SASClient; configure it via with_rpc(...)".to_string(),
+            )
+        })?;
+        let secret_seed = self.secret_seed.as_ref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "signing key is required on SASClient; configure it via with_signing_key(...)"
+                    .to_string(),
+            )
+        })?;
+        let network_passphrase = self.network_passphrase.as_deref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "network passphrase is required on SASClient; configure it via with_network_passphrase(...)".to_string(),
+            )
+        })?;
+        let env = self.env.clone().unwrap_or_default();
+        self.restore_attestation_with_signer(&env, rpc, network_passphrase, secret_seed, uid)
+    }
+
+    /// Restores an archived attestation using an explicit signer, network passphrase, and RPC client.
+    ///
+    /// **Important:** Restoration is distinct from re-issuance. It only restores the storage
+    /// entry so `get_attestation` can read it again.
+    ///
+    /// Returns [`SdkError::InvalidInput`] if the entry is not currently archived.
+    pub fn restore_attestation_with_signer(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        uid: [u8; 32],
+    ) -> Result<GetTransactionResult, SdkError> {
+        let status = self.fetch_attestation(env, rpc, &uid)?;
+        let info = match status {
+            AttestationResult::Archived(info) => info,
+            AttestationResult::Live(_) | AttestationResult::NotFound => {
+                return Err(SdkError::InvalidInput("entry is not archived".to_string()));
+            }
+        };
+
+        let tx_data_b64 = info.transaction_data.ok_or_else(|| {
+            SdkError::DecodingError(
+                "archived entry missing transaction_data in restorePreamble".to_string(),
+            )
+        })?;
+        let soroban_data = SorobanTransactionData::from_xdr_base64(
+            tx_data_b64,
+            crate::limits::default_rpc_response_limits(),
+        )
+        .map_err(|e| {
+            SdkError::DecodingError(format!("failed to decode transaction_data: {e:?}"))
+        })?;
+
+        let min_resource_fee: i64 = info
+            .min_resource_fee
+            .as_deref()
+            .unwrap_or("0")
+            .parse()
+            .map_err(|e| SdkError::RpcError(format!("invalid min_resource_fee: {e:?}")))?;
+
+        let public_key = signature::derive_public_key(secret_seed);
+        let policy = &self.submission_policy;
+
+        let Some(manager) = self.sequence_manager.as_deref() else {
+            let next_seq = account::fetch_sequence_number(rpc, &public_key)? + 1;
+            let signed = build_signed_restore_at_sequence(
+                env,
+                rpc,
+                network_passphrase,
+                secret_seed,
+                &public_key,
+                next_seq,
+                soroban_data,
+                min_resource_fee,
+            )?;
+            return TransactionSubmitter::submit_with_policy(rpc, &signed, policy);
+        };
+
+        for attempt in 0..2u8 {
+            let reservation = manager.reserve(rpc, &public_key)?;
+            let signed = build_signed_restore_at_sequence(
+                env,
+                rpc,
+                network_passphrase,
+                secret_seed,
+                &public_key,
+                reservation.sequence(),
+                soroban_data.clone(),
+                min_resource_fee,
+            )?;
+            match TransactionSubmitter::submit_with_policy(rpc, &signed, policy) {
+                Ok(result) => {
+                    reservation.committed();
+                    return Ok(result);
+                }
+                Err(SdkError::SubmissionRejected {
+                    error_result_xdr, ..
+                }) if attempt == 0 && is_bad_sequence(error_result_xdr.as_deref()) => {
+                    reservation.failed();
+                    continue;
+                }
+                Err(err) => {
+                    reservation.failed();
+                    return Err(err);
+                }
+            }
+        }
+        unreachable!("the retry loop returns on every path")
     }
 
     /// Low-level `getLedgerEntries` helper retained for diagnostics and
@@ -623,6 +896,35 @@ impl SASClient {
             owner_secret_seed,
             registry_contract_id,
             "remove_delegate",
+            args,
+        )
+    }
+
+    /// Calls `SchemaRegistry::transfer_schema_ownership(uid, new_owner)` (#229).
+    /// Requires `owner_secret_seed` to be the current schema owner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn transfer_schema_ownership(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        new_owner: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let new_owner_addr = parse_address(env, new_owner, AddressKind::Either, "new_owner")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &new_owner_addr)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            owner_secret_seed,
+            registry_contract_id,
+            "transfer_schema_ownership",
             args,
         )
     }
@@ -1392,6 +1694,85 @@ fn build_signed_write_at_sequence(
     simulate::sign_transaction(env, &network_id, final_tx, secret_seed)
 }
 
+/// Builds, simulates (to obtain the final fee and footprint), and signs a
+/// `RestoreFootprintOp` transaction at the given `public_key`/`next_seq`.
+#[allow(clippy::too_many_arguments)]
+fn build_signed_restore_at_sequence(
+    env: &Env,
+    rpc: &RpcClient,
+    network_passphrase: &str,
+    secret_seed: &[u8; 32],
+    public_key: &[u8; 32],
+    next_seq: i64,
+    soroban_data: SorobanTransactionData,
+    min_resource_fee: i64,
+) -> Result<String, SdkError> {
+    let operation = Operation {
+        source_account: None,
+        body: OperationBody::RestoreFootprint(RestoreFootprintOp {
+            ext: ExtensionPoint::V0,
+        }),
+    };
+
+    let initial_fee = (BASE_FEE as i64 + min_resource_fee) as u32;
+    let draft_tx = Transaction {
+        source_account: MuxedAccount::Ed25519(Uint256(*public_key)),
+        fee: initial_fee,
+        seq_num: SequenceNumber(next_seq),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: vec![operation.clone()]
+            .try_into()
+            .expect("single operation"),
+        ext: TransactionExt::V1(soroban_data.clone()),
+    };
+
+    let draft_xdr = simulate::unsigned_envelope_xdr(draft_tx)?;
+    let sim = rpc.simulate_transaction(&draft_xdr)?;
+    if let Some(error) = sim.error {
+        if let Some(code) = crate::errors::extract_contract_error_code(&error) {
+            return Err(SdkError::ContractError(code));
+        }
+        return Err(SdkError::SimulationError(error));
+    }
+
+    let final_soroban_data = if let Some(td_b64) = sim.transaction_data {
+        SorobanTransactionData::from_xdr_base64(
+            td_b64,
+            crate::limits::default_rpc_response_limits(),
+        )
+        .map_err(|e| {
+            SdkError::DecodingError(format!("failed to decode simulated transactionData: {e:?}"))
+        })?
+    } else {
+        soroban_data
+    };
+
+    let sim_resource_fee: i64 = sim
+        .min_resource_fee
+        .as_deref()
+        .unwrap_or(&min_resource_fee.to_string())
+        .parse()
+        .map_err(|e| SdkError::RpcError(format!("invalid simulated minResourceFee: {e:?}")))?;
+    let final_fee = (BASE_FEE as i64 + sim_resource_fee) as u32;
+
+    let final_tx = Transaction {
+        source_account: MuxedAccount::Ed25519(Uint256(*public_key)),
+        fee: final_fee,
+        seq_num: SequenceNumber(next_seq),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: vec![operation].try_into().expect("single operation"),
+        ext: TransactionExt::V1(final_soroban_data),
+    };
+
+    let network_id: [u8; 32] = env
+        .crypto()
+        .sha256(&Bytes::from_slice(env, network_passphrase.as_bytes()))
+        .to_array();
+    simulate::sign_transaction(env, &network_id, final_tx, secret_seed)
+}
+
 /// Like [`invoke_write`] but allows the caller to specify a
 /// [`FeePolicy`] that adds a safety margin or caps the total fee. Fetches
 /// its own sequence number fresh from RPC — see [`build_signed_write`] for
@@ -1989,5 +2370,267 @@ mod tests {
             )
             .expect_err("an account strkey must not satisfy the resolver field");
         assert!(matches!(err, SdkError::DecodingError(_)));
+    }
+
+    fn spawn_mock_rpc_server_multi(responses: Vec<String>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for response_body in responses {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    let read = reader.read_line(&mut line).unwrap_or(0);
+                    if read == 0 || line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        content_length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut body);
+
+                let mut stream = stream;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn compute_schema_uid_matches_common_derivation() {
+        let env = Env::default();
+        let resolver = Address::generate(&env);
+        let schema = "name String, age U32";
+
+        for revocable in [true, false] {
+            let uid_sdk = SASClient::compute_schema_uid(&env, schema, &resolver, revocable);
+            let uid_common = soroban_sas_common::schema_uid(
+                &env,
+                &SorobanString::from_str(&env, schema),
+                &resolver,
+                revocable,
+            );
+            assert_eq!(uid_sdk, uid_common);
+        }
+    }
+
+    #[test]
+    fn fetch_schema_existing_missing_and_round_trip() {
+        let env = Env::default();
+        let resolver = Address::generate(&env);
+        let registry_id = stellar_strkey::Contract([2u8; 32]).to_string();
+        let client_id = stellar_strkey::Contract([1u8; 32]).to_string();
+
+        let uid = SASClient::compute_schema_uid(&env, "score U32", &resolver, true);
+        let record = SchemaRecord {
+            uid: uid.clone(),
+            schema: SorobanString::from_str(&env, "score U32"),
+            resolver: resolver.clone(),
+            revocable: true,
+        };
+
+        // Existing schema returns Some(SchemaRecord)
+        let opt: Option<SchemaRecord> = Some(record.clone());
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(client_id.clone())
+            .with_rpc(rpc)
+            .with_registry(registry_id.clone())
+            .with_env(env.clone());
+
+        let fetched = client.fetch_schema(&uid.0.to_array()).unwrap();
+        assert_eq!(fetched, Some(record));
+
+        // Missing schema returns None
+        let none_opt: Option<SchemaRecord> = None;
+        let none_xdr = simulate::encode_arg(&env, &none_opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let none_body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{none_xdr}"}}]}}}}"#
+        );
+        let none_url = spawn_mock_rpc_server(none_body);
+        let none_rpc = RpcClient::new(none_url);
+        let none_client = SASClient::new(client_id)
+            .with_rpc(none_rpc)
+            .with_registry(registry_id)
+            .with_env(env);
+
+        let missing = none_client.fetch_schema(&[99u8; 32]).unwrap();
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn fetch_schema_requires_registry_and_rpc() {
+        let client =
+            SASClient::new("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".to_string());
+        let err_no_reg = client.fetch_schema(&[0u8; 32]).unwrap_err();
+        assert!(matches!(err_no_reg, SdkError::InvalidInput(_)));
+
+        let client_with_reg =
+            client.with_registry("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM");
+        let err_no_rpc = client_with_reg.fetch_schema(&[0u8; 32]).unwrap_err();
+        assert!(matches!(err_no_rpc, SdkError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn restore_attestation_returns_invalid_input_when_not_archived() {
+        let env = Env::default();
+        let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+        let att = attestation_fixture(&env, 5);
+
+        // When entry is Live
+        let opt: Option<Attestation> = Some(att);
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let url = spawn_mock_rpc_server(format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        ));
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id.clone())
+            .with_rpc(rpc)
+            .with_signing_key([3u8; 32])
+            .with_network_passphrase("Test SDF Network ; September 2015")
+            .with_env(env.clone());
+
+        let err = client.restore_attestation([5u8; 32]).unwrap_err();
+        assert!(matches!(err, SdkError::InvalidInput(_)));
+
+        // When entry is NotFound (None)
+        let none_opt: Option<Attestation> = None;
+        let none_xdr = simulate::encode_arg(&env, &none_opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let none_url = spawn_mock_rpc_server(format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{none_xdr}"}}]}}}}"#
+        ));
+        let none_rpc = RpcClient::new(none_url);
+        let none_client = SASClient::new(contract_id)
+            .with_rpc(none_rpc)
+            .with_signing_key([3u8; 32])
+            .with_network_passphrase("Test SDF Network ; September 2015")
+            .with_env(env);
+
+        let err2 = none_client.restore_attestation([5u8; 32]).unwrap_err();
+        assert!(matches!(err2, SdkError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn restore_attestation_requires_signing_key_and_rpc() {
+        let client =
+            SASClient::new("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".to_string());
+        let err_no_rpc = client.restore_attestation([0u8; 32]).unwrap_err();
+        assert!(matches!(err_no_rpc, SdkError::InvalidInput(_)));
+
+        let rpc = RpcClient::new("http://127.0.0.1:1");
+        let client_no_signer = client.with_rpc(rpc);
+        let err_no_signer = client_no_signer.restore_attestation([0u8; 32]).unwrap_err();
+        assert!(matches!(err_no_signer, SdkError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn restore_attestation_full_mock_flow_succeeds() {
+        use soroban_sdk::xdr::{
+            AccountEntry, AccountEntryExt, AccountId, ExtensionPoint, LedgerFootprint, PublicKey,
+            SorobanResources, SorobanTransactionData, Thresholds, Uint256, VecM,
+        };
+
+        let env = Env::default();
+        let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+        let seed = [7u8; 32];
+        let public_key = signature::derive_public_key(&seed);
+
+        let tx_data = SorobanTransactionData {
+            ext: ExtensionPoint::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint {
+                    read_only: VecM::default(),
+                    read_write: VecM::default(),
+                },
+                instructions: 0,
+                read_bytes: 0,
+                write_bytes: 0,
+            },
+            resource_fee: 100,
+        };
+        let tx_data_b64 = tx_data.to_xdr_base64(Limits::none()).unwrap();
+
+        // 1. Simulate get_attestation returns Archived with restorePreamble
+        let sim_archived_body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"error":"HostError: Error(Storage, Archived)","restorePreamble":{{"transactionData":"{tx_data_b64}","minResourceFee":"500"}}}}}}"#
+        );
+
+        // 2. getLedgerEntries returns source account sequence number
+        let account_entry = AccountEntry {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(public_key))),
+            balance: 100_000_000,
+            seq_num: SequenceNumber(42),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: String32::default(),
+            thresholds: Thresholds([1, 0, 0, 0]),
+            signers: Default::default(),
+            ext: AccountEntryExt::V0,
+        };
+        let account_xdr = LedgerEntryData::Account(account_entry)
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let ledger_entries_body = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"latestLedger":100,"entries":[{{"key":"AAAAAQ==","xdr":"{account_xdr}","lastModifiedLedgerSeq":100}}]}}}}"#
+        );
+
+        // 3. simulateTransaction for RestoreFootprintOp
+        let sim_restore_body = format!(
+            r#"{{"jsonrpc":"2.0","id":3,"result":{{"latestLedger":100,"transactionData":"{tx_data_b64}","minResourceFee":"600","results":[]}}}}"#
+        );
+
+        // 4. sendTransaction returns PENDING with tx hash
+        let send_body = r#"{"jsonrpc":"2.0","id":4,"result":{"status":"PENDING","hash":"restore_tx_hash_12345","latestLedger":100}}"#.to_string();
+
+        // 5. getTransaction returns SUCCESS
+        let get_tx_body = r#"{"jsonrpc":"2.0","id":5,"result":{"status":"SUCCESS","latestLedger":101,"ledger":101,"createdAt":1000,"hash":"restore_tx_hash_12345"}}"#.to_string();
+
+        let url = spawn_mock_rpc_server_multi(vec![
+            sim_archived_body,
+            ledger_entries_body,
+            sim_restore_body,
+            send_body,
+            get_tx_body,
+        ]);
+
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id)
+            .with_rpc(rpc)
+            .with_signing_key(seed)
+            .with_network_passphrase("Test SDF Network ; September 2015")
+            .with_env(env);
+
+        let res = client.restore_attestation([9u8; 32]).unwrap();
+        assert_eq!(res.status, "SUCCESS");
+        assert_eq!(res.hash.as_deref(), Some("restore_tx_hash_12345"));
     }
 }

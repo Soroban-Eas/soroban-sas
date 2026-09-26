@@ -50,6 +50,7 @@ else
 fi
 
 step "Checking Stellar CLI"
+STELLAR_CLI_VERSION="${STELLAR_CLI_VERSION:-28.0.0}"
 CLI_FOUND=""
 for candidate in stellar soroban; do
     if command -v "$candidate" >/dev/null 2>&1; then
@@ -61,8 +62,8 @@ done
 if [[ -n "$CLI_FOUND" ]]; then
     info "Found CLI '$CLI_FOUND' at $(command -v "$CLI_FOUND")"
 else
-    info "Installing stellar-cli (cargo install --locked stellar-cli)"
-    cargo install --locked stellar-cli
+    info "Installing stellar-cli v${STELLAR_CLI_VERSION} (cargo install --locked stellar-cli --version ${STELLAR_CLI_VERSION})"
+    cargo install --locked stellar-cli --version "$STELLAR_CLI_VERSION"
 fi
 
 step "Environment bootstrap complete!"
