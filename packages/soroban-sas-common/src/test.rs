@@ -276,7 +276,10 @@ fn test_delegation_nonce_key_xdr_smaller_than_tuple() {
     let typed_key = crate::DelegationNonceKey {
         attester: attester.clone(),
     };
-    let tuple_key = (soroban_sdk::symbol_short!("DELNONCE"), attester);
+    let tuple_key = (
+        soroban_sdk::Symbol::new(&env, "DELEGATION_NONCE"),
+        attester,
+    );
 
     let typed_xdr = typed_key.to_xdr(&env);
     let tuple_xdr = tuple_key.to_xdr(&env);
