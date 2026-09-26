@@ -59,6 +59,27 @@ rejected; concurrent submissions must use distinct increasing nonces. Because th
 high-watermark is instance state renewed on every delegation, its lifetime tracks
 contract liveness rather than the one-year tombstone.
 
+## Replacement expiration monotonicity
+
+`replace_attestation` revokes an existing attestation and issues a replacement
+linked to it via `ref_uid`, in one atomic call. If both the old attestation's
+`expiration_time` and the replacement's `expiration_time` are non-zero, the
+replacement's `expiration_time` must be `>= ` the old attestation's, or the
+call panics with `SASError::InvalidTTL`. Replacing with `expiration_time == 0`
+(perpetual, never-expiring) is always accepted, since it strictly extends the
+attestation's validity window.
+
+Rationale: without this check, an attester could bypass a schema's resolver
+revocation hook by "replacing" a valid, long-lived attestation with one whose
+`expiration_time` is already in the past. The replacement would read as
+expired the moment it is queried, without the schema's `on_revoke` callback
+ever running and without an `AttestationRevoked` event ever being emitted —
+silently defeating any resolver that depends on `on_revoke` for side effects
+(e.g. releasing collateral, updating an external ledger). Requiring the
+replacement's expiration to be no earlier than the original's closes that gap:
+an attester who wants to end an attestation early must use `revoke`, which
+always runs the resolver hook and emits the event.
+
 ## Indexer instance retention
 
 `INDEXER_ADMIN` and `SAS_CONTRACT` are instance entries whose TTL is renewed via

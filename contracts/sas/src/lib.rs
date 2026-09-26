@@ -785,6 +785,12 @@ impl SAS {
     /// revocable and not already revoked, and `new_data.attester`/`recipient`
     /// to match the old attestation's — a replacement changes what is being
     /// claimed, not who is claiming it or about whom.
+    ///
+    /// `new_data.expiration_time` must not shorten the old attestation's
+    /// expiration: if both are non-zero, `new_data.expiration_time` must be
+    /// `>= old.expiration_time`, or this panics with `SASError::InvalidTTL`.
+    /// Replacing with `expiration_time == 0` (perpetual) is always allowed.
+    /// See `docs/attestations.md` and `specs/protocol-v1.md` (#252).
     pub fn replace_attestation(env: Env, old_uid: UID, new_data: Attestation) -> UID {
         extend_instance_ttl(&env);
         let Some(old) = env.storage().persistent().get::<_, Attestation>(&old_uid) else {
@@ -801,6 +807,18 @@ impl SAS {
         }
         if new_data.attester != old.attester || new_data.recipient != old.recipient {
             panic_with_error!(&env, SASError::Unauthorized);
+        }
+        // Replacements may extend an expiration or make it perpetual
+        // (`expiration_time == 0`), but never shorten it: an attester could
+        // otherwise bypass resolver revocation checks by "replacing" a valid
+        // multi-year attestation with one whose expiration is already in the
+        // past, expiring it immediately without an `on_revoke` callback or an
+        // `AttestationRevoked` event (#252).
+        if old.expiration_time != 0
+            && new_data.expiration_time != 0
+            && new_data.expiration_time < old.expiration_time
+        {
+            panic_with_error!(&env, SASError::InvalidTTL);
         }
 
         let new_data = Attestation {
@@ -1306,3 +1324,5 @@ mod test;
 mod test_extra;
 #[cfg(test)]
 mod test_issue_242;
+#[cfg(test)]
+mod test_issue_252;
