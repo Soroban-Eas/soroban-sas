@@ -91,6 +91,15 @@ fn is_paused_status(env: &Env) -> bool {
     env.storage().instance().get(&PAUSED).unwrap_or(false)
 }
 
+/// Validates that an attestation has not expired. Returns `Ok(())` if valid,
+/// or `Err(SASError::AlreadyExpired)` if the expiration time is set and has passed.
+fn validate_expiration(env: &Env, expiration_time: u64) -> Result<(), SASError> {
+    if expiration_time != 0 && expiration_time <= env.ledger().timestamp() {
+        return Err(SASError::AlreadyExpired);
+    }
+    Ok(())
+}
+
 fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError> {
     let Some(raw): Option<Val> = env.storage().instance().get(key) else {
         return Err(SASError::IncompatibleDependency);
@@ -459,10 +468,8 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidUID);
         }
 
-        if attestation.expiration_time != 0
-            && attestation.expiration_time <= env.ledger().timestamp()
-        {
-            panic_with_error!(&env, SASError::AlreadyExpired);
+        if let Err(err) = validate_expiration(&env, attestation.expiration_time) {
+            panic_with_error!(&env, err);
         }
 
         if let Err(err) = soroban_sas_common::validate_recipient(&env, &attestation.recipient) {
@@ -887,7 +894,7 @@ impl SAS {
         if old.revocation_time != 0 {
             panic_with_error!(&env, SASError::AlreadyRevoked);
         }
-        if old.expiration_time != 0 && env.ledger().timestamp() >= old.expiration_time {
+        if let Err(_) = validate_expiration(&env, old.expiration_time) {
             panic_with_error!(&env, SASError::InvalidTTL);
         }
         if new_data.attester != old.attester || new_data.recipient != old.recipient {
@@ -1275,10 +1282,8 @@ impl SAS {
         if attestation.revocation_time != 0 {
             panic_with_error!(&env, SASError::AlreadyRevoked);
         }
-        if attestation.expiration_time != 0
-            && env.ledger().timestamp() >= attestation.expiration_time
-        {
-            panic_with_error!(&env, SASError::AlreadyExpired);
+        if let Err(err) = validate_expiration(&env, attestation.expiration_time) {
+            panic_with_error!(&env, err);
         }
 
         // An on-chain revocation of the same UID also invalidates the
@@ -1333,9 +1338,7 @@ impl SAS {
             if attestation.revocation_time != 0 {
                 return false;
             }
-            if attestation.expiration_time != 0
-                && env.ledger().timestamp() >= attestation.expiration_time
-            {
+            if validate_expiration(&env, attestation.expiration_time).is_err() {
                 return false;
             }
             true

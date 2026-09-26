@@ -9,9 +9,36 @@ use soroban_sdk::{
 };
 
 // v1.0.0 Indexer logic frozen
+//
+// Storage Format (Soroban SDK 21.7.7):
+// - Instance storage: Admin, SAS contract, version, WASM hash, query counter state
+// - Persistent storage: Index chunks, status records, attestation metadata
+// All entries use TTL management with LEDGERS_IN_ONE_YEAR renewal period for durability.
 
 #[contract]
 pub struct Indexer;
+
+// ============================================================================
+// Storage Layout (Soroban SDK 21.7.7 - Modern Storage Patterns)
+// ============================================================================
+// Instance Storage (contract configuration):
+//   INDEXER_ADMIN      - Authority address
+//   SAS_CONTRACT       - SAS contract reference
+//   INDEXER_VERSION    - Contract version
+//   CURRENT_WASM_HASH  - Upgrade tracking
+//   QUERY_COUNTER_SEQ  - Current ledger sequence for query limiting
+//   QUERY_COUNTER_COUNT - Query count in current sequence
+//
+// Persistent Storage (index data):
+//   (RECIPIENT_TOTAL, Address)           - Count of attestations per recipient
+//   (Address, chunk_idx)                 - Chunks of UIDs per recipient
+//   (SCHEMA_TOTAL, UID)                  - Count of attestations per schema
+//   (UID, chunk_idx)                     - Chunks of UIDs per schema
+//   (ATTESTER_TOTAL, Address)            - Count of attestations per attester
+//   (Address, chunk_idx)                 - Chunks of UIDs per attester
+//   (STATUS_KEY, UID)                    - Lifecycle status per attestation
+//   (INDEXED_KEY, UID)                   - Idempotency record (recipient, schema, attester)
+// ============================================================================
 
 /// Address allowed to administer this indexer instance.
 pub const INDEXER_ADMIN: Symbol = symbol_short!("ADMIN");
@@ -26,6 +53,7 @@ pub const CURRENT_WASM_HASH: Symbol = symbol_short!("WASMHASH");
 /// to activate. Increase only as part of a reviewed release.
 pub const MAX_KNOWN_VERSION: u32 = 2;
 const MAX_CHUNK_SIZE: u32 = 100;
+const MAX_QUERIES_PER_BLOCK: u32 = 1000;
 const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
 const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
@@ -37,6 +65,10 @@ const STATUS_KEY: Symbol = symbol_short!("IDXSTAT");
 /// indexed with. Its presence marks the UID as already indexed and pins the
 /// metadata a retry must match.
 const INDEXED_KEY: Symbol = symbol_short!("INDEXED");
+/// Instance key for tracking query count per ledger sequence.
+const QUERY_COUNTER_SEQ: Symbol = symbol_short!("QCSEQ");
+/// Instance key for tracking query count in the current sequence.
+const QUERY_COUNTER_COUNT: Symbol = symbol_short!("QCOUNT");
 
 /// The `(recipient, schema_uid, attester)` triple a UID was first indexed
 /// with. A later `index_attestation` for the same UID must supply an
@@ -59,6 +91,30 @@ fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
+/// Increments and enforces the maximum queries per ledger sequence limit.
+/// Returns `Ok(())` if the query is allowed, or `Err(SASError::LimitExceeded)` if the
+/// limit has been reached in the current block/sequence.
+fn check_query_limit(env: &Env) -> Result<(), SASError> {
+    let current_seq = env.ledger().sequence();
+    let stored_seq: u32 = env.storage().instance().get(&QUERY_COUNTER_SEQ).unwrap_or(0);
+
+    let count = if current_seq == stored_seq {
+        env.storage().instance().get(&QUERY_COUNTER_COUNT).unwrap_or(0u32)
+    } else {
+        0u32
+    };
+
+    if count >= MAX_QUERIES_PER_BLOCK {
+        return Err(SASError::LimitExceeded);
+    }
+
+    let new_count = count.saturating_add(1);
+    env.storage().instance().set(&QUERY_COUNTER_SEQ, &current_seq);
+    env.storage().instance().set(&QUERY_COUNTER_COUNT, &new_count);
+
+    Ok(())
 }
 
 fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError> {
@@ -541,6 +597,9 @@ impl Indexer {
         limit: u32,
     ) -> soroban_sdk::Vec<UID> {
         extend_instance_ttl(&env);
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
         if limit == 0 {
             return soroban_sdk::Vec::new(&env);
         }
@@ -596,6 +655,9 @@ impl Indexer {
         recipient: Address,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
         let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
         collect_filtered(
             &env,
@@ -610,6 +672,9 @@ impl Indexer {
         schema_uid: UID,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
         let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
         collect_filtered(
             &env,
@@ -624,6 +689,9 @@ impl Indexer {
         attester: Address,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
         let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
         collect_filtered(
             &env,
@@ -646,6 +714,9 @@ impl Indexer {
         limit: u32,
         include_revoked: bool,
     ) -> soroban_sdk::Vec<UID> {
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
         if limit == 0 {
             return soroban_sdk::Vec::new(&env);
         }
