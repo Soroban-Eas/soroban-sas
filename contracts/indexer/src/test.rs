@@ -556,6 +556,12 @@ fn test_cursor_pagination_large_datasets() {
     let recipient = Address::generate(&env);
     let attester = Address::generate(&env);
 
+    // Each `index_attestation` is its own transaction on-chain, with its own
+    // budget; the test host accumulates all 101 into one. Reset so this
+    // fixture (now writing the per-key counter to persistent storage, #219)
+    // cannot exhaust the budget the assertions below need.
+    env.budget().reset_unlimited();
+
     for i in 0..101u8 {
         let mut bytes = [0u8; 32];
         bytes[0] = i;
@@ -836,6 +842,74 @@ fn test_all_dimensions_chunk_at_max_and_complete_reads_walk_every_chunk() {
             .len(),
         1
     );
+}
+
+/// Issue #219: per-key UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) live in
+/// persistent storage, not instance storage, so they cannot silently reset
+/// to zero if instance storage's independent expiry lapses. Simulates a
+/// total instance storage wipe (the worst case of "instance expired") by
+/// directly removing every instance key the contract uses, then proves the
+/// counter is still readable, correct, and — critically — that indexing a
+/// further UID for the same key appends rather than duplicating chunk 0.
+#[test]
+fn test_recipient_counter_survives_simulated_instance_storage_expiry() {
+    let env = Env::default();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[7u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    let uid1 = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+    sas_client.relay_index(&indexer_id, &uid1, &recipient, &schema_uid, &attester);
+
+    let count_key = (RECIPIENT_TOTAL, recipient.clone());
+    env.as_contract(&indexer_id, || {
+        assert_eq!(
+            env.storage().persistent().get::<_, u32>(&count_key),
+            Some(1)
+        );
+        // Simulate instance storage having expired entirely: this is exactly
+        // where the counter used to live (#219). Wiping it must not touch
+        // the persistent counter or the chunk it counts.
+        env.storage().instance().remove(&INDEXER_ADMIN);
+        env.storage().instance().remove(&SAS_CONTRACT);
+        env.storage().instance().remove(&INDEXER_VERSION);
+    });
+
+    env.as_contract(&indexer_id, || {
+        assert_eq!(
+            env.storage().persistent().get::<_, u32>(&count_key),
+            Some(1),
+            "counter must survive an instance storage wipe"
+        );
+    });
+    assert_eq!(client.get_attestations_by_recipient(&recipient).len(), 1);
+
+    // `index_attestation` only needs `SAS_CONTRACT` to authorize the caller,
+    // so restore just that (as `init` originally set it) and index a second
+    // UID for the same recipient. With the old instance-backed counter this
+    // would have read back 0, recomputed chunk_index 0, and appended into
+    // the still-full-of-one chunk 0 as an overwrite/duplicate rather than a
+    // clean append at index 1.
+    env.as_contract(&indexer_id, || {
+        env.storage().instance().set(&SAS_CONTRACT, &sas);
+    });
+
+    let uid2 = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
+    sas_client.relay_index(&indexer_id, &uid2, &recipient, &schema_uid, &attester);
+
+    env.as_contract(&indexer_id, || {
+        assert_eq!(
+            env.storage().persistent().get::<_, u32>(&count_key),
+            Some(2)
+        );
+    });
+    let all = client.get_attestations_by_recipient(&recipient);
+    assert_eq!(all.len(), 2);
+    assert_eq!(all.get(0), Some(uid1));
+    assert_eq!(all.get(1), Some(uid2));
 }
 
 /// Issue #79: reading a recipient index renews the TTL of the chunks it

@@ -1,10 +1,9 @@
 {
   "generators": {
-    "address": 5,
+    "address": 3,
     "nonce": 0
   },
   "auth": [
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -27,6 +26,8 @@
         }
       ]
     ],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -158,7 +159,7 @@
             },
             "ext": "v0"
           },
-          6307200
+          4095
         ]
       ],
       [
@@ -301,30 +302,16 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "index_attestation"
+                "symbol": "upgrade"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "vec": [
-                    {
-                      "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
-                    }
-                  ]
+                  "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                },
-                {
-                  "vec": [
-                    {
-                      "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
-                    }
-                  ]
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  "u32": 2
                 }
               ]
             }
@@ -337,26 +324,42 @@
       "event": {
         "ext": "v0",
         "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
-        "type_": "diagnostic",
+        "type_": "contract",
         "body": {
           "v0": {
             "topics": [
               {
-                "symbol": "error"
+                "symbol": "UPGRADED"
               },
               {
-                "error": {
-                  "auth": "invalid_action"
-                }
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
               }
             ],
             "data": {
-              "vec": [
+              "map": [
                 {
-                  "string": "Unauthorized function call for address"
+                  "key": {
+                    "symbol": "authorizer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                  }
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  "key": {
+                    "symbol": "new_wasm_hash"
+                  },
+                  "val": {
+                    "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "old_wasm_hash"
+                  },
+                  "val": {
+                    "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
                 }
               ]
             }
@@ -378,7 +381,39 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "storage": "missing_value"
+                }
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "Wasm does not exist"
+                },
+                {
+                  "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "storage": "missing_value"
                 }
               }
             ],
@@ -403,7 +438,7 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "storage": "missing_value"
                 }
               }
             ],
@@ -428,7 +463,7 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "storage": "missing_value"
                 }
               }
             ],
@@ -438,33 +473,66 @@
                   "string": "contract try_call failed"
                 },
                 {
-                  "symbol": "index_attestation"
+                  "symbol": "upgrade"
                 },
                 {
                   "vec": [
                     {
-                      "vec": [
-                        {
-                          "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
-                        }
-                      ]
+                      "bytes": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
                     },
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                    },
-                    {
-                      "vec": [
-                        {
-                          "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
-                        }
-                      ]
-                    },
-                    {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      "u32": 2
                     }
                   ]
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_version"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_version"
+              }
+            ],
+            "data": {
+              "u32": 1
             }
           }
         }

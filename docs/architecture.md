@@ -36,7 +36,12 @@ attestation/schema data it governs:
   wherever it is written or read. An individual attestation or schema
   expiring does not take down the rest of the contract the way a lost
   admin binding would, so persistent entries are extended on their own
-  schedule rather than the stricter instance policy.
+  schedule rather than the stricter instance policy. The indexer's per-key
+  UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) live here too, on the same
+  horizon as the chunks they count — they used to live in instance storage,
+  where their independent expiry from the chunk data they count could reset
+  a counter to zero while its chunks survived, corrupting the index with
+  duplicate UIDs on the next write (#219).
 ## Trust Boundaries
 
 ### Indexer writes

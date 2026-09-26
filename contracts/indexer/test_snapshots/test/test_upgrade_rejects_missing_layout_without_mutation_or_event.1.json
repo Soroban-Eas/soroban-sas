@@ -1,10 +1,9 @@
 {
   "generators": {
-    "address": 5,
+    "address": 3,
     "nonce": 0
   },
   "auth": [
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -27,6 +26,8 @@
         }
       ]
     ],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -68,14 +69,6 @@
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "SAS"
-                        },
-                        "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                         }
                       },
                       {
@@ -158,7 +151,7 @@
             },
             "ext": "v0"
           },
-          6307200
+          4095
         ]
       ],
       [
@@ -301,30 +294,16 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "index_attestation"
+                "symbol": "upgrade"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "vec": [
-                    {
-                      "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
-                    }
-                  ]
+                  "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                },
-                {
-                  "vec": [
-                    {
-                      "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
-                    }
-                  ]
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  "u32": 2
                 }
               ]
             }
@@ -346,17 +325,17 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "contract": 404
                 }
               }
             ],
             "data": {
               "vec": [
                 {
-                  "string": "Unauthorized function call for address"
+                  "string": "failing with contract error"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  "u32": 404
                 }
               ]
             }
@@ -378,7 +357,7 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "contract": 404
                 }
               }
             ],
@@ -403,7 +382,7 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "contract": 404
                 }
               }
             ],
@@ -428,7 +407,7 @@
               },
               {
                 "error": {
-                  "auth": "invalid_action"
+                  "contract": 404
                 }
               }
             ],
@@ -438,33 +417,66 @@
                   "string": "contract try_call failed"
                 },
                 {
-                  "symbol": "index_attestation"
+                  "symbol": "upgrade"
                 },
                 {
                   "vec": [
                     {
-                      "vec": [
-                        {
-                          "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
-                        }
-                      ]
+                      "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
                     },
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                    },
-                    {
-                      "vec": [
-                        {
-                          "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
-                        }
-                      ]
-                    },
-                    {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      "u32": 2
                     }
                   ]
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_version"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_version"
+              }
+            ],
+            "data": {
+              "u32": 1
             }
           }
         }

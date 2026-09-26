@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SchemaDeprecated { schema_uid, deprecated_by }` event on the first
   successful deprecation; repeated calls stay idempotent and do not
   re-publish the event. (#218)
+- `Indexer`'s per-key UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) now live in
+  persistent storage instead of instance storage, on the same
+  `LEDGERS_IN_ONE_YEAR` renewal horizon as the chunk data they count. Instance
+  storage expires independently of persistent storage, so a counter left in
+  instance storage could silently reset to zero while its chunks survived —
+  the next `index_attestation` for that key would then recompute chunk 0 from
+  a stale cursor and duplicate a UID into it. (#219)
 
 ### Known Issues
 - Delegated attest/revoke signatures do not bind the full attestation payload or a nonce, permitting potential replay.
