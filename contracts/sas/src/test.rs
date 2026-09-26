@@ -752,7 +752,9 @@ fn test_attest_with_value_collects_the_fee() {
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
     let token = soroban_sdk::token::Client::new(&env, &token_id);
 
@@ -783,7 +785,9 @@ fn test_attest_with_value_zero_skips_transfer() {
 
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let token = soroban_sdk::token::Client::new(&env, &token_id);
 
     env.mock_all_auths();
@@ -808,7 +812,9 @@ fn test_attest_with_value_rejects_negative_value() {
 
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     env.mock_all_auths();
     let attestation = attestation_fixture(&env, &attester, &recipient, [9u8; 32]);
@@ -831,7 +837,9 @@ fn test_attest_with_value_insufficient_balance_issues_nothing() {
 
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
 
     env.mock_all_auths();
     sas_client.set_fee(&token_id, &500);
@@ -907,7 +915,9 @@ fn test_withdraw_tokens_requires_authorized_balance_and_event_path() {
     let attester = Address::generate(&env);
     let recipient = Address::generate(&env);
     let destination = Address::generate(&env);
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
     let token = soroban_sdk::token::Client::new(&env, &token_id);
 
@@ -2414,7 +2424,9 @@ fn fee_test_env() -> (Env, SASClient<'static>, Address, Address, Address, Addres
 #[test]
 fn test_attest_with_value_rejects_unconfigured_payment() {
     let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_id).mint(&attester, &1_000);
 
     let attestation = attestation_fixture(&env, &attester, &recipient, [40u8; 32]);
@@ -2427,8 +2439,12 @@ fn test_attest_with_value_rejects_unconfigured_payment() {
 #[test]
 fn test_attest_with_value_rejects_wrong_token_and_short_amount() {
     let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
-    let fee_token = env.register_stellar_asset_contract(admin.clone());
-    let other_token = env.register_stellar_asset_contract(admin.clone());
+    let fee_token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let other_token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &fee_token).mint(&attester, &1_000);
     soroban_sdk::token::StellarAssetClient::new(&env, &other_token).mint(&attester, &1_000);
     sas_client.set_fee(&fee_token, &500);
@@ -2466,7 +2482,9 @@ fn test_set_indexer_requires_admin_auth() {
 #[test]
 fn test_attest_with_value_accepts_exact_configured_fee() {
     let (env, sas_client, sas_id, admin, attester, recipient) = fee_test_env();
-    let fee_token = env.register_stellar_asset_contract(admin.clone());
+    let fee_token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     let token = soroban_sdk::token::Client::new(&env, &fee_token);
     soroban_sdk::token::StellarAssetClient::new(&env, &fee_token).mint(&attester, &1_000);
     sas_client.set_fee(&fee_token, &500);
@@ -2480,7 +2498,9 @@ fn test_attest_with_value_accepts_exact_configured_fee() {
 #[test]
 fn test_clear_fee_makes_attestation_fee_free_only_at_zero() {
     let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_id).mint(&attester, &1_000);
     sas_client.set_fee(&token_id, &500);
     sas_client.clear_fee();

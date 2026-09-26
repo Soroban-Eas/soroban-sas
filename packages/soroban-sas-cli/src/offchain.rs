@@ -122,7 +122,7 @@ pub fn compute_payload_hash(
         .crypto()
         .sha256(&Bytes::from_slice(&env, network_passphrase.as_bytes()));
     let domain = AttestationDomain {
-        network_id,
+        network_id: network_id.into(),
         contract: parse_address(&env, contract_id, AddressKind::Contract, "contract_id")
             .map_err(|e| e.to_string())?,
         nonce,
@@ -244,7 +244,7 @@ pub fn sign_delegated_revocation(
         .crypto()
         .sha256(&Bytes::from_slice(&env, network_passphrase.as_bytes()));
     let domain = AttestationDomain {
-        network_id,
+        network_id: network_id.into(),
         contract: parse_address(&env, contract_id, AddressKind::Contract, "contract_id")
             .map_err(|e| e.to_string())?,
         nonce,

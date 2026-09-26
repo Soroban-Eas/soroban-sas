@@ -92,7 +92,7 @@ pub fn hash_domain(env: &Env, domain: &AttestationDomain) -> BytesN<32> {
     buf.append(&Bytes::from_slice(env, &domain.network_id.to_array()));
     buf.append(&domain.contract.clone().to_xdr(env));
     buf.append(&Bytes::from_slice(env, &domain.nonce.to_be_bytes()));
-    env.crypto().sha256(&buf)
+    env.crypto().sha256(&buf).into()
 }
 
 /// Hashes an `Attestation` with a fixed, deterministic field layout.
@@ -118,7 +118,7 @@ pub fn hash_attestation_struct(env: &Env, attestation: &Attestation) -> BytesN<3
     buf.append(&Bytes::from_slice(env, &[attestation.revocable as u8]));
     let data_hash = env.crypto().sha256(&attestation.data);
     buf.append(&Bytes::from_slice(env, &data_hash.to_array()));
-    env.crypto().sha256(&buf)
+    env.crypto().sha256(&buf).into()
 }
 
 /// Computes the digest an issuer signs for an off-chain attestation:
@@ -137,7 +137,7 @@ pub fn hash_offchain_attestation(
         env,
         &hash_attestation_struct(env, attestation).to_array(),
     ));
-    env.crypto().sha256(&buf)
+    env.crypto().sha256(&buf).into()
 }
 
 /// Computes the digest for a delegated on-chain revocation. The domain binds
@@ -156,7 +156,7 @@ pub fn hash_delegated_revocation(
     ));
     buf.append(&Bytes::from_slice(env, &uid.0.to_array()));
     buf.append(&attester.clone().to_xdr(env));
-    env.crypto().sha256(&buf)
+    env.crypto().sha256(&buf).into()
 }
 
 /// Verifies an ed25519 signature over a payload digest.
@@ -230,6 +230,7 @@ mod golden_vectors {
     fn network_id_from_passphrase(env: &Env, passphrase: &str) -> BytesN<32> {
         env.crypto()
             .sha256(&Bytes::from_slice(env, passphrase.as_bytes()))
+            .into()
     }
 
     fn account_address(env: &Env, public_key: &[u8; 32]) -> Address {

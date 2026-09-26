@@ -27,6 +27,9 @@ mod mock {
             schema_uid: UID,
             attester: Address,
         ) {
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_EXTEND_TO_LEDGERS, INSTANCE_EXTEND_TO_LEDGERS);
             env.invoke_contract::<()>(
                 &indexer,
                 &Symbol::new(&env, "index_attestation"),
@@ -84,6 +87,11 @@ fn setup_indexed(env: &Env) -> (Address, IndexerClient<'_>, Address) {
     let client = IndexerClient::new(env, &indexer_id);
     let admin = Address::generate(env);
     let sas = env.register_contract(None, mock::MockSas);
+    env.as_contract(&sas, || {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TO_LEDGERS, INSTANCE_EXTEND_TO_LEDGERS);
+    });
     env.mock_all_auths();
     client.init(&admin, &sas);
     (indexer_id, client, sas)

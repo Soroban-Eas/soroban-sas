@@ -81,7 +81,7 @@ pub fn schema_uid(env: &Env, schema: &String, resolver: &Address, revocable: boo
     payload.append(&schema.clone().to_xdr(env));
     payload.append(&resolver.clone().to_xdr(env));
     payload.append(&Bytes::from_slice(env, &[revocable as u8]));
-    UID(env.crypto().sha256(&payload))
+    UID(env.crypto().sha256(&payload).into())
 }
 
 /// Derives an attestation's content-addressed UID:
@@ -105,7 +105,7 @@ pub fn attestation_uid(
     payload.append(&recipient.clone().to_xdr(env));
     payload.append(&attester.clone().to_xdr(env));
     payload.append(&data.clone().to_xdr(env));
-    UID(env.crypto().sha256(&payload))
+    UID(env.crypto().sha256(&payload).into())
 }
 
 /// A delegated-verification key registered for an attester via

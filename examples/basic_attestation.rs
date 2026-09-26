@@ -94,7 +94,7 @@ fn main() {
         network_passphrase.as_bytes(),
     ));
     let domain = soroban_sas_common::AttestationDomain {
-        network_id,
+        network_id: network_id.into(),
         contract: Address::from_string(&SorobanString::from_str(&env, &contract_id)),
         nonce: 0,
     };

@@ -27,7 +27,7 @@ pub fn check_chunking(pairs: &[([u8; 4], [u8; 32])]) {
         for (position, (key, raw_uid)) in pairs.iter().take(MAX_INSERTIONS).enumerate() {
             let mut input = Bytes::from_slice(&env, raw_uid);
             input.append(&Bytes::from_slice(&env, &(position as u32).to_be_bytes()));
-            let uid = UID(env.crypto().sha256(&input));
+            let uid = UID(env.crypto().sha256(&input).into());
             let (recipient, schema) = keys(&env, key);
             index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
             index_uid_uid(&env, &schema, &uid, SCHEMA_TOTAL);
