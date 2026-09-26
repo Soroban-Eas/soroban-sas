@@ -11,7 +11,21 @@ First off, thank you for considering contributing to Soroban SAS!
 ## Pull Request Process
 1. Ensure any install or build dependencies are removed before the end of the layer when doing a build.
 2. Update the README.md with details of changes to the interface.
-3. Your PR must pass all CI checks (Formatting, Clippy, Tests) before it can be merged.
+3. Your PR must pass all CI checks (Formatting, Clippy, Tests, Build contracts, and `check-docs`) before it can be merged.
+
+## Documentation checks
+
+`scripts/check_docs.sh` runs as the `check-docs` job in
+[`.github/workflows/docs.yml`](.github/workflows/docs.yml) on every push to
+`main` and every pull request targeting `main`. It verifies that paths and
+links referenced from `README.md`/`docs/*.md` still exist, that no obsolete
+paths or commands are documented, that the CI workflow definitions match what
+the README claims, and that bash snippets embedded in the README parse
+correctly. `check-docs` must be added to `main`'s required branch protection
+status checks alongside the existing `fmt`, `clippy`, `test`, and
+`build-contracts` jobs; adding a workflow file does not enable branch
+protection on its own — a repository administrator must do this from the
+repository settings.
 
 ## Dependency security
 

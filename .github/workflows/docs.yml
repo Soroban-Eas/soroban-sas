@@ -1,0 +1,19 @@
+name: Documentation Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-docs:
+    name: Validate Documentation Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Documentation Checker
+        run: |
+          chmod +x scripts/check_docs.sh
+          ./scripts/check_docs.sh
