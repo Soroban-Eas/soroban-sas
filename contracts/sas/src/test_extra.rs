@@ -120,17 +120,26 @@ fn test_verify_offchain_rejects_unknown_and_deprecated_schema() {
     assert_eq!(res, Err(Ok(SASError::InvalidSchema.into())));
 
     // On-chain attest with deprecated should also be InvalidSchema
+    let att2_recipient = Address::generate(&env);
+    let att2_data = Bytes::new(&env);
+    let att2_uid = soroban_sas_common::attestation_uid(
+        &env,
+        &schema_uid,
+        &att2_recipient,
+        &attester,
+        &att2_data,
+    );
     let att2 = Attestation {
-        uid: UID(BytesN::from_array(&env, &[43u8; 32])),
+        uid: att2_uid,
         schema_uid: schema_uid.clone(),
         time: 1000,
         expiration_time: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
-        recipient: Address::generate(&env),
+        recipient: att2_recipient,
         attester: attester.clone(),
         revocable: true,
-        data: Bytes::new(&env),
+        data: att2_data,
     };
     env.mock_all_auths();
     let res = sas_client.try_attest(&att2);
@@ -160,6 +169,7 @@ mod revocability {
         #[contractimpl]
         impl NoopResolver {
             pub fn on_attest(_env: Env, _attestation: Attestation) {}
+            pub fn on_revoke(_env: Env, _attestation: Attestation) {}
         }
     }
 
@@ -211,8 +221,18 @@ mod revocability {
     }
 
     fn attestation(fx: &Fixture, schema_uid: &UID, att_seed: u8, revocable: bool) -> Attestation {
+        // att_seed folded into `data` so each caller still gets a distinct,
+        // correctly content-addressed UID (#215).
+        let data = Bytes::from_array(&fx.env, &[att_seed; 32]);
+        let uid = soroban_sas_common::attestation_uid(
+            &fx.env,
+            schema_uid,
+            &fx.recipient,
+            &fx.attester,
+            &data,
+        );
         Attestation {
-            uid: UID(BytesN::from_array(&fx.env, &[att_seed; 32])),
+            uid,
             schema_uid: schema_uid.clone(),
             time: 1000,
             expiration_time: 0,
@@ -221,7 +241,7 @@ mod revocability {
             recipient: fx.recipient.clone(),
             attester: fx.attester.clone(),
             revocable,
-            data: Bytes::new(&fx.env),
+            data,
         }
     }
 
@@ -270,6 +290,13 @@ mod revocability {
 
         let mut att = attestation(&fx, &schema_uid, 5, true);
         att.attester = attester;
+        att.uid = soroban_sas_common::attestation_uid(
+            &fx.env,
+            &att.schema_uid,
+            &att.recipient,
+            &att.attester,
+            &att.data,
+        );
 
         let nonce = 1u64;
         let domain = soroban_sas_common::AttestationDomain {
@@ -292,6 +319,7 @@ mod revocability {
         let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
 
         let ok_att = attestation(&fx, &schema_uid, 6, false);
+        let ok_uid = ok_att.uid.clone();
         let bad_att = attestation(&fx, &schema_uid, 7, true);
         let batch = soroban_sdk::vec![&fx.env, ok_att, bad_att];
 
@@ -301,7 +329,6 @@ mod revocability {
         // The whole batch is one atomic host transaction: the rejected
         // second entry must roll back the first entry too, not leave it
         // partially committed.
-        let ok_uid = UID(BytesN::from_array(&fx.env, &[6u8; 32]));
         assert!(!fx.env.as_contract(&fx.sas_client_id, || fx
             .env
             .storage()
@@ -371,6 +398,7 @@ mod resolver_semantics {
         #[contractimpl]
         impl AcceptingResolver {
             pub fn on_attest(_env: Env, _attestation: Attestation) {}
+            pub fn on_revoke(_env: Env, _attestation: Attestation) {}
         }
     }
 
@@ -475,8 +503,18 @@ mod resolver_semantics {
     }
 
     fn attestation(fx: &Fixture, schema_uid: &UID, att_seed: u8) -> Attestation {
+        // att_seed folded into `data` so each caller still gets a distinct,
+        // correctly content-addressed UID (#215).
+        let data = Bytes::from_array(&fx.env, &[att_seed; 32]);
+        let uid = soroban_sas_common::attestation_uid(
+            &fx.env,
+            schema_uid,
+            &fx.recipient,
+            &fx.attester,
+            &data,
+        );
         Attestation {
-            uid: UID(BytesN::from_array(&fx.env, &[att_seed; 32])),
+            uid,
             schema_uid: schema_uid.clone(),
             time: 1000,
             expiration_time: 0,
@@ -485,7 +523,7 @@ mod resolver_semantics {
             recipient: fx.recipient.clone(),
             attester: fx.attester.clone(),
             revocable: true,
-            data: Bytes::new(&fx.env),
+            data,
         }
     }
 
@@ -595,6 +633,231 @@ mod resolver_semantics {
             fx.env.storage().persistent().get(&old_uid).unwrap()
         });
         assert_eq!(stored_old.revocation_time, 0);
+    }
+}
+
+/// Issue #216: resolvers are authoritative for revocation too, mirroring
+/// `on_attest`'s semantics (see `resolver_semantics` above and
+/// docs/schemas.md's "Resolver Failure Semantics"). Every outcome the SAS
+/// contract can observe (success, explicit rejection, trap, missing method)
+/// must be specified and covered, same as for issuance.
+mod revoke_resolver_semantics {
+    use super::*;
+
+    /// A resolver whose `on_revoke` always succeeds.
+    pub mod accepting_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contractimpl, Env};
+
+        #[contract]
+        pub struct AcceptingResolver;
+
+        #[contractimpl]
+        impl AcceptingResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {}
+            pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+        }
+    }
+
+    /// A resolver whose `on_revoke` explicitly rejects every revocation by
+    /// returning its own typed contract error.
+    pub mod rejecting_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contracterror, contractimpl, Env};
+
+        #[contracterror]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+        #[repr(u32)]
+        pub enum RejectingResolverError {
+            AlwaysRejects = 1,
+        }
+
+        #[contract]
+        pub struct RejectingResolver;
+
+        #[contractimpl]
+        impl RejectingResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {}
+            pub fn on_revoke(
+                _env: Env,
+                _attestation: Attestation,
+            ) -> Result<(), RejectingResolverError> {
+                Err(RejectingResolverError::AlwaysRejects)
+            }
+        }
+    }
+
+    /// A resolver whose `on_revoke` traps with an unhandled panic.
+    pub mod trapping_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contractimpl, Env};
+
+        #[contract]
+        pub struct TrappingResolver;
+
+        #[contractimpl]
+        impl TrappingResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {}
+            pub fn on_revoke(_env: Env, _attestation: Attestation) {
+                panic!("resolver misbehaves");
+            }
+        }
+    }
+
+    /// A resolver that implements `on_attest` but not `on_revoke`, so
+    /// issuance succeeds and only revocation exercises the "missing method"
+    /// outcome.
+    pub mod attest_only_resolver {
+        use super::*;
+        use soroban_sdk::{contract, contractimpl, Env};
+
+        #[contract]
+        pub struct AttestOnlyResolver;
+
+        #[contractimpl]
+        impl AttestOnlyResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        }
+    }
+
+    #[allow(dead_code)]
+    struct Fixture {
+        env: Env,
+        sas_client_id: Address,
+        attester: Address,
+        recipient: Address,
+    }
+
+    /// Registers `Resolver` as the resolver of a fresh, revocable schema,
+    /// wired up to a fresh `SAS` instance, issues one attestation against it,
+    /// and returns everything a test needs to revoke that attestation.
+    fn setup<Resolver: soroban_sdk::testutils::ContractFunctionSet + 'static>(
+        resolver: Resolver,
+    ) -> (Fixture, UID) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+        let resolver_id = env.register_contract(None, resolver);
+        let sas_id = env.register_contract(None, SAS);
+        let sas_client = SASClient::new(&env, &sas_id);
+        let admin = Address::generate(&env);
+        sas_client.init(&admin, &registry_id);
+
+        let attester = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let schema_uid = UID(BytesN::from_array(&env, &[31u8; 32]));
+        let record = SchemaRecord {
+            uid: schema_uid.clone(),
+            resolver: resolver_id,
+            revocable: true,
+            schema: SorobanString::from_str(&env, "value String"),
+        };
+        let mock_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+        mock_client.set_schema(&schema_uid, &record);
+
+        let data = Bytes::from_array(&env, &[1u8; 32]);
+        let uid =
+            soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+        let attestation = Attestation {
+            uid: uid.clone(),
+            schema_uid,
+            time: 1000,
+            expiration_time: 0,
+            revocation_time: 0,
+            ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+            recipient: recipient.clone(),
+            attester: attester.clone(),
+            revocable: true,
+            data,
+        };
+        sas_client.attest(&attestation);
+
+        (
+            Fixture {
+                env,
+                sas_client_id: sas_id,
+                attester,
+                recipient,
+            },
+            uid,
+        )
+    }
+
+    #[test]
+    fn accepting_resolver_allows_revocation() {
+        use soroban_sdk::testutils::Ledger;
+        let (fx, uid) = setup(accepting_resolver::AcceptingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+
+        // A fresh test `Env`'s ledger timestamp defaults to 0, which would
+        // make `revocation_time` indistinguishable from never-revoked.
+        fx.env.ledger().with_mut(|li| li.timestamp = 1000);
+        let res = sas_client.try_revoke(&uid);
+        assert!(res.is_ok());
+        let stored: Attestation = fx.env.as_contract(&fx.sas_client_id, || {
+            fx.env.storage().persistent().get(&uid).unwrap()
+        });
+        assert_ne!(stored.revocation_time, 0);
+    }
+
+    #[test]
+    fn rejecting_resolver_aborts_revocation_with_typed_error() {
+        let (fx, uid) = setup(rejecting_resolver::RejectingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+
+        let res = sas_client.try_revoke(&uid);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+
+        // All-or-nothing: the rejection rolls back the revocation_time
+        // write and event this same call already made, not just the parts
+        // after the resolver call.
+        let stored: Attestation = fx.env.as_contract(&fx.sas_client_id, || {
+            fx.env.storage().persistent().get(&uid).unwrap()
+        });
+        assert_eq!(stored.revocation_time, 0);
+    }
+
+    #[test]
+    fn trapping_resolver_aborts_revocation_with_typed_error() {
+        let (fx, uid) = setup(trapping_resolver::TrappingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+
+        let res = sas_client.try_revoke(&uid);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+        let stored: Attestation = fx.env.as_contract(&fx.sas_client_id, || {
+            fx.env.storage().persistent().get(&uid).unwrap()
+        });
+        assert_eq!(stored.revocation_time, 0);
+    }
+
+    #[test]
+    fn resolver_missing_on_revoke_aborts_revocation_with_typed_error() {
+        let (fx, uid) = setup(attest_only_resolver::AttestOnlyResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+
+        let res = sas_client.try_revoke(&uid);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+        let stored: Attestation = fx.env.as_contract(&fx.sas_client_id, || {
+            fx.env.storage().persistent().get(&uid).unwrap()
+        });
+        assert_eq!(stored.revocation_time, 0);
+    }
+
+    #[test]
+    fn rejected_revocation_via_multi_revoke_leaves_the_attestation_untouched() {
+        let (fx, uid) = setup(rejecting_resolver::RejectingResolver);
+        let sas_client = SASClient::new(&fx.env, &fx.sas_client_id);
+
+        let batch = soroban_sdk::vec![&fx.env, uid.clone()];
+        let res = sas_client.try_multi_revoke(&batch);
+        assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+
+        let stored: Attestation = fx.env.as_contract(&fx.sas_client_id, || {
+            fx.env.storage().persistent().get(&uid).unwrap()
+        });
+        assert_eq!(stored.revocation_time, 0);
     }
 }
 

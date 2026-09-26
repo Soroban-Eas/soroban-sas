@@ -80,7 +80,7 @@
             "key": {
               "vec": [
                 {
-                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                  "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                 }
               ]
             },
@@ -97,7 +97,7 @@
                 "key": {
                   "vec": [
                     {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                      "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                     }
                   ]
                 },
@@ -191,7 +191,7 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                            "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                           }
                         ]
                       }
@@ -536,7 +536,7 @@
                       "val": {
                         "vec": [
                           {
-                            "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                            "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                           }
                         ]
                       }
@@ -547,7 +547,7 @@
                   "u64": 1
                 },
                 {
-                  "bytes": "c6e5e75dae7c7c01b3b12dfb4f77b415bbe2c6c82916002b6a03eb76cb7573268ab5e6edb64cb0d47d2456defadc807bbad7c79a5fceea171a5355f233a23104"
+                  "bytes": "41d56bded5187fa745b27bef2ceb1d3fc8bf794249e3d4ab33d67db47f50e899f057b77311e5246a8a9b6c99b55d8781f7802747cf41ae9dc05b892b7587d703"
                 },
                 {
                   "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
@@ -816,7 +816,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                        "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                       }
                     ]
                   }
@@ -908,7 +908,7 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                        "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                       }
                     ]
                   }
@@ -938,7 +938,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                  "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                 }
               ]
             }
@@ -970,7 +970,7 @@
                 {
                   "vec": [
                     {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                      "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                     }
                   ]
                 },
@@ -978,7 +978,7 @@
                   "u64": 2
                 },
                 {
-                  "bytes": "c0acf6215cd19f2b549ec90c664818790503298a321423659999c04a54bc0774c73306bc81e493721b31ceb0a366cb4e72343a42b6e0cd9018678a39f60e6009"
+                  "bytes": "9443f2ca09ddbab3ea10bd1348794fd3fd2e9f1948423d6992b6e660893898844f634d02440cb37c48aefe0ec7ca379f6366ac8dbe84485ffef31802dc41ac07"
                 },
                 {
                   "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
@@ -1004,7 +1004,7 @@
               {
                 "vec": [
                   {
-                    "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                    "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                   }
                 ]
               }
@@ -1026,13 +1026,243 @@
                   "val": {
                     "vec": [
                       {
-                        "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                        "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                       }
                     ]
                   }
                 }
               ]
             }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "get_schema"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_schema"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "resolver"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocable"
+                  },
+                  "val": {
+                    "bool": true
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "schema"
+                  },
+                  "val": {
+                    "string": "bool like"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
+                "symbol": "on_revoke"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "attester"
+                  },
+                  "val": {
+                    "address": "GAMX62ZD4FWIKMWGVPEDR6WNL2TYTPQMO2ZJEAZUAON7VCZ5G2GWDF7W"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "data"
+                  },
+                  "val": {
+                    "bytes": "010203"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "expiration_time"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "recipient"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "ref_uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocable"
+                  },
+                  "val": {
+                    "bool": true
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocation_time"
+                  },
+                  "val": {
+                    "u64": 100
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "schema_uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "time"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "on_revoke"
+              }
+            ],
+            "data": "void"
           }
         }
       },
@@ -1080,7 +1310,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                  "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                 }
               ]
             }
@@ -1135,7 +1365,7 @@
                 {
                   "vec": [
                     {
-                      "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                      "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                     }
                   ]
                 },
@@ -1143,7 +1373,7 @@
                   "u64": 2
                 },
                 {
-                  "bytes": "c0acf6215cd19f2b549ec90c664818790503298a321423659999c04a54bc0774c73306bc81e493721b31ceb0a366cb4e72343a42b6e0cd9018678a39f60e6009"
+                  "bytes": "9443f2ca09ddbab3ea10bd1348794fd3fd2e9f1948423d6992b6e660893898844f634d02440cb37c48aefe0ec7ca379f6366ac8dbe84485ffef31802dc41ac07"
                 },
                 {
                   "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
@@ -1267,7 +1497,7 @@
                     {
                       "vec": [
                         {
-                          "bytes": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+                          "bytes": "74f67d1b2edf12045e2c72a23f77347bfb994f6a9c5db56ed57d76560b940b50"
                         }
                       ]
                     },
@@ -1275,7 +1505,7 @@
                       "u64": 2
                     },
                     {
-                      "bytes": "c0acf6215cd19f2b549ec90c664818790503298a321423659999c04a54bc0774c73306bc81e493721b31ceb0a366cb4e72343a42b6e0cd9018678a39f60e6009"
+                      "bytes": "9443f2ca09ddbab3ea10bd1348794fd3fd2e9f1948423d6992b6e660893898844f634d02440cb37c48aefe0ec7ca379f6366ac8dbe84485ffef31802dc41ac07"
                     },
                     {
                       "bytes": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"

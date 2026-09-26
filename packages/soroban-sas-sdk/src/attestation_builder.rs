@@ -3,7 +3,7 @@
 
 use crate::errors::SdkError;
 use soroban_sas_common::{Attestation, UID};
-use soroban_sdk::{xdr::ToXdr, Address, Bytes, BytesN, Env, String as SorobanString};
+use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
 
 /// Fluent builder for SDK callers that need to construct an `Attestation`
 /// value before handing it to `SASClient::attest`.
@@ -92,22 +92,12 @@ impl AttestationRequestBuilder {
     }
 
     /// Validates that every required field is set and returns the resulting
-    /// `Attestation`, deriving its UID as:
-    ///
-    /// ```text
-    /// uid = sha256(
-    ///     schema_uid       # 32 bytes
-    ///     || ref_uid       # 32 bytes, zero UID when unset
-    ///     || recipient     # ScVal XDR of the address
-    ///     || sha256(data)  # 32 bytes
-    /// )
-    /// ```
-    ///
-    /// The preimage follows the byte layout the rest of the codebase uses
-    /// when hashing attestation content (addresses as ScVal XDR, UIDs as raw
-    /// 32 bytes, `data` folded in through its own SHA-256), so the UID is
-    /// deterministic: identical builder inputs always produce the same UID,
-    /// and changing any content field produces a different one.
+    /// `Attestation`, deriving its UID via
+    /// [`soroban_sas_common::attestation_uid`] — the same content-addressing
+    /// scheme `SAS::attest_internal` validates against
+    /// (`sha256(xdr(schema_uid) || xdr(recipient) || xdr(attester) ||
+    /// xdr(data))`) — so a builder-produced attestation is always accepted
+    /// (#215).
     pub fn build(self, env: &Env) -> Result<Attestation, SdkError> {
         let recipient = self.recipient.ok_or_else(|| {
             SdkError::RpcError("attestation recipient address is required".to_string())
@@ -124,21 +114,14 @@ impl AttestationRequestBuilder {
 
         let recipient = Address::from_string(&SorobanString::from_str(env, &recipient));
         let attester = Address::from_string(&SorobanString::from_str(env, &attester));
+        let schema_uid = UID(BytesN::from_array(env, &schema_uid));
 
-        let mut payload = Bytes::new(env);
-        payload.append(&Bytes::from_slice(env, &schema_uid));
-        payload.append(&Bytes::from_slice(env, &self.ref_uid));
-        payload.append(&recipient.clone().to_xdr(env));
-        let data_hash = env.crypto().sha256(&data);
-        payload.append(&Bytes::from_slice(env, &data_hash.to_array()));
-        let uid = UID(BytesN::from_array(
-            env,
-            &env.crypto().sha256(&payload).to_array(),
-        ));
+        let uid =
+            soroban_sas_common::attestation_uid(env, &schema_uid, &recipient, &attester, &data);
 
         Ok(Attestation {
             uid,
-            schema_uid: UID(BytesN::from_array(env, &schema_uid)),
+            schema_uid,
             time: env.ledger().timestamp(),
             expiration_time: self.expiration_time,
             revocation_time: 0,

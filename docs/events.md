@@ -42,6 +42,12 @@ Emitted by the SAS contract on every successful revocation (`revoke`,
 `timestamp` is the exact ledger timestamp written to the attestation's
 `revocation_time`, so event consumers and contract state can never diverge.
 
+Published before the schema's `on_revoke` resolver callback runs (#216, see
+docs/schemas.md's "Resolver Failure Semantics"): if that resolver rejects,
+the whole call — this event included — rolls back, so a `AttestationRevoked`
+event that a consumer actually observes always corresponds to a revocation
+that durably stuck.
+
 ## AttesterKeyRegistered
 
 Emitted by the SAS contract on a successful `register_attester_key` — the
@@ -78,6 +84,46 @@ Once revoked, `public_key` no longer validates any delegated operation for
 `attester`. The underlying record is retained (not deleted) so a future
 `register_attester_key` call continues the `version` sequence instead of
 restarting at `1`.
+## BatchAttested
+
+Emitted by the SAS contract as the **last** event of a successful
+`multi_attest` call — after every per-item `AttestationIssued` event for the
+batch.
+
+- Topics: `("BATCHATT",)`
+- Data: `BatchAttestedEvent { count: u32, attester_count: u32 }`
+
+`count` is the number of attestations issued by the call; `attester_count`
+is the number of *distinct* attester addresses among them (an attester
+issuing three attestations in the same batch counts once). Not emitted at
+all if the call reverts — a summary event always describes a batch that
+committed in full, never a partial one, so its mere presence is proof the
+whole batch succeeded.
+
+This gives indexers a batch-end marker they cannot get from the per-item
+events alone: without it, telling one `multi_attest` call apart from
+several independent `attest` calls in the same transaction — or counting
+how many attestations one call issued — requires heuristically grouping
+sequential events by schema and attester and hoping no other activity
+interleaves. A typical indexer accumulates `AttestationIssued` events for a
+transaction into a pending list, and on `BatchAttested` closes that list out
+as one logical batch of `count` items from `attester_count` distinct
+attesters, then resets for the next transaction.
+
+## BatchRevoked
+
+Emitted by the SAS contract as the **last** event of a successful
+`multi_revoke` call, after every per-item `AttestationRevoked` event for the
+batch — the revocation counterpart to `BatchAttested`.
+
+- Topics: `("BATCHREV",)`
+- Data: `BatchRevokedEvent { count: u32, attester_count: u32 }`
+
+Same field semantics and ordering/failure guarantees as `BatchAttested`:
+`count` is the number of attestations revoked, `attester_count` the number
+of distinct attesters among the revoked attestations' original attesters,
+and the event is skipped entirely on a reverted call.
+
 ## IndexerUpdated
 
 Emitted by the SAS contract on a successful `set_indexer`.
@@ -205,6 +251,13 @@ match parse_contract_event(&event) {
     }
     Ok(SasEvent::SchemaRegistered(registered)) => {
         // registered.schema_uid, registered.owner
+    }
+    Ok(SasEvent::BatchAttested(batch)) => {
+        // batch.count, batch.attester_count — close out the pending list of
+        // AttestationIssued events accumulated for this transaction.
+    }
+    Ok(SasEvent::BatchRevoked(batch)) => {
+        // batch.count, batch.attester_count
     }
     Err(_) => { /* not a SAS event */ }
 }

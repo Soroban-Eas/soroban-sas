@@ -212,6 +212,22 @@ impl SASClient {
         invoke_read_only(env, rpc, registry_contract_id, "get_schema", vec![arg])
     }
 
+    /// Calls `SAS::get_attester_key(attester)` via `simulateTransaction` — a
+    /// pure read, same pattern as `get_schema`. Returns `Ok(None)` when
+    /// `attester` never registered a delegated-verification key;
+    /// `Ok(Some(record))` for both active and revoked registrations, with
+    /// `record.revoked` distinguishing the two (#214).
+    pub fn fetch_attester_key(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &str,
+    ) -> Result<Option<soroban_sas_common::AttesterKeyRecord>, SdkError> {
+        let attester = parse_address(env, attester, AddressKind::Either, "attester")?;
+        let arg = simulate::encode_arg(env, &attester)?;
+        invoke_read_only(env, rpc, &self.contract_id, "get_attester_key", vec![arg])
+    }
+
     /// Fetches the full `Attestation` record for `uid` via the
     /// contract's `get_attestation` view. Unlike the legacy
     /// `getLedgerEntries` path, this **renews TTL** on a successful read
@@ -1700,6 +1716,57 @@ mod tests {
             AttestationResult::NotFound => {}
             other => panic!("expected NotFound, got {other:?}"),
         }
+    }
+
+    /// #214: `fetch_attester_key` decodes an active registration.
+    #[test]
+    fn fetch_attester_key_decodes_an_active_registration() {
+        let env = Env::default();
+        let attester = stellar_strkey::ed25519::PublicKey([3u8; 32]).to_string();
+        let record = soroban_sas_common::AttesterKeyRecord {
+            public_key: BytesN::from_array(&env, &[5u8; 32]),
+            version: 1,
+            revoked: false,
+        };
+        let opt = Some(record.clone());
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(stellar_strkey::Contract([9u8; 32]).to_string());
+
+        let fetched = client
+            .fetch_attester_key(&env, &rpc, &attester)
+            .unwrap()
+            .expect("expected an active key record");
+        assert_eq!(fetched, record);
+    }
+
+    /// #214: `fetch_attester_key` returns `None` when the attester never
+    /// registered a key, distinct from a `Some(revoked)` record.
+    #[test]
+    fn fetch_attester_key_returns_none_for_never_registered_attester() {
+        let env = Env::default();
+        let attester = stellar_strkey::ed25519::PublicKey([4u8; 32]).to_string();
+        let opt: Option<soroban_sas_common::AttesterKeyRecord> = None;
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(stellar_strkey::Contract([9u8; 32]).to_string());
+
+        let fetched = client.fetch_attester_key(&env, &rpc, &attester).unwrap();
+        assert!(fetched.is_none());
     }
 
     /// Archived fixture: host reports `archived` with a `restorePreamble`.

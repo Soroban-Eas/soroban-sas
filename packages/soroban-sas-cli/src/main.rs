@@ -957,16 +957,13 @@ fn run_attest(
                 allow_local_time,
             )?;
 
-            // UID uniqueness entropy is kept separate from the semantic
-            // timestamp and does not depend solely on wall-clock nanoseconds.
             let uid = offchain::generate_uid(
                 &env,
                 &schema_uid_bytes,
                 &recipient,
                 &attester,
                 &data_bytes,
-                uid_entropy(local_now.as_nanos()),
-            );
+            )?;
 
             let input = offchain::AttestationInput {
                 uid: hex::encode(uid),
@@ -1185,17 +1182,6 @@ fn resolve_cli_issuance_time(
 /// timestamp (#172). Mixes the local nanosecond reading with the process id
 /// and a per-run counter, so two attestations issued in the same second — or
 /// against a frozen clock — still get distinct UIDs.
-fn uid_entropy(local_nanos: u128) -> u128 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let seq = u128::from(COUNTER.fetch_add(1, Ordering::Relaxed));
-    let pid = u128::from(std::process::id());
-    local_nanos
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(pid.wrapping_shl(64))
-        .wrapping_add(seq.wrapping_mul(0xD1B5_4A32_D192_ED03))
-}
-
 fn parse_uid(value: &str) -> Result<[u8; 32], String> {
     hex::decode(value.trim_start_matches("0x"))
         .map_err(|e| format!("invalid hex in uid: {e}"))?

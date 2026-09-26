@@ -65,4 +65,7 @@ pub enum SASError {
     /// `register_with_value` was called while a registration fee is
     /// configured but no treasury address has been set to receive it (#1).
     TreasuryNotSet = 415,
+    /// An attestation's `uid` does not match the content-addressed hash of
+    /// its `schema_uid`, `recipient`, `attester`, and `data` fields (#215).
+    InvalidUID = 416,
 }

@@ -17,6 +17,10 @@ pub const TOPIC_SCHEMA_REGISTERED: &[u8] = b"REGISTER";
 pub const TOPIC_ATTESTATION_ISSUED: &[u8] = b"ATTESTED";
 /// First topic of an `AttestationRevoked` event.
 pub const TOPIC_ATTESTATION_REVOKED: &[u8] = b"REVOKED";
+/// First topic of a `BatchAttested` event.
+pub const TOPIC_BATCH_ATTESTED: &[u8] = b"BATCHATT";
+/// First topic of a `BatchRevoked` event.
+pub const TOPIC_BATCH_REVOKED: &[u8] = b"BATCHREV";
 
 /// Decoded `SchemaRegistered` event.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,12 +45,30 @@ pub struct AttestationRevoked {
     pub timestamp: u64,
 }
 
+/// Decoded `BatchAttested` event: the summary marker published as the last
+/// event of a successful `multi_attest` call (#213).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchAttested {
+    pub count: u32,
+    pub attester_count: u32,
+}
+
+/// Decoded `BatchRevoked` event: the summary marker published as the last
+/// event of a successful `multi_revoke` call (#213).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchRevoked {
+    pub count: u32,
+    pub attester_count: u32,
+}
+
 /// Any standardized event emitted by the SAS contracts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SasEvent {
     SchemaRegistered(SchemaRegistered),
     AttestationIssued(AttestationIssued),
     AttestationRevoked(AttestationRevoked),
+    BatchAttested(BatchAttested),
+    BatchRevoked(BatchRevoked),
 }
 
 /// Why an event could not be decoded as a SAS event.
@@ -154,6 +176,23 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
                 timestamp,
             }))
         }
+        n if n == TOPIC_BATCH_ATTESTED => {
+            // Topics: `(BATCH_ATTESTED,)` — no data-repeating topics to
+            // cross-check, unlike the per-item events above.
+            let map = expect_map(data)?;
+            Ok(SasEvent::BatchAttested(BatchAttested {
+                count: decode_u32(map_get(map, b"count")?)?,
+                attester_count: decode_u32(map_get(map, b"attester_count")?)?,
+            }))
+        }
+        n if n == TOPIC_BATCH_REVOKED => {
+            // Topics: `(BATCH_REVOKED,)`.
+            let map = expect_map(data)?;
+            Ok(SasEvent::BatchRevoked(BatchRevoked {
+                count: decode_u32(map_get(map, b"count")?)?,
+                attester_count: decode_u32(map_get(map, b"attester_count")?)?,
+            }))
+        }
         _ => Err(EventParseError::NotSasEvent),
     }
 }
@@ -210,7 +249,10 @@ impl TrustedContracts {
     fn expected_source(&self, event: &SasEvent) -> (&'static str, Option<ContractId>) {
         match event {
             SasEvent::SchemaRegistered(_) => ("schema_registry", self.schema_registry),
-            SasEvent::AttestationIssued(_) | SasEvent::AttestationRevoked(_) => ("sas", self.sas),
+            SasEvent::AttestationIssued(_)
+            | SasEvent::AttestationRevoked(_)
+            | SasEvent::BatchAttested(_)
+            | SasEvent::BatchRevoked(_) => ("sas", self.sas),
         }
     }
 }
@@ -327,11 +369,19 @@ fn decode_address(val: &ScVal) -> Result<ScAddress, EventParseError> {
     }
 }
 
+fn decode_u32(val: &ScVal) -> Result<u32, EventParseError> {
+    match val {
+        ScVal::U32(n) => Ok(*n),
+        _ => Err(EventParseError::MalformedPayload("field is not a u32")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sas_common::{
-        AttestationIssuedEvent, AttestationRevokedEvent, SchemaRegisteredEvent, UID,
+        AttestationIssuedEvent, AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent,
+        SchemaRegisteredEvent, UID,
     };
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, BytesN, Env, IntoVal, TryFromVal, Val};
@@ -427,6 +477,52 @@ mod tests {
             SasEvent::AttestationRevoked(AttestationRevoked {
                 uid: [3u8; 32],
                 timestamp: 4242,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_batch_attested() {
+        let env = Env::default();
+        let payload = BatchAttestedEvent {
+            count: 5,
+            attester_count: 3,
+        };
+        let topics = [to_scval(
+            &env,
+            soroban_sas_common::events::BATCH_ATTESTED.into_val(&env),
+        )];
+        let data = to_scval(&env, payload.into_val(&env));
+
+        let parsed = parse_event(&topics, &data).unwrap();
+        assert_eq!(
+            parsed,
+            SasEvent::BatchAttested(BatchAttested {
+                count: 5,
+                attester_count: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_batch_revoked() {
+        let env = Env::default();
+        let payload = BatchRevokedEvent {
+            count: 4,
+            attester_count: 1,
+        };
+        let topics = [to_scval(
+            &env,
+            soroban_sas_common::events::BATCH_REVOKED.into_val(&env),
+        )];
+        let data = to_scval(&env, payload.into_val(&env));
+
+        let parsed = parse_event(&topics, &data).unwrap();
+        assert_eq!(
+            parsed,
+            SasEvent::BatchRevoked(BatchRevoked {
+                count: 4,
+                attester_count: 1,
             })
         );
     }
