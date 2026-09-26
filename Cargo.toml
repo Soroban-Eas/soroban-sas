@@ -23,6 +23,7 @@ soroban-sas-sdk = { path = "packages/soroban-sas-sdk" }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 hex = "0.4"
 stellar-strkey = "0.0.8"
+ed25519-dalek = "2.0.0"
 
 [[bench]]
 name = "hashing_benchmark"

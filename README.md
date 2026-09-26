@@ -188,6 +188,32 @@ The shared validation libraries enforce several key constraints:
 - Expiration timestamps must be explicitly provided for temporary claims.
 - Both the issuer and the recipient fields must contain valid identifiers.
 
+## SDK Usage Examples
+
+Runnable examples under `examples/` demonstrate the Rust SDK (`soroban-sas-sdk`)
+end to end. Each accepts `--dry-run` to build and print its payload without any
+network call or funded key, and prints usage with `--help`.
+
+- `examples/basic_attestation.rs` — build a single attestation, compute its
+  content-addressed UID and typed-data hash, and optionally submit it via
+  `SASClient::attest`.
+  ```bash
+  cargo run --example basic_attestation
+  ```
+- `examples/multi_attest.rs` — build a batch of attestations and submit them
+  atomically via `SASClient::multi_attest`; prints every UID in the batch and
+  reports that none were issued if the batch submission fails.
+  ```bash
+  cargo run --example multi_attest -- --dry-run
+  ```
+- `examples/delegated_attest.rs` — sign a delegated attestation's typed-data
+  hash with the attester's ed25519 key, then relay it via
+  `SASClient::attest_by_delegation` from a separate, funded relayer account
+  that never holds the attester's key.
+  ```bash
+  cargo run --example delegated_attest -- --dry-run
+  ```
+
 ## Getting Started
 
 ### System Requirements
