@@ -332,3 +332,5 @@ pub struct FeeConfigUpdatedEvent {
     pub new_amount: Option<i128>,
     pub authorizer: Address,
 }
+
+pub const REINDEXED: Symbol = symbol_short!("REINDEXED");

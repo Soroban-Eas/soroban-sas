@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Contract WASM SHA-256 Checksums
+| Contract | File | SHA-256 Checksum |
+|---|---|---|
+| Schema Registry | `schema_registry.wasm` | `TBD` |
+| Core SAS | `sas.wasm` | `TBD` |
+| Indexer | `soroban_sas_indexer.wasm` | `TBD` |
+
 ### Added
 - Fuzz target `indexer_idempotency_fuzz` and seed corpus verifying `Indexer::index_attestation` idempotency invariants across first calls, retries, and mutated triples (#235).
 - Fee payment lifecycle coverage in `scripts/smoke_test.sh` covering token deployment, `set_treasury`, `set_fee`, `attest_with_value`, balance assertions, `withdraw_tokens`, and zero-fee paths (#239).

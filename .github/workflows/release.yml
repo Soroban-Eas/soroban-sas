@@ -61,3 +61,8 @@ jobs:
             target/wasm32-unknown-unknown/release/schema_registry.opt.wasm
             target/wasm32-unknown-unknown/release/soroban_sas_indexer.opt.wasm
             target/wasm32-unknown-unknown/release/checksums.sha256
+
+      - name: Optimize and Calculate Checksums
+        run: |
+          stellar contract optimize
+          sha256sum target/wasm32-unknown-unknown/release/*.wasm > hashes.txt
