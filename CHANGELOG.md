@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `SAS::admin()` and `SASClient::fetch_admin()` expose the initialized SAS
+  administrator through stable contract and SDK APIs. (#241)
 - Delegated issuance and dynamic schema allow-lists: schema owners can authorize
   and revoke delegates via `add_delegate` and `remove_delegate` on `SchemaRegistry`.
   Authorized delegates can issue and revoke attestations against the schema with

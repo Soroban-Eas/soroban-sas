@@ -6,11 +6,12 @@
 use soroban_sas_common::{events::CONTRACT_UPGRADED, ContractUpgradedEvent};
 use soroban_sas_common::{
     events::{
-        SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_FEE_UPDATED, TREASURY_UPDATED,
+        SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_FEE_UPDATED,
+        SCHEMA_OWNERSHIP_TRANSFERRED, TREASURY_UPDATED,
     },
     validate_schema_syntax, PreviousAddress, SASError, SchemaDelegateAddedEvent,
-    SchemaDelegateRemovedEvent, SchemaFeeUpdatedEvent, SchemaRecord, TreasuryUpdatedEvent,
-    LEDGERS_IN_ONE_YEAR, UID,
+    SchemaDelegateRemovedEvent, SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent,
+    SchemaRecord, TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
 };
 #[cfg(test)]
 use soroban_sdk::BytesN;
@@ -361,6 +362,55 @@ impl SchemaRegistry {
                 schema_uid: uid,
                 delegate,
                 authorizer: owner,
+            },
+        );
+
+        extend_instance_ttl(&env);
+    }
+
+    /// Transfers ownership of schema `uid` to `new_owner` (#229).
+    ///
+    /// Requires authorization from the current schema owner (creator).
+    /// Rejects non-existent schemas (`SASError::SchemaNotFound`) and deprecated
+    /// schemas (`SASError::InvalidSchema`).
+    /// Emits `SchemaOwnershipTransferred`.
+    pub fn transfer_schema_ownership(env: Env, uid: UID, new_owner: Address) {
+        extend_instance_ttl(&env);
+        if !env.storage().persistent().has(&uid) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .get(&(DEPRECATED, uid.clone()))
+            .unwrap_or(false)
+        {
+            panic_with_error!(&env, SASError::InvalidSchema);
+        }
+
+        let creator_key = (SCHEMA_CREATOR, uid.clone());
+        let creator: Option<Address> = env.storage().persistent().get(&creator_key);
+        let Some(old_owner) = creator else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+
+        old_owner.require_auth();
+
+        env.storage().persistent().set(&creator_key, &new_owner);
+        env.storage().persistent().extend_ttl(
+            &creator_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+        renew_schema_record(&env, &uid);
+
+        env.events().publish(
+            (SCHEMA_OWNERSHIP_TRANSFERRED, uid.clone()),
+            SchemaOwnershipTransferredEvent {
+                schema_uid: uid,
+                old_owner,
+                new_owner,
             },
         );
 

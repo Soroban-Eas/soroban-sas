@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use soroban_sdk::testutils::Address as _;
 
     use crate::{
-        decode_hex_or_base64, parse_uid, validate_schema_syntax, AttestCommands, Cli, Commands,
-        OutputFormat,
+        decode_hex_or_base64, fee_to_human, fee_to_json, parse_uid, validate_schema_syntax,
+        AttestCommands, Cli, Commands, OutputFormat, SasCommands,
     };
 
     #[test]
@@ -323,6 +324,104 @@ mod tests {
         };
         assert_eq!(address, recipient);
     }
+
+    #[test]
+    fn parses_sas_get_fee_flags() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--output",
+            "json",
+            "sas",
+            "get-fee",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--rpc-url",
+            "https://soroban-testnet.stellar.org",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Sas {
+            action:
+                SasCommands::GetFee {
+                    contract_id,
+                    rpc_url,
+                },
+        }) = cli.command
+        else {
+            panic!("expected sas get-fee command");
+        };
+        assert_eq!(
+            contract_id,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+        );
+        assert_eq!(
+            rpc_url.as_deref(),
+            Some("https://soroban-testnet.stellar.org")
+        );
+    }
+
+    #[test]
+    fn sas_get_fee_works_without_identity_and_resolves_network() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--network",
+            "testnet",
+            "sas",
+            "get-fee",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+
+        assert!(cli.identity.is_none());
+        let Some(Commands::Sas {
+            action:
+                SasCommands::GetFee {
+                    contract_id,
+                    rpc_url,
+                },
+        }) = cli.command
+        else {
+            panic!("expected sas get-fee command");
+        };
+        assert_eq!(
+            contract_id,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+        );
+        assert_eq!(rpc_url, None);
+        assert_eq!(
+            crate::resolve_rpc_url(rpc_url, cli.network.as_deref()).unwrap(),
+            "https://soroban-testnet.stellar.org"
+        );
+    }
+
+    #[test]
+    fn test_fee_formatting_fee_free() {
+        let fee: Option<(soroban_sdk::Address, i128)> = None;
+        assert_eq!(fee_to_human(&fee), "Fee: free");
+        assert_eq!(fee_to_json(&fee), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_fee_formatting_fee_configured() {
+        let env = soroban_sdk::Env::default();
+        let token = soroban_sdk::Address::generate(&env);
+        let token_str = crate::soroban_string_to_std(&token.to_string());
+        let fee = Some((token, 1_000_000i128));
+
+        assert_eq!(
+            fee_to_human(&fee),
+            format!("Fee: 1000000 stroops of {token_str}")
+        );
+        assert_eq!(
+            fee_to_json(&fee),
+            serde_json::json!({
+                "token": token_str,
+                "amount": 1_000_000i128,
+            })
+        );
+    }
 }
 
 #[cfg(test)]
@@ -499,6 +598,7 @@ mod online_verification_tests {
     use crate::offchain::{sign_offchain_attestation, AttestationInput};
     use crate::perform_online_verification;
     use soroban_sas_sdk::rpc::RpcClient;
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::xdr::{Limits, WriteXdr};
     use std::io::{BufRead, BufReader, Read, Write};
 
@@ -627,5 +727,68 @@ mod online_verification_tests {
         let report = perform_online_verification(&signed, NETWORK, &contract, None, &rpc).unwrap();
 
         assert_eq!(report.schema_status, "not_checked");
+    }
+
+    fn fee_none_response() -> String {
+        let env = soroban_sdk::Env::default();
+        let none_fee: Option<(soroban_sdk::Address, i128)> = None;
+        let result_xdr = soroban_sas_sdk::simulate::encode_arg(&env, &none_fee)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        )
+    }
+
+    fn fee_configured_response(
+        env: &soroban_sdk::Env,
+        token: &soroban_sdk::Address,
+        amount: i128,
+    ) -> String {
+        let fee: Option<(soroban_sdk::Address, i128)> = Some((token.clone(), amount));
+        let result_xdr = soroban_sas_sdk::simulate::encode_arg(env, &fee)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn sas_get_fee_simulation_free() {
+        let contract_id = stellar_strkey::Contract([5u8; 32]).to_string();
+        let url = spawn_single_response_mock_server(fee_none_response());
+        let res = crate::run_sas(
+            crate::SasCommands::GetFee {
+                contract_id,
+                rpc_url: Some(url),
+            },
+            crate::OutputFormat::Json,
+            None,
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn sas_get_fee_simulation_configured() {
+        let contract_id = stellar_strkey::Contract([6u8; 32]).to_string();
+        let env = soroban_sdk::Env::default();
+        let token_addr = soroban_sdk::Address::generate(&env);
+        let url = spawn_single_response_mock_server(fee_configured_response(
+            &env,
+            &token_addr,
+            1_000_000,
+        ));
+        let res = crate::run_sas(
+            crate::SasCommands::GetFee {
+                contract_id,
+                rpc_url: Some(url),
+            },
+            crate::OutputFormat::Human,
+            None,
+        );
+        assert!(res.is_ok());
     }
 }

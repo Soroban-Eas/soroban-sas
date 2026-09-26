@@ -1,7 +1,8 @@
 use crate::{SchemaRegistry, SchemaRegistryClient};
 use soroban_sas_common::{
     ContractUpgradedEvent, PreviousAddress, SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent,
-    SchemaFeeUpdatedEvent, SchemaRegisteredEvent, TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
+    SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent, SchemaRegisteredEvent,
+    TreasuryUpdatedEvent, INSTANCE_EXTEND_TO_LEDGERS,
 };
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, IntoVal, String};
@@ -1070,4 +1071,138 @@ fn test_deprecated_schema_revokes_authorization() {
     // After deprecation, neither owner nor delegate is authorized to issue
     assert!(!client.is_authorized(&uid, &owner));
     assert!(!client.is_authorized(&uid, &delegate));
+}
+
+#[test]
+fn test_transfer_schema_ownership_success() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+    assert_eq!(client.get_creator(&uid), Some(owner.clone()));
+
+    // Transfer ownership
+    client.transfer_schema_ownership(&uid, &new_owner);
+    assert_eq!(client.get_creator(&uid), Some(new_owner.clone()));
+
+    // Verify SchemaOwnershipTransferred event was emitted
+    let events = env.events().all();
+    let expected = SchemaOwnershipTransferredEvent {
+        schema_uid: uid.clone(),
+        old_owner: owner.clone(),
+        new_owner: new_owner.clone(),
+    };
+    assert_eq!(
+        soroban_sdk::vec![&env, events.last().unwrap()],
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("SCHOWN"), uid.clone()).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_transfer_schema_ownership_new_owner_can_deprecate_old_cannot() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.init(&admin);
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    // Transfer ownership to new_owner
+    client.transfer_schema_ownership(&uid, &new_owner);
+
+    // Old owner attempts to deprecate -> fails
+    let res_old = client.try_deprecate(&uid, &owner);
+    assert_eq!(
+        res_old,
+        Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
+    );
+
+    // New owner deprecates -> succeeds
+    client.deprecate(&uid, &new_owner);
+    assert!(client.get_schema(&uid).is_none());
+}
+
+#[test]
+fn test_transfer_schema_ownership_unauthorized_caller() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    // Revoke auths so caller is unauthorized
+    env.set_auths(&[]);
+    let res = client.try_transfer_schema_ownership(&uid, &new_owner);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_transfer_schema_ownership_non_existent_schema() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let new_owner = Address::generate(&env);
+    let fake_uid = soroban_sas_common::UID(BytesN::from_array(&env, &[77u8; 32]));
+
+    env.mock_all_auths();
+    let res = client.try_transfer_schema_ownership(&fake_uid, &new_owner);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into()))
+    );
+}
+
+#[test]
+fn test_transfer_schema_ownership_deprecated_schema_rejected() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.init(&admin);
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    // Deprecate schema
+    client.deprecate(&uid, &owner);
+
+    // Attempting to transfer deprecated schema must be rejected
+    let res = client.try_transfer_schema_ownership(&uid, &new_owner);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::InvalidSchema.into()))
+    );
 }

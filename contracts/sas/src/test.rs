@@ -1,9 +1,9 @@
 use crate::{SASClient, SAS};
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
-    hash_delegated_revocation, Attestation, AttestationDomain, AttestationIssuedEvent,
-    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent,
-    PreviousAddress, SASError, UID,
+    hash_delegated_revocation, AdminTransferCompletedEvent, AdminTransferProposedEvent,
+    Attestation, AttestationDomain, AttestationIssuedEvent, AttestationRevokedEvent,
+    BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent, PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -160,6 +160,32 @@ pub mod mock4 {
                 .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
         }
     }
+}
+
+#[test]
+fn test_admin_returns_initialized_admin() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    assert_eq!(sas_client.admin(), admin);
+}
+
+#[test]
+fn test_admin_before_init_returns_not_initialized() {
+    let env = Env::default();
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    assert_eq!(
+        sas_client.try_admin(),
+        Err(Ok(SASError::NotInitialized.into()))
+    );
 }
 
 #[test]
@@ -2566,6 +2592,192 @@ fn test_delegated_issuance_and_revocation_e2e() {
         res_revoke_unauth,
         Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
     );
+}
+
+#[test]
+fn test_admin_transfer_happy_path() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let old_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas.init(&old_admin, &registry_id);
+
+    // Old admin can set fee initially
+    sas.set_fee(&token, &100);
+
+    // Step 1: propose_admin
+    sas.propose_admin(&new_admin);
+
+    // Verify AdminTransferProposed event
+    let events = env.events().all();
+    let expected_prop = AdminTransferProposedEvent {
+        current_admin: old_admin.clone(),
+        proposed_admin: new_admin.clone(),
+    };
+    assert_eq!(
+        events.slice(events.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("ADMPROP"), old_admin.clone()).into_val(&env),
+                expected_prop.into_val(&env),
+            )
+        ]
+    );
+
+    // Step 2: accept_admin
+    sas.accept_admin();
+
+    // Verify AdminTransferCompleted event
+    let events_after = env.events().all();
+    let expected_comp = AdminTransferCompletedEvent {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+    };
+    assert_eq!(
+        events_after.slice(events_after.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("ADMCOMP"), old_admin.clone()).into_val(&env),
+                expected_comp.into_val(&env),
+            )
+        ]
+    );
+
+    // New admin can perform admin actions
+    sas.set_fee(&token, &200);
+
+    // Old admin cannot perform admin actions
+    env.set_auths(&[]);
+    assert!(sas.try_set_fee(&token, &300).is_err());
+}
+
+#[test]
+fn test_admin_transfer_cancellation_via_reproposal() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    let candidate1 = Address::generate(&env);
+    let candidate2 = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    // Propose candidate1
+    sas.propose_admin(&candidate1);
+
+    // Overwrite proposal by proposing candidate2
+    sas.propose_admin(&candidate2);
+
+    // candidate2 accepts
+    sas.accept_admin();
+
+    let new_indexer = Address::generate(&env);
+    sas.set_indexer(&new_indexer);
+    assert_eq!(sas.get_indexer(), Some(new_indexer));
+}
+
+#[test]
+fn test_accept_admin_no_proposal_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    let res = sas.try_accept_admin();
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::NotInitialized.into()))
+    );
+}
+
+#[test]
+fn test_accept_admin_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    let candidate = Address::generate(&env);
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    sas.propose_admin(&candidate);
+
+    // Disable mock auths
+    env.set_auths(&[]);
+    let res = sas.try_accept_admin();
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_get_delegation_nonce() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SAS);
+    let sas = SASClient::new(&env, &contract_id);
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+
+    let admin = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas.init(&admin, &registry_id);
+
+    // 1. Never-delegated attester returns None
+    assert_eq!(sas.get_delegation_nonce(&attester), None);
+
+    // 2. Perform one delegated attest with nonce 1
+    let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+    let public_key = signing_key.verifying_key().to_bytes();
+    let public_key_bytesn = BytesN::from_array(&env, &public_key);
+    sas.register_attester_key(&attester, &public_key_bytesn);
+
+    let attestation = attestation_fixture(&env, &attester, &recipient, [42u8; 32]);
+    let domain = AttestationDomain {
+        network_id: env.ledger().network_id(),
+        contract: contract_id.clone(),
+        nonce: 1,
+    };
+    let hash = soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain);
+    let signature = signing_key.sign(&hash.to_array());
+    let sig_bytesn = BytesN::from_array(&env, &signature.to_bytes());
+
+    sas.attest_by_delegation(&attestation, &1, &sig_bytesn, &public_key_bytesn);
+
+    assert_eq!(sas.get_delegation_nonce(&attester), Some(1));
+
+    // 3. Perform multiple delegated operations with higher nonce (e.g. 5)
+    let attestation2 = attestation_fixture(&env, &attester, &recipient, [43u8; 32]);
+    let domain2 = AttestationDomain {
+        network_id: env.ledger().network_id(),
+        contract: contract_id.clone(),
+        nonce: 5,
+    };
+    let hash2 = soroban_sas_common::hash_offchain_attestation(&env, &attestation2, &domain2);
+    let signature2 = signing_key.sign(&hash2.to_array());
+    let sig_bytesn2 = BytesN::from_array(&env, &signature2.to_bytes());
+
+    sas.attest_by_delegation(&attestation2, &5, &sig_bytesn2, &public_key_bytesn);
+
+    assert_eq!(sas.get_delegation_nonce(&attester), Some(5));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

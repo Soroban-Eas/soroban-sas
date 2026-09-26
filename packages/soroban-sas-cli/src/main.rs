@@ -299,6 +299,11 @@ enum Commands {
         #[command(subcommand)]
         action: QueryCommands,
     },
+    /// SAS contract commands
+    Sas {
+        #[command(subcommand)]
+        action: SasCommands,
+    },
     /// Sign delegated attestations/revocations off-chain, and submit
     /// already-signed ones on-chain via a relayer
     Delegate {
@@ -309,6 +314,18 @@ enum Commands {
     Offchain {
         #[command(subcommand)]
         action: OffchainCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SasCommands {
+    /// Read the currently configured attestation fee, if any.
+    #[command(name = "get-fee")]
+    GetFee {
+        #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
     },
 }
 
@@ -829,6 +846,7 @@ fn main() {
         Some(Commands::Offchain { action }) => run_offchain(action, output, network, identity),
         Some(Commands::Schema { action }) => run_schema(action, output, network, identity),
         Some(Commands::Attest { action }) => run_attest(action, output, network, identity),
+        Some(Commands::Sas { action }) => run_sas(action, output, network),
         Some(Commands::Query { action }) => run_query(action, output, network),
         Some(Commands::Delegate { action }) => run_delegate(action, output, network, identity),
         _ => emit_ok(
@@ -840,6 +858,52 @@ fn main() {
     if let Err(err) = result {
         emit_error(output, &err);
         std::process::exit(1);
+    }
+}
+
+pub(crate) fn fee_to_human(fee: &Option<(soroban_sdk::Address, i128)>) -> String {
+    match fee {
+        None => "Fee: free".to_string(),
+        Some((token, amount)) => {
+            let token_str = soroban_string_to_std(&token.to_string());
+            format!("Fee: {amount} stroops of {token_str}")
+        }
+    }
+}
+
+pub(crate) fn fee_to_json(fee: &Option<(soroban_sdk::Address, i128)>) -> serde_json::Value {
+    match fee {
+        None => serde_json::Value::Null,
+        Some((token, amount)) => {
+            let token_str = soroban_string_to_std(&token.to_string());
+            serde_json::json!({
+                "token": token_str,
+                "amount": amount,
+            })
+        }
+    }
+}
+
+fn run_sas(
+    action: SasCommands,
+    output: OutputFormat,
+    network: Option<String>,
+) -> Result<(), String> {
+    let env = soroban_sdk::Env::default();
+    match action {
+        SasCommands::GetFee {
+            contract_id,
+            rpc_url,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let fee = client.fetch_fee(&env, &rpc).map_err(|e| e.to_string())?;
+
+            let human_msg = fee_to_human(&fee);
+            let json_val = fee_to_json(&fee);
+            emit_ok(output, || println!("{human_msg}"), json_val)
+        }
     }
 }
 

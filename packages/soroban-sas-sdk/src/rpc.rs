@@ -19,59 +19,49 @@ use ureq::{Agent, AgentBuilder};
 /// Default maximum number of retries on HTTP 429 responses.
 pub const DEFAULT_RATE_LIMIT_MAX_RETRIES: u32 = 3;
 
+/// Default initial delay before the first retry (before jitter), in milliseconds.
+pub const DEFAULT_RATE_LIMIT_INITIAL_DELAY_MS: u64 = 500;
+
+/// Default upper bound on the computed backoff, in milliseconds.
+pub const DEFAULT_RATE_LIMIT_MAX_DELAY_MS: u64 = 30_000;
+
 /// Default base delay before the first retry (before jitter).
-pub const DEFAULT_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_millis(500);
+pub const DEFAULT_RATE_LIMIT_BASE_DELAY: Duration =
+    Duration::from_millis(DEFAULT_RATE_LIMIT_INITIAL_DELAY_MS);
 
 /// Default upper bound on the computed backoff (before jitter).
-pub const DEFAULT_RATE_LIMIT_MAX_DELAY: Duration = Duration::from_secs(30);
+pub const DEFAULT_RATE_LIMIT_MAX_DELAY: Duration =
+    Duration::from_millis(DEFAULT_RATE_LIMIT_MAX_DELAY_MS);
 
-/// Methods that are safe to retry after a 429.
+/// Policy for automatic retries on HTTP 429 Too Many Requests.
 ///
-/// `sendTransaction` is **not** included because a duplicate submission may
-/// incur fees or cause unexpected duplicate-entry errors; callers that want to
-/// retry a send must do so explicitly after confirming the first attempt did
-/// not reach the network.
-pub const RETRYABLE_METHODS: &[&str] = &[
-    "simulateTransaction",
-    "getTransaction",
-    "getLedgerEntries",
-    "getLatestLedger",
-    "getLedgers",
-];
-
-/// Opt-in policy for automatic retries on HTTP 429 Too Many Requests.
-///
-/// When attached to an [`RpcClient`] via
-/// [`RpcClient::with_rate_limit_policy`], every request to a method listed in
-/// [`RETRYABLE_METHODS`] that receives a 429 response is retried up to
-/// `max_retries` times using exponential backoff with full jitter.
-///
-/// If the server returned a `Retry-After` header, that value overrides the
-/// computed backoff for that attempt. Non-retryable methods (e.g.
-/// `sendTransaction`) surface [`SdkError::RateLimited`] immediately without
-/// any retry.
-#[derive(Debug, Clone)]
+/// When an HTTP response has status 429, the client:
+/// 1. Checks whether `Retry-After` header is present; if so, waits that duration.
+/// 2. Otherwise, waits `min(initial_delay_ms * 2^attempt + jitter, max_delay_ms)` ms.
+/// 3. Retries the request.
+/// 4. After `max_retries` exhausted attempts, returns `SdkError::RateLimited { retries: u32 }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RateLimitPolicy {
     /// Maximum number of retries after a 429 (0 = surface the error immediately).
     pub max_retries: u32,
-    /// Base delay for the first retry, before jitter. Doubles each attempt.
-    pub base_delay: Duration,
-    /// Upper bound on the computed exponential delay, before jitter.
-    pub max_delay: Duration,
+    /// Initial delay for the first retry, before jitter (in milliseconds).
+    pub initial_delay_ms: u64,
+    /// Upper bound on the computed exponential delay, before jitter (in milliseconds).
+    pub max_delay_ms: u64,
 }
 
 impl Default for RateLimitPolicy {
     fn default() -> Self {
         Self {
             max_retries: DEFAULT_RATE_LIMIT_MAX_RETRIES,
-            base_delay: DEFAULT_RATE_LIMIT_BASE_DELAY,
-            max_delay: DEFAULT_RATE_LIMIT_MAX_DELAY,
+            initial_delay_ms: DEFAULT_RATE_LIMIT_INITIAL_DELAY_MS,
+            max_delay_ms: DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
         }
     }
 }
 
 impl RateLimitPolicy {
-    /// Creates a policy with default values.
+    /// Creates a policy with default values (3 retries, 500ms initial, 30s cap).
     pub fn new() -> Self {
         Self::default()
     }
@@ -82,50 +72,48 @@ impl RateLimitPolicy {
         self
     }
 
-    /// Sets the base delay for exponential backoff.
-    pub fn with_base_delay(mut self, delay: Duration) -> Self {
-        self.base_delay = delay;
+    /// Sets the initial delay for exponential backoff in milliseconds.
+    pub fn with_initial_delay_ms(mut self, delay_ms: u64) -> Self {
+        self.initial_delay_ms = delay_ms;
         self
     }
 
-    /// Sets the upper bound on the computed backoff.
+    /// Sets the upper bound on the computed backoff in milliseconds.
+    pub fn with_max_delay_ms(mut self, delay_ms: u64) -> Self {
+        self.max_delay_ms = delay_ms;
+        self
+    }
+
+    /// Sets the base delay for exponential backoff from a [`Duration`].
+    pub fn with_base_delay(mut self, delay: Duration) -> Self {
+        self.initial_delay_ms = delay.as_millis() as u64;
+        self
+    }
+
+    /// Sets the upper bound on the computed backoff from a [`Duration`].
     pub fn with_max_delay(mut self, delay: Duration) -> Self {
-        self.max_delay = delay;
+        self.max_delay_ms = delay.as_millis() as u64;
         self
     }
 
     /// Computes the backoff duration for attempt `n` (0-indexed) using
-    /// full-jitter exponential backoff:
+    /// exponential backoff with jitter:
     ///
     /// ```text
-    /// cap   = min(base_delay * 2^n, max_delay)
-    /// sleep = random(0, cap)
+    /// min(initial_delay_ms * 2^attempt + jitter, max_delay_ms)
     /// ```
-    ///
-    /// Uses a deterministic pseudo-random value derived from the attempt
-    /// number so the function is pure (no OS randomness required), while
-    /// still spreading retries across the allowed window.
     pub fn backoff_for_attempt(&self, attempt: u32) -> Duration {
         let factor = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
-        let cap_ms = (self.base_delay.as_millis() as u64)
-            .saturating_mul(factor)
-            .min(self.max_delay.as_millis() as u64);
-        // Full jitter: use a simple LCG seeded on the attempt so the value
-        // is deterministic in tests but spread across [0, cap].
-        let jitter_ms = if cap_ms == 0 {
+        let base_ms = self.initial_delay_ms.saturating_mul(factor);
+        let jitter = if self.initial_delay_ms == 0 {
             0
         } else {
-            // LCG constants from Numerical Recipes
-            let seed = attempt as u64;
+            let seed = (attempt as u64).wrapping_add(1);
             let rand = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223) ^ (seed >> 16);
-            rand % cap_ms
+            rand % self.initial_delay_ms
         };
-        Duration::from_millis(jitter_ms)
-    }
-
-    /// Returns `true` when `method` is safe to retry after a 429.
-    pub fn is_retryable(&self, method: &str) -> bool {
-        RETRYABLE_METHODS.contains(&method)
+        let delay_ms = base_ms.saturating_add(jitter).min(self.max_delay_ms);
+        Duration::from_millis(delay_ms)
     }
 }
 
@@ -157,11 +145,8 @@ pub struct RpcClient {
     /// Monotonically-increasing JSON-RPC request ID.  Each request gets the
     /// next value so concurrent callers can correlate responses.
     next_id: AtomicU32,
-    /// Optional rate-limit retry policy. When `Some`, 429 responses on
-    /// retryable methods are automatically retried with exponential backoff
-    /// and jitter up to `policy.max_retries` times. When `None` (default),
-    /// a 429 surfaces immediately as [`SdkError::RateLimited`].
-    rate_limit_policy: Option<RateLimitPolicy>,
+    /// Rate-limit retry policy. Defaults to [`RateLimitPolicy::default`].
+    rate_limit_policy: RateLimitPolicy,
 }
 
 impl RpcClient {
@@ -172,15 +157,12 @@ impl RpcClient {
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             agent: rpc_agent(DEFAULT_RPC_TIMEOUT),
             next_id: AtomicU32::new(1),
-            rate_limit_policy: None,
+            rate_limit_policy: RateLimitPolicy::default(),
         }
     }
 
-    /// Attaches an opt-in rate-limit retry policy. When set, 429 responses
-    /// on idempotent methods are automatically retried with exponential
-    /// backoff and jitter. Non-idempotent methods (e.g. `sendTransaction`)
-    /// always surface [`SdkError::RateLimited`] immediately regardless of
-    /// this policy.
+    /// Attaches a rate-limit retry policy. When set, 429 responses
+    /// are automatically retried with exponential backoff and jitter.
     ///
     /// ```no_run
     /// use soroban_sas_sdk::rpc::{RpcClient, RateLimitPolicy};
@@ -189,13 +171,13 @@ impl RpcClient {
     ///     .with_rate_limit_policy(RateLimitPolicy::new().with_max_retries(5));
     /// ```
     pub fn with_rate_limit_policy(mut self, policy: RateLimitPolicy) -> Self {
-        self.rate_limit_policy = Some(policy);
+        self.rate_limit_policy = policy;
         self
     }
 
-    /// Returns the active rate-limit retry policy, if any.
-    pub fn rate_limit_policy(&self) -> Option<&RateLimitPolicy> {
-        self.rate_limit_policy.as_ref()
+    /// Returns the active rate-limit retry policy.
+    pub fn rate_limit_policy(&self) -> &RateLimitPolicy {
+        &self.rate_limit_policy
     }
 
     /// Overrides the largest response body this client will accept
@@ -468,9 +450,9 @@ impl RpcClient {
     /// returns the raw response body, refusing anything larger than
     /// [`RpcClient::max_response_bytes`] before it is fully buffered.
     ///
-    /// When a rate-limit policy is attached and the request method is retryable,
-    /// HTTP 429 responses trigger automatic retries with exponential backoff.
-    /// Non-retryable methods surface [`SdkError::RateLimited`] immediately.
+    /// HTTP 429 responses trigger automatic retries with exponential backoff
+    /// per the configured [`RateLimitPolicy`]. Respects `Retry-After` headers
+    /// when present. Returns [`SdkError::RateLimited`] when retries are exhausted.
     fn post<P: Serialize>(&self, request: &JsonRpcRequest<P>) -> Result<String, SdkError> {
         let mut attempt = 0;
         loop {
@@ -479,24 +461,20 @@ impl RpcClient {
             match response {
                 Ok(resp) => return read_body_bounded(resp, self.max_response_bytes),
                 Err(ureq::Error::Status(429, resp)) => {
-                    let retry_after_secs = resp
+                    let retry_after_dur = resp
                         .header("Retry-After")
-                        .and_then(|v| v.trim().parse::<u64>().ok());
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                        .map(Duration::from_secs);
 
-                    // Check if we should retry
-                    if let Some(policy) = &self.rate_limit_policy {
-                        if policy.is_retryable(request.method) && attempt < policy.max_retries {
-                            let delay = retry_after_secs
-                                .map(Duration::from_secs)
-                                .unwrap_or_else(|| policy.backoff_for_attempt(attempt));
-                            std::thread::sleep(delay);
-                            attempt += 1;
-                            continue;
-                        }
+                    if attempt < self.rate_limit_policy.max_retries {
+                        let delay = retry_after_dur
+                            .unwrap_or_else(|| self.rate_limit_policy.backoff_for_attempt(attempt));
+                        std::thread::sleep(delay);
+                        attempt += 1;
+                        continue;
                     }
 
-                    // No policy, non-retryable method, or retries exhausted
-                    return Err(SdkError::RateLimited { retry_after_secs });
+                    return Err(SdkError::RateLimited { retries: attempt });
                 }
                 Err(err) => return Err(SdkError::TransportError(err.to_string())),
             }
@@ -1651,6 +1629,132 @@ mod tests {
         let client = RpcClient::new(url);
         let err = client.fetch_current_ledger_time().unwrap_err();
         assert!(matches!(err, SdkError::RpcError(_)));
+    }
+
+    fn spawn_rate_limited_mock_server(responses: Vec<(u16, Option<u64>, String)>) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for (status, retry_after, body) in responses {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    let read = reader.read_line(&mut line).unwrap_or(0);
+                    if read == 0 || line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        content_length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut req_body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut req_body);
+
+                let mut stream = stream;
+                let (status_line, retry_hdr) = if status == 429 {
+                    let rh = retry_after
+                        .map(|s| format!("Retry-After: {s}\r\n"))
+                        .unwrap_or_default();
+                    ("HTTP/1.1 429 Too Many Requests", rh)
+                } else {
+                    ("HTTP/1.1 200 OK", String::new())
+                };
+                let response = format!(
+                    "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{retry_hdr}Connection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn rate_limit_policy_backoff_calculation() {
+        let policy = RateLimitPolicy::default();
+        assert_eq!(policy.max_retries, 3);
+        assert_eq!(policy.initial_delay_ms, 500);
+        assert_eq!(policy.max_delay_ms, 30_000);
+
+        let d0 = policy.backoff_for_attempt(0);
+        assert!(d0 >= Duration::from_millis(500) && d0 <= Duration::from_millis(1000));
+
+        let d1 = policy.backoff_for_attempt(1);
+        assert!(d1 >= Duration::from_millis(1000) && d1 <= Duration::from_millis(1500));
+
+        let d_large = policy.backoff_for_attempt(20);
+        assert_eq!(d_large, Duration::from_millis(30_000));
+    }
+
+    #[test]
+    fn rate_limit_policy_default_applied() {
+        let client = RpcClient::new("https://soroban-testnet.stellar.org");
+        assert_eq!(client.rate_limit_policy().max_retries, 3);
+        assert_eq!(client.rate_limit_policy().initial_delay_ms, 500);
+        assert_eq!(client.rate_limit_policy().max_delay_ms, 30_000);
+    }
+
+    #[test]
+    fn rate_limit_retries_on_429_and_succeeds() {
+        let ok_body = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"test","protocolVersion":21,"sequence":100}}"#.to_string();
+        let error_body = r#"{"error":"too many requests"}"#.to_string();
+        let url = spawn_rate_limited_mock_server(vec![
+            (429, None, error_body.clone()),
+            (429, None, error_body),
+            (200, None, ok_body),
+        ]);
+        let client = RpcClient::new(url).with_rate_limit_policy(
+            RateLimitPolicy::new()
+                .with_max_retries(3)
+                .with_initial_delay_ms(1)
+                .with_max_delay_ms(10),
+        );
+        let res = client.get_latest_ledger().unwrap();
+        assert_eq!(res.sequence, 100);
+    }
+
+    #[test]
+    fn rate_limit_respects_retry_after_header() {
+        let ok_body = r#"{"jsonrpc":"2.0","id":1,"result":{"id":"test","protocolVersion":21,"sequence":100}}"#.to_string();
+        let error_body = r#"{"error":"too many requests"}"#.to_string();
+        let url =
+            spawn_rate_limited_mock_server(vec![(429, Some(0), error_body), (200, None, ok_body)]);
+        let client = RpcClient::new(url).with_rate_limit_policy(
+            RateLimitPolicy::new()
+                .with_max_retries(3)
+                .with_initial_delay_ms(1)
+                .with_max_delay_ms(10),
+        );
+        let res = client.get_latest_ledger().unwrap();
+        assert_eq!(res.sequence, 100);
+    }
+
+    #[test]
+    fn rate_limit_exhausted_returns_rate_limited_error() {
+        let error_body = r#"{"error":"too many requests"}"#.to_string();
+        let url = spawn_rate_limited_mock_server(vec![
+            (429, None, error_body.clone()),
+            (429, None, error_body.clone()),
+            (429, None, error_body),
+        ]);
+        let client = RpcClient::new(url).with_rate_limit_policy(
+            RateLimitPolicy::new()
+                .with_max_retries(2)
+                .with_initial_delay_ms(1)
+                .with_max_delay_ms(10),
+        );
+        let err = client.get_latest_ledger().unwrap_err();
+        match err {
+            SdkError::RateLimited { retries } => assert_eq!(retries, 2),
+            other => panic!("expected SdkError::RateLimited, got {other:?}"),
+        }
     }
 
     #[test]
