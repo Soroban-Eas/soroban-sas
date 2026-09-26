@@ -108,6 +108,14 @@ Detailed usage and flags for every subcommand are available via:
 cargo run -p soroban-sas-cli -- --help
 ```
 
+## Delegated Issuance
+
+Delegated issuance and revocation let an attester sign an operation off-chain
+while a separate relayer submits and pays for the transaction. See
+[Delegated Issuance and Revocation](docs/delegation.md) for the typed-data
+domain, nonce high-watermark rules, key rotation behavior, CLI commands, and
+SDK workflow.
+
 ## Local Development Network
 
 A local standalone Stellar node with Soroban RPC is available via Docker Compose using a pinned Stellar Quickstart image (`stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784`):

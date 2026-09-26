@@ -141,3 +141,9 @@ soroban-sas offchain verify --file signed.json
 
 The CLI computes the digest with the same `soroban_sas_common` code the
 contract uses, so the two can never drift.
+
+## See Also
+
+- [Delegated Issuance](delegation.md) explains how to submit signed
+  attestations and revocations on-chain, including nonce coordination and
+  relayer workflows.
