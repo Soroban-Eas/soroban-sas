@@ -1,9 +1,11 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
-use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sas_common::{
+    events::CONTRACT_UPGRADED, ContractUpgradedEvent, SASError, LEDGERS_IN_ONE_YEAR, UID,
+};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, IntoVal,
-    Symbol, Val,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env,
+    IntoVal, Symbol, TryFromVal, Val,
 };
 
 // v1.0.0 Indexer logic frozen
@@ -15,6 +17,14 @@ pub struct Indexer;
 pub const INDEXER_ADMIN: Symbol = symbol_short!("ADMIN");
 /// Address of the SAS contract whose attestations this indexer mirrors.
 pub const SAS_CONTRACT: Symbol = symbol_short!("SAS");
+/// Monotonic contract version. Missing on legacy initialized deployments,
+/// which are treated as genesis version 1.
+pub const INDEXER_VERSION: Symbol = symbol_short!("VERSION");
+/// Hash targeted by the most recent successful upgrade invocation.
+pub const CURRENT_WASM_HASH: Symbol = symbol_short!("WASMHASH");
+/// Highest version whose upgrade path this build knows and has been audited
+/// to activate. Increase only as part of a reviewed release.
+pub const MAX_KNOWN_VERSION: u32 = 2;
 const MAX_CHUNK_SIZE: u32 = 100;
 const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
@@ -49,6 +59,68 @@ fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
+fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError> {
+    let Some(raw): Option<Val> = env.storage().instance().get(key) else {
+        return Err(SASError::IncompatibleDependency);
+    };
+    Address::try_from_val(env, &raw).map_err(|_| SASError::IncompatibleDependency)
+}
+
+fn validate_upgrade(
+    env: &Env,
+    new_wasm_hash: &BytesN<32>,
+    new_version: u32,
+) -> Result<Address, SASError> {
+    // This is a pre-activation sanity read of the existing layout. It cannot
+    // execute or inspect the candidate WASM before Soroban installs it.
+    let admin = required_upgrade_address(env, &INDEXER_ADMIN)?;
+    let _sas = required_upgrade_address(env, &SAS_CONTRACT)?;
+
+    let old_version = env
+        .storage()
+        .instance()
+        .get(&INDEXER_VERSION)
+        .unwrap_or(1u32);
+    if new_version > MAX_KNOWN_VERSION {
+        return Err(SASError::IncompatibleDependency);
+    }
+    if new_version != old_version.saturating_add(1) {
+        return Err(SASError::InvalidValue);
+    }
+    if new_wasm_hash.to_array() == [0u8; 32] {
+        return Err(SASError::InvalidValue);
+    }
+    Ok(admin)
+}
+
+fn require_indexer_admin(env: &Env) -> Address {
+    match env.storage().instance().get(&INDEXER_ADMIN) {
+        Some(admin) => admin,
+        None => panic_with_error!(env, SASError::NotInitialized),
+    }
+}
+
+fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_version: u32) {
+    let old_wasm_hash = env
+        .storage()
+        .instance()
+        .get(&CURRENT_WASM_HASH)
+        .unwrap_or_else(|| BytesN::from_array(env, &[0u8; 32]));
+
+    env.storage().instance().set(&INDEXER_VERSION, &new_version);
+    env.storage()
+        .instance()
+        .set(&CURRENT_WASM_HASH, new_wasm_hash);
+    env.events().publish(
+        (CONTRACT_UPGRADED, admin.clone()),
+        ContractUpgradedEvent {
+            old_wasm_hash,
+            new_wasm_hash: new_wasm_hash.clone(),
+            authorizer: admin.clone(),
+        },
+    );
 }
 
 /// Number of UIDs recorded under one lookup key, across every chunk.
@@ -251,7 +323,34 @@ impl Indexer {
         }
         env.storage().instance().set(&INDEXER_ADMIN, &admin);
         env.storage().instance().set(&SAS_CONTRACT, &sas);
+        if !env.storage().instance().has(&INDEXER_VERSION) {
+            env.storage().instance().set(&INDEXER_VERSION, &1u32);
+        }
         extend_instance_ttl(&env);
+    }
+
+    /// Returns the current monotonic contract version. Legacy initialized
+    /// instances without the version key are treated as genesis version 1.
+    pub fn get_version(env: Env) -> u32 {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&INDEXER_VERSION).unwrap_or(1)
+    }
+
+    /// Activates the next audited WASM version in place.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>, new_version: u32) {
+        extend_instance_ttl(&env);
+        let layout_admin = match validate_upgrade(&env, &new_wasm_hash, new_version) {
+            Ok(values) => values,
+            Err(error) => panic_with_error!(&env, error),
+        };
+        let admin = require_indexer_admin(&env);
+        if admin != layout_admin {
+            panic_with_error!(&env, SASError::IncompatibleDependency);
+        }
+        admin.require_auth();
+
+        commit_upgrade(&env, &admin, &new_wasm_hash, new_version);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     /// Returns the admin address recorded by `init`, if the indexer has been

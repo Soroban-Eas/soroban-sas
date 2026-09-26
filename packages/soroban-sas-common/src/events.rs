@@ -196,10 +196,10 @@ pub struct TreasuryUpdatedEvent {
 /// Payload of the `ContractUpgraded` event.
 ///
 /// Published with topics `(CONTRACT_UPGRADED, authorizer)` on a successful
-/// `SchemaRegistry::upgrade`, immediately before the WASM swap takes
-/// effect. `old_wasm_hash` is the hash of the code being replaced, read
-/// directly from the ledger's current contract executable so it cannot be
-/// spoofed by the caller.
+/// contract upgrade immediately before the WASM swap is requested. Soroban
+/// does not let a running contract read its installed WASM hash. Producers
+/// therefore document how the first upgrade represents an unavailable legacy
+/// hash and track successful target hashes for subsequent events.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUpgradedEvent {

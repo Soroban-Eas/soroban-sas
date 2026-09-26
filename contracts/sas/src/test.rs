@@ -3,7 +3,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use soroban_sas_common::{
     hash_delegated_revocation, AdminTransferCompletedEvent, AdminTransferProposedEvent,
     Attestation, AttestationDomain, AttestationIssuedEvent, AttestationRevokedEvent,
-    BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent, PreviousAddress, SASError, UID,
+    BatchAttestedEvent, BatchRevokedEvent, ContractUpgradedEvent, IndexerUpdatedEvent,
+    PreviousAddress, SASError, UID,
 };
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -942,6 +943,210 @@ fn test_init_twice_is_rejected() {
 
     let res = sas_client.try_init(&admin, &registry_id);
     assert_eq!(res, Err(Ok(SASError::AlreadyInitialized.into())));
+}
+
+fn setup_upgrade_sas(env: &Env) -> (Address, Address, Address) {
+    let registry = env.register_contract(None, mock1::MockRegistry);
+    let sas = env.register_contract(None, SAS);
+    let admin = Address::generate(env);
+    env.mock_all_auths();
+    SASClient::new(env, &sas).init(&admin, &registry);
+    (sas, admin, registry)
+}
+
+#[test]
+fn test_upgrade_version_genesis_and_legacy_default() {
+    let env = Env::default();
+    let (sas, _admin, _registry) = setup_upgrade_sas(&env);
+    let client = SASClient::new(&env, &sas);
+    assert_eq!(client.get_version(), 1);
+
+    env.as_contract(&sas, || {
+        env.storage().instance().remove(&crate::SAS_VERSION);
+    });
+    assert_eq!(client.get_version(), 1);
+}
+
+#[test]
+fn test_init_does_not_overwrite_existing_upgrade_version() {
+    let env = Env::default();
+    let registry = env.register_contract(None, mock1::MockRegistry);
+    let sas = env.register_contract(None, SAS);
+    env.as_contract(&sas, || {
+        env.storage().instance().set(&crate::SAS_VERSION, &2u32);
+    });
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    let client = SASClient::new(&env, &sas);
+    client.init(&admin, &registry);
+    assert_eq!(client.get_version(), 2);
+}
+
+#[test]
+fn test_upgrade_preparation_moves_one_to_two_emits_event_and_preserves_bindings() {
+    let env = Env::default();
+    let (sas, admin, registry) = setup_upgrade_sas(&env);
+    let client = SASClient::new(&env, &sas);
+    let indexer = Address::generate(&env);
+    client.set_indexer(&indexer);
+    let new_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    env.as_contract(&sas, || {
+        let validated_admin = crate::validate_upgrade(&env, &new_hash, 2).unwrap();
+        crate::commit_upgrade(&env, &validated_admin, &new_hash, 2);
+    });
+
+    assert_eq!(client.get_version(), 2);
+    assert_eq!(client.admin(), admin.clone());
+    assert_eq!(client.get_indexer(), Some(indexer));
+    let stored_registry: Address = env.as_contract(&sas, || {
+        env.storage()
+            .instance()
+            .get(&crate::SCHEMA_REGISTRY)
+            .unwrap()
+    });
+    assert_eq!(stored_registry, registry);
+    let expected = ContractUpgradedEvent {
+        old_wasm_hash: BytesN::from_array(&env, &[0u8; 32]),
+        new_wasm_hash: new_hash,
+        authorizer: admin.clone(),
+    };
+    let all = env.events().all();
+    assert_eq!(
+        all.slice(all.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                sas,
+                (symbol_short!("UPGRADED"), admin).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_upgrade_validation_rejects_skip_current_zero_and_unknown_version_without_mutation() {
+    let env = Env::default();
+    let (sas, _admin, _registry) = setup_upgrade_sas(&env);
+    let client = SASClient::new(&env, &sas);
+    let hash = BytesN::from_array(&env, &[8u8; 32]);
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+    let events_before = env.events().all().len();
+
+    let (current, downgrade, zero_result, unknown, skipped) = env.as_contract(&sas, || {
+        let current = crate::validate_upgrade(&env, &hash, 1);
+        let zero_result = crate::validate_upgrade(&env, &zero, 2);
+        let unknown = crate::validate_upgrade(&env, &hash, crate::MAX_KNOWN_VERSION + 1);
+        env.storage().instance().set(&crate::SAS_VERSION, &2u32);
+        let downgrade = crate::validate_upgrade(&env, &hash, 1);
+        // With MAX_KNOWN_VERSION=2, create a lower stored version so a skip
+        // can be tested independently from the unknown-version guard.
+        env.storage().instance().set(&crate::SAS_VERSION, &0u32);
+        let skipped = crate::validate_upgrade(&env, &hash, 2);
+        env.storage().instance().set(&crate::SAS_VERSION, &1u32);
+        (current, downgrade, zero_result, unknown, skipped)
+    });
+
+    assert_eq!(current, Err(SASError::InvalidValue));
+    assert_eq!(downgrade, Err(SASError::InvalidValue));
+    assert_eq!(zero_result, Err(SASError::InvalidValue));
+    assert_eq!(unknown, Err(SASError::IncompatibleDependency));
+    assert_eq!(skipped, Err(SASError::InvalidValue));
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn test_upgrade_requires_admin_auth_and_emits_no_success_event() {
+    let env = Env::default();
+    let (sas, _admin, _registry) = setup_upgrade_sas(&env);
+    let client = SASClient::new(&env, &sas);
+    env.set_auths(&[]);
+    let events_before = env.events().all().len();
+
+    let result = client.try_upgrade(&BytesN::from_array(&env, &[9u8; 32]), &2);
+    assert!(result.is_err());
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn test_upgrade_rejects_missing_layout_without_mutation_or_event() {
+    let env = Env::default();
+    let (sas, _admin, registry) = setup_upgrade_sas(&env);
+    let client = SASClient::new(&env, &sas);
+    env.as_contract(&sas, || {
+        env.storage().instance().remove(&crate::SCHEMA_REGISTRY);
+    });
+    let events_before = env.events().all().len();
+    let result = client.try_upgrade(&BytesN::from_array(&env, &[10u8; 32]), &2);
+
+    assert_eq!(result, Err(Ok(SASError::IncompatibleDependency.into())));
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+
+    let invalid_optional_indexer = env.as_contract(&sas, || {
+        env.storage()
+            .instance()
+            .set(&crate::SCHEMA_REGISTRY, &registry);
+        env.storage().instance().set(&crate::INDEXER, &42u32);
+        crate::validate_upgrade(&env, &BytesN::from_array(&env, &[10u8; 32]), 2)
+    });
+    assert_eq!(
+        invalid_optional_indexer,
+        Err(SASError::IncompatibleDependency)
+    );
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn test_upgrade_event_uses_a_previously_tracked_hash() {
+    let env = Env::default();
+    let (sas, admin, _registry) = setup_upgrade_sas(&env);
+    let old_hash = BytesN::from_array(&env, &[12u8; 32]);
+    let new_hash = BytesN::from_array(&env, &[13u8; 32]);
+
+    env.as_contract(&sas, || {
+        env.storage()
+            .instance()
+            .set(&crate::CURRENT_WASM_HASH, &old_hash);
+        crate::commit_upgrade(&env, &admin, &new_hash, 2);
+    });
+
+    let expected = ContractUpgradedEvent {
+        old_wasm_hash: old_hash,
+        new_wasm_hash: new_hash,
+        authorizer: admin.clone(),
+    };
+    let all = env.events().all();
+    assert_eq!(
+        all.slice(all.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                sas,
+                (symbol_short!("UPGRADED"), admin).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_failed_wasm_swap_rolls_back_version_and_tracked_hash() {
+    let env = Env::default();
+    let (sas, _admin, _registry) = setup_upgrade_sas(&env);
+    let client = SASClient::new(&env, &sas);
+    let missing_hash = BytesN::from_array(&env, &[11u8; 32]);
+
+    assert!(client.try_upgrade(&missing_hash, &2).is_err());
+    assert_eq!(client.get_version(), 1);
+    let tracked: Option<BytesN<32>> = env.as_contract(&sas, || {
+        env.storage().instance().get(&crate::CURRENT_WASM_HASH)
+    });
+    assert_eq!(tracked, None);
 }
 
 #[test]

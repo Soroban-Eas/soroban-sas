@@ -1,10 +1,11 @@
 use soroban_sas_common::{
     events::{
         ADMIN_TRANSFER_COMPLETED, ADMIN_TRANSFER_PROPOSED, ATTESTED, BATCH_ATTESTED, BATCH_REVOKED,
-        INDEXER_UPDATED, REVOKED,
+        CONTRACT_UPGRADED, INDEXER_UPDATED, REVOKED,
     },
     AdminTransferCompletedEvent, AdminTransferProposedEvent, Attestation, AttestationIssuedEvent,
-    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, IndexerUpdatedEvent, UID,
+    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, ContractUpgradedEvent,
+    IndexerUpdatedEvent, UID,
 };
 use soroban_sdk::{symbol_short, Address, Env};
 
@@ -61,6 +62,13 @@ pub fn publish_indexer_updated(
             authorizer,
         },
     );
+}
+
+/// Publishes the upgrade success event as the final operation before the
+/// caller requests the WASM swap.
+pub fn publish_contract_upgraded(env: &Env, event: ContractUpgradedEvent) {
+    env.events()
+        .publish((CONTRACT_UPGRADED, event.authorizer.clone()), event);
 }
 
 /// Publishes `IndexFailed` when a bound Indexer could not be notified of a

@@ -5,10 +5,12 @@
 extern crate alloc;
 
 use soroban_sas_common::{
-    Attestation, DelegationNonceKey, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID,
+    Attestation, ContractUpgradedEvent, DelegationNonceKey, SASError, LEDGERS_IN_ONE_YEAR,
+    MAX_ATTESTATION_DATA_BYTES, UID,
 };
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
+    contract, contractimpl, panic_with_error, symbol_short, token, Address, BytesN, Env, IntoVal,
+    Symbol, TryFromVal, Val,
 };
 
 mod events;
@@ -37,6 +39,14 @@ pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 /// protection with one `instance` entry per attester (bounded growth) whose
 /// lifetime tracks contract liveness via `extend_instance_ttl`.
 pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
+/// Monotonic contract version. Missing on legacy initialized deployments,
+/// which are treated as genesis version 1.
+pub const SAS_VERSION: Symbol = symbol_short!("VERSION");
+/// Hash targeted by the most recent successful upgrade invocation.
+pub const CURRENT_WASM_HASH: Symbol = symbol_short!("WASMHASH");
+/// Highest version whose upgrade path this build knows and has been audited
+/// to activate. Increase only as part of a reviewed release.
+pub const MAX_KNOWN_VERSION: u32 = 2;
 /// Maximum number of attestations in one multi_attest invocation. This keeps
 /// authorization and storage work within the measured Soroban budget envelope.
 pub const MAX_MULTI_ATTEST: u32 = 100;
@@ -72,6 +82,60 @@ fn require_registry(env: &Env) -> Address {
         Some(registry) => registry,
         None => panic_with_error!(env, SASError::NotInitialized),
     }
+}
+
+fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError> {
+    let Some(raw): Option<Val> = env.storage().instance().get(key) else {
+        return Err(SASError::IncompatibleDependency);
+    };
+    Address::try_from_val(env, &raw).map_err(|_| SASError::IncompatibleDependency)
+}
+
+fn validate_upgrade(
+    env: &Env,
+    new_wasm_hash: &BytesN<32>,
+    new_version: u32,
+) -> Result<Address, SASError> {
+    // This is a pre-activation sanity read of the existing layout. It cannot
+    // execute or inspect the candidate WASM before Soroban installs it.
+    let admin = required_upgrade_address(env, &SAS_ADMIN)?;
+    let _registry = required_upgrade_address(env, &SCHEMA_REGISTRY)?;
+    if env.storage().instance().has(&INDEXER) {
+        let _indexer = required_upgrade_address(env, &INDEXER)?;
+    }
+
+    let old_version = env.storage().instance().get(&SAS_VERSION).unwrap_or(1u32);
+    if new_version > MAX_KNOWN_VERSION {
+        return Err(SASError::IncompatibleDependency);
+    }
+    if new_version != old_version.saturating_add(1) {
+        return Err(SASError::InvalidValue);
+    }
+    if new_wasm_hash.to_array() == [0u8; 32] {
+        return Err(SASError::InvalidValue);
+    }
+    Ok(admin)
+}
+
+fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_version: u32) {
+    let old_wasm_hash = env
+        .storage()
+        .instance()
+        .get(&CURRENT_WASM_HASH)
+        .unwrap_or_else(|| BytesN::from_array(env, &[0u8; 32]));
+
+    env.storage().instance().set(&SAS_VERSION, &new_version);
+    env.storage()
+        .instance()
+        .set(&CURRENT_WASM_HASH, new_wasm_hash);
+    events::publish_contract_upgraded(
+        env,
+        ContractUpgradedEvent {
+            old_wasm_hash,
+            new_wasm_hash: new_wasm_hash.clone(),
+            authorizer: admin.clone(),
+        },
+    );
 }
 
 #[contractimpl]
@@ -128,7 +192,34 @@ impl SAS {
         }
         env.storage().instance().set(&SAS_ADMIN, &admin);
         env.storage().instance().set(&SCHEMA_REGISTRY, &registry);
+        if !env.storage().instance().has(&SAS_VERSION) {
+            env.storage().instance().set(&SAS_VERSION, &1u32);
+        }
         extend_instance_ttl(&env);
+    }
+
+    /// Returns the current monotonic contract version. Legacy initialized
+    /// instances without the version key are treated as genesis version 1.
+    pub fn get_version(env: Env) -> u32 {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&SAS_VERSION).unwrap_or(1)
+    }
+
+    /// Activates the next audited WASM version in place.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>, new_version: u32) {
+        extend_instance_ttl(&env);
+        let layout_admin = match validate_upgrade(&env, &new_wasm_hash, new_version) {
+            Ok(values) => values,
+            Err(error) => panic_with_error!(&env, error),
+        };
+        let admin = require_admin(&env);
+        if admin != layout_admin {
+            panic_with_error!(&env, SASError::IncompatibleDependency);
+        }
+        admin.require_auth();
+
+        commit_upgrade(&env, &admin, &new_wasm_hash, new_version);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     /// Step 1 of two-step admin transfer (#228).

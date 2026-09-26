@@ -159,20 +159,22 @@ is `None` the first time a treasury address is set.
 
 ## ContractUpgraded
 
-Emitted by the schema registry on a successful `upgrade`, immediately
-before the new WASM takes effect.
+Emitted by SAS and Indexer on a successful `upgrade`, immediately before the
+new WASM swap is requested. SchemaRegistry retains its versioned `UPGRADE`
+event; its `ContractUpgraded` hash helper is currently test-only.
 
 - Topics: `("UPGRADED", authorizer: Address)`
 - Data: `ContractUpgradedEvent { old_wasm_hash: BytesN<32>, new_wasm_hash: BytesN<32>, authorizer: Address }`
 
-`upgrade` requires authorization from the registry admin. Soroban does not
-expose a way for a contract to read its own currently installed WASM hash,
-so the registry tracks the hash itself in instance storage purely to
-report it here; the very first upgrade on a deployment therefore reports
-`old_wasm_hash` equal to `new_wasm_hash` rather than the hash the contract
-was originally deployed with. If the WASM swap itself fails (for example,
-`new_wasm_hash` has no corresponding uploaded WASM), Soroban rolls back the
-entire invocation, so this event is never emitted for a failed upgrade.
+`upgrade` requires authorization from the emitting contract's administrator.
+Soroban does not expose a way for a contract to read its own installed WASM
+hash. SAS and Indexer therefore use an all-zero `old_wasm_hash` as an explicit
+"unknown" sentinel on the first upgrade of a legacy/genesis instance, then
+track the successfully targeted hash in instance storage for later events.
+Operators must use their release manifest for the authoritative genesis hash.
+If the WASM swap fails (for example, the hash was not uploaded), Soroban rolls
+back the invocation, so no success event is committed to ledger transaction
+metadata.
 
 ## SchemaDelegateAdded
 
@@ -223,7 +225,7 @@ Emitted by the schema registry on a successful `transfer_schema_ownership`.
 
 `IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and
 `ContractUpgraded` share a design: each authorization check
-(`require_auth`) happens before any state is read or written, and each
+(`require_auth`) happens before any state is written, and each
 event is published only after the corresponding storage write has already
 succeeded (or, for `upgrade`, immediately before the WASM swap that either
 completes the invocation or rolls the whole thing back). A failed

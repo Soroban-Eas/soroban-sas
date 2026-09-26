@@ -1,6 +1,9 @@
 use super::*;
-use soroban_sas_common::{INSTANCE_EXTEND_TO_LEDGERS, UID};
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Env, IntoVal};
+use soroban_sas_common::{ContractUpgradedEvent, SASError, INSTANCE_EXTEND_TO_LEDGERS, UID};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, testutils::Address as _, testutils::Events as _, BytesN,
+    Env, IntoVal,
+};
 
 mod mock {
     use super::*;
@@ -119,6 +122,185 @@ fn test_init_twice_is_rejected() {
         res,
         Err(Ok(soroban_sas_common::SASError::AlreadyInitialized.into()))
     );
+}
+
+fn setup_upgrade_indexer(env: &Env) -> (Address, Address, Address) {
+    let indexer = env.register_contract(None, Indexer);
+    let admin = Address::generate(env);
+    let sas = env.register_contract(None, mock::MockSas);
+    env.mock_all_auths();
+    IndexerClient::new(env, &indexer).init(&admin, &sas);
+    (indexer, admin, sas)
+}
+
+#[test]
+fn test_upgrade_version_genesis_and_legacy_default() {
+    let env = Env::default();
+    let (indexer, _admin, _sas) = setup_upgrade_indexer(&env);
+    let client = IndexerClient::new(&env, &indexer);
+    assert_eq!(client.get_version(), 1);
+
+    env.as_contract(&indexer, || {
+        env.storage().instance().remove(&INDEXER_VERSION);
+    });
+    assert_eq!(client.get_version(), 1);
+}
+
+#[test]
+fn test_init_does_not_overwrite_existing_upgrade_version() {
+    let env = Env::default();
+    let indexer = env.register_contract(None, Indexer);
+    env.as_contract(&indexer, || {
+        env.storage().instance().set(&INDEXER_VERSION, &2u32);
+    });
+    let admin = Address::generate(&env);
+    let sas = env.register_contract(None, mock::MockSas);
+    env.mock_all_auths();
+    let client = IndexerClient::new(&env, &indexer);
+    client.init(&admin, &sas);
+    assert_eq!(client.get_version(), 2);
+}
+
+#[test]
+fn test_upgrade_preparation_moves_one_to_two_emits_event_and_preserves_bindings() {
+    let env = Env::default();
+    let (indexer, admin, sas) = setup_upgrade_indexer(&env);
+    let client = IndexerClient::new(&env, &indexer);
+    let new_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    env.as_contract(&indexer, || {
+        let validated_admin = validate_upgrade(&env, &new_hash, 2).unwrap();
+        commit_upgrade(&env, &validated_admin, &new_hash, 2);
+    });
+
+    assert_eq!(client.get_version(), 2);
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    assert_eq!(client.get_sas(), Some(sas));
+    let expected = ContractUpgradedEvent {
+        old_wasm_hash: BytesN::from_array(&env, &[0u8; 32]),
+        new_wasm_hash: new_hash,
+        authorizer: admin.clone(),
+    };
+    let all = env.events().all();
+    assert_eq!(
+        all.slice(all.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                indexer,
+                (symbol_short!("UPGRADED"), admin).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_upgrade_validation_rejects_skip_current_zero_and_unknown_version_without_mutation() {
+    let env = Env::default();
+    let (indexer, _admin, _sas) = setup_upgrade_indexer(&env);
+    let client = IndexerClient::new(&env, &indexer);
+    let hash = BytesN::from_array(&env, &[8u8; 32]);
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+    let events_before = env.events().all().len();
+
+    let (current, downgrade, zero_result, unknown, skipped) = env.as_contract(&indexer, || {
+        let current = validate_upgrade(&env, &hash, 1);
+        let zero_result = validate_upgrade(&env, &zero, 2);
+        let unknown = validate_upgrade(&env, &hash, MAX_KNOWN_VERSION + 1);
+        env.storage().instance().set(&INDEXER_VERSION, &2u32);
+        let downgrade = validate_upgrade(&env, &hash, 1);
+        // With MAX_KNOWN_VERSION=2, create a lower stored version so a skip
+        // can be tested independently from the unknown-version guard.
+        env.storage().instance().set(&INDEXER_VERSION, &0u32);
+        let skipped = validate_upgrade(&env, &hash, 2);
+        env.storage().instance().set(&INDEXER_VERSION, &1u32);
+        (current, downgrade, zero_result, unknown, skipped)
+    });
+
+    assert_eq!(current, Err(SASError::InvalidValue));
+    assert_eq!(downgrade, Err(SASError::InvalidValue));
+    assert_eq!(zero_result, Err(SASError::InvalidValue));
+    assert_eq!(unknown, Err(SASError::IncompatibleDependency));
+    assert_eq!(skipped, Err(SASError::InvalidValue));
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn test_upgrade_requires_admin_auth_and_emits_no_success_event() {
+    let env = Env::default();
+    let (indexer, _admin, _sas) = setup_upgrade_indexer(&env);
+    let client = IndexerClient::new(&env, &indexer);
+    env.set_auths(&[]);
+    let events_before = env.events().all().len();
+
+    let result = client.try_upgrade(&BytesN::from_array(&env, &[9u8; 32]), &2);
+    assert!(result.is_err());
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn test_upgrade_rejects_missing_layout_without_mutation_or_event() {
+    let env = Env::default();
+    let (indexer, _admin, _sas) = setup_upgrade_indexer(&env);
+    let client = IndexerClient::new(&env, &indexer);
+    env.as_contract(&indexer, || {
+        env.storage().instance().remove(&SAS_CONTRACT);
+    });
+    let events_before = env.events().all().len();
+    let result = client.try_upgrade(&BytesN::from_array(&env, &[10u8; 32]), &2);
+
+    assert_eq!(result, Err(Ok(SASError::IncompatibleDependency.into())));
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn test_upgrade_event_uses_a_previously_tracked_hash() {
+    let env = Env::default();
+    let (indexer, admin, _sas) = setup_upgrade_indexer(&env);
+    let old_hash = BytesN::from_array(&env, &[12u8; 32]);
+    let new_hash = BytesN::from_array(&env, &[13u8; 32]);
+
+    env.as_contract(&indexer, || {
+        env.storage().instance().set(&CURRENT_WASM_HASH, &old_hash);
+        commit_upgrade(&env, &admin, &new_hash, 2);
+    });
+
+    let expected = ContractUpgradedEvent {
+        old_wasm_hash: old_hash,
+        new_wasm_hash: new_hash,
+        authorizer: admin.clone(),
+    };
+    let all = env.events().all();
+    assert_eq!(
+        all.slice(all.len() - 1..),
+        soroban_sdk::vec![
+            &env,
+            (
+                indexer,
+                (symbol_short!("UPGRADED"), admin).into_val(&env),
+                expected.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_failed_wasm_swap_rolls_back_version_and_tracked_hash() {
+    let env = Env::default();
+    let (indexer, _admin, _sas) = setup_upgrade_indexer(&env);
+    let client = IndexerClient::new(&env, &indexer);
+    let missing_hash = BytesN::from_array(&env, &[11u8; 32]);
+
+    assert!(client.try_upgrade(&missing_hash, &2).is_err());
+    assert_eq!(client.get_version(), 1);
+    let tracked: Option<BytesN<32>> = env.as_contract(&indexer, || {
+        env.storage().instance().get(&CURRENT_WASM_HASH)
+    });
+    assert_eq!(tracked, None);
 }
 
 #[test]

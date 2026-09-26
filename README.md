@@ -218,7 +218,7 @@ TMPDIR=/tmp cargo test --workspace
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
-- [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and recovery procedures for `schema-registry`.
+- [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
 ## Project Roadmap
 
 `soroban-sas` is under active development. Our roadmap to a production-ready release is structured as follows:
