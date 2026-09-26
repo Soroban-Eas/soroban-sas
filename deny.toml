@@ -27,8 +27,8 @@ multiple-versions = "warn"
 unknown-registry = "deny"
 unknown-git = "deny"
 
-# The root benchmark harness is explicitly unpublished. Published-capable
-# workspace crates still need license metadata from the upstream maintainers.
+# Workspace packages are explicitly unpublished pending a project license.
+# Only their own license metadata is excluded; dependencies remain checked.
 [licenses.private]
 ignore = true
 

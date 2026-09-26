@@ -36,13 +36,14 @@ Advisory exceptions require a specific RustSec ID and a justification comment
 in **both** `deny.toml` and `.cargo/audit.toml`. Review existing accepted risks whenever
 Soroban is upgraded; do not suppress new findings merely to make CI green.
 
-The current upstream packages (`sas`, `schema-registry`, `soroban-sas-cli`,
-`soroban-sas-common`, `soroban-sas-indexer`, and `soroban-sas-sdk`) declare no
-license and the repository contains no license file. The license gate
-intentionally reports these six packages until maintainers select and record
-the intended license. Do not invent license metadata or suppress these findings.
-The unpublished root benchmark harness is excluded from license checks only;
-its dependencies are still scanned.
+Workspace packages declare `publish = false` because the repository has no
+project license yet. Cargo-deny's private-package policy excludes these
+unpublished packages' own license metadata; all external dependencies remain
+subject to the license allowlist and security checks, including development
+dependencies. This does not grant a license or change dependency exceptions.
+Before publishing a package, maintainers must select and record the project
+license and remove its `publish = false` setting; its license metadata will
+then be checked as well.
 
 Repository administrators must enable **cargo-deny** and **cargo-audit** as
 required status checks in the `main` branch protection rule or ruleset after
