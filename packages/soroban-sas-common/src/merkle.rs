@@ -33,7 +33,7 @@ fn leaf_hash(env: &Env, data: &Bytes) -> BytesN<32> {
     let mut buf = Bytes::new(env);
     buf.push_back(0x00);
     buf.append(data);
-    env.crypto().sha256(&buf)
+    env.crypto().sha256(&buf).into()
 }
 
 fn node_hash(env: &Env, a: &BytesN<32>, b: &BytesN<32>) -> BytesN<32> {
@@ -46,7 +46,7 @@ fn node_hash(env: &Env, a: &BytesN<32>, b: &BytesN<32>) -> BytesN<32> {
     buf.push_back(0x01);
     buf.append(&Bytes::from_array(env, &left.to_array()));
     buf.append(&Bytes::from_array(env, &right.to_array()));
-    env.crypto().sha256(&buf)
+    env.crypto().sha256(&buf).into()
 }
 
 /// Builds the Merkle root over `leaves` (raw, unhashed leaf data). Duplicate

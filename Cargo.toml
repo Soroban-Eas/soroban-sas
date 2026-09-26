@@ -54,10 +54,9 @@ debug-assertions = true
 panic = "unwind"
 
 [workspace.dependencies]
-soroban-sdk = "20.0.0"
+soroban-sdk = "21.7.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 soroban-sas-common = { path = "packages/soroban-sas-common" }
 
 [workspace.lints.clippy]
 new_without_default = "allow"
-

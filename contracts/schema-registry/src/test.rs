@@ -291,7 +291,9 @@ fn fee_test_env() -> (
     client.init(&admin);
 
     let owner = Address::generate(&env);
-    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_id).mint(&owner, &1_000);
 
     (env, client, admin, owner, token_id)
@@ -347,7 +349,9 @@ fn test_register_with_value_rejects_unconfigured_payment() {
 #[test]
 fn test_register_with_value_rejects_wrong_token_and_short_amount() {
     let (env, client, admin, owner, fee_token) = fee_test_env();
-    let other_token = env.register_stellar_asset_contract(admin.clone());
+    let other_token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &other_token).mint(&owner, &1_000);
     client.set_fee(&fee_token, &500);
     client.set_treasury(&Address::generate(&env));
@@ -427,7 +431,7 @@ fn test_register_with_value_insufficient_balance_registers_nothing() {
         payload.append(&schema.clone().to_xdr(&env));
         payload.append(&resolver.clone().to_xdr(&env));
         payload.append(&soroban_sdk::Bytes::from_slice(&env, &[1u8]));
-        soroban_sas_common::UID(env.crypto().sha256(&payload))
+        soroban_sas_common::UID(env.crypto().sha256(&payload).into())
     };
     assert!(client.get_schema(&uid).is_none());
 }
