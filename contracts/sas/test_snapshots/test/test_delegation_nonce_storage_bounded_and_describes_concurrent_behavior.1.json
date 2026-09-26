@@ -31,7 +31,7 @@
     []
   ],
   "ledger": {
-    "protocol_version": 20,
+    "protocol_version": 21,
     "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -377,12 +377,22 @@
                       },
                       {
                         "key": {
-                          "vec": [
+                          "symbol": "VERSION"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "map": [
                             {
-                              "symbol": "DELNONCE"
-                            },
-                            {
-                              "address": "GABVFCUEZ427GPN66GZSDEWZGUKE5HLCGOCNBMDZZJUHYAAQTOAZNS7D"
+                              "key": {
+                                "symbol": "attester"
+                              },
+                              "val": {
+                                "address": "GABVFCUEZ427GPN66GZSDEWZGUKE5HLCGOCNBMDZZJUHYAAQTOAZNS7D"
+                              }
                             }
                           ]
                         },
@@ -392,12 +402,14 @@
                       },
                       {
                         "key": {
-                          "vec": [
+                          "map": [
                             {
-                              "symbol": "DELNONCE"
-                            },
-                            {
-                              "address": "GAXQU6ZJ6U3FEAC42RZAUP7HVTIIZBNE4KONN5ENDEC6E5W2Y3767N3T"
+                              "key": {
+                                "symbol": "attester"
+                              },
+                              "val": {
+                                "address": "GAXQU6ZJ6U3FEAC42RZAUP7HVTIIZBNE4KONN5ENDEC6E5W2Y3767N3T"
+                              }
                             }
                           ]
                         },
@@ -445,7 +457,7 @@
             },
             "ext": "v0"
           },
-          15
+          6311999
         ]
       ],
       [

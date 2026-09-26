@@ -113,6 +113,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SchemaDeprecated { schema_uid, deprecated_by }` event on the first
   successful deprecation; repeated calls stay idempotent and do not
   re-publish the event. (#218)
+- `Indexer::get_count_by_recipient`, `get_count_by_schema`, and
+  `get_count_by_attester` return the total number of UIDs indexed under a
+  key without fetching any of them, letting callers compute pagination
+  totals (`ceil(count / page_size)`) up front. Backed by the same
+  persistent counter `index_total` derives chunk cursors from (see #219),
+  renewed on read, and unaffected by `Active` -> `Revoked`/`Replaced`
+  status transitions. Adds matching `IndexerClient::get_count_by_recipient`
+  / `get_count_by_schema` / `get_count_by_attester` helpers to
+  `soroban-sas-sdk`. (#220)
 - `validate_schema_syntax` now rejects a schema with more than
   `MAX_SCHEMA_FIELDS` (64) comma-separated fields. `MAX_SCHEMA_LENGTH`
   bounds the string's byte length but not its field count, so a string

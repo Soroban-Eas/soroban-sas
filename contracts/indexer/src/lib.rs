@@ -460,6 +460,31 @@ impl Indexer {
         env.storage().persistent().get(&(STATUS_KEY, uid))
     }
 
+    /// Total number of UIDs indexed under `address` as a recipient, across
+    /// every chunk. `0` if the key has never been indexed. A pure read: like
+    /// [`Indexer::index_total`], it renews the counter's TTL when found but
+    /// creates no storage for a key that was never indexed. Lets callers
+    /// compute pagination totals (`ceil(count / page_size)`) without
+    /// fetching every UID just to learn how many there are (#220).
+    pub fn get_count_by_recipient(env: Env, address: Address) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(RECIPIENT_TOTAL, address))
+    }
+
+    /// Total number of UIDs indexed under `schema_uid`. See
+    /// [`Indexer::get_count_by_recipient`] for semantics.
+    pub fn get_count_by_schema(env: Env, schema_uid: UID) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(SCHEMA_TOTAL, schema_uid))
+    }
+
+    /// Total number of UIDs indexed under `address` as an attester. See
+    /// [`Indexer::get_count_by_recipient`] for semantics.
+    pub fn get_count_by_attester(env: Env, address: Address) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(ATTESTER_TOTAL, address))
+    }
+
     /// Complete recipient history, oldest first.
     ///
     /// Walks every chunk backing the key: the index rolls over to a new chunk

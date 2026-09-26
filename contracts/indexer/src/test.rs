@@ -421,6 +421,69 @@ fn test_reindexing_identical_metadata_is_a_no_op() {
     assert_eq!(client.get_attestations_by_attester(&attester).len(), 1);
 }
 
+/// Issue #220: `get_count_by_*` reads the same authoritative counter
+/// `index_total` derives chunk cursors from, without fetching any UIDs.
+#[test]
+fn test_get_count_by_defaults_to_zero_for_unindexed_key() {
+    let env = Env::default();
+    let (_indexer_id, client, _sas) = setup_indexed(&env);
+
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[9u8; 32]));
+    let attester = Address::generate(&env);
+
+    assert_eq!(client.get_count_by_recipient(&recipient), 0);
+    assert_eq!(client.get_count_by_schema(&schema_uid), 0);
+    assert_eq!(client.get_count_by_attester(&attester), 0);
+}
+
+#[test]
+fn test_get_count_by_tracks_indexing_across_chunk_boundary() {
+    let env = Env::default();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+    env.budget().reset_unlimited();
+
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[9u8; 32]));
+    let attester = Address::generate(&env);
+
+    let total = MAX_CHUNK_SIZE + 1;
+    for i in 0..total {
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&i.to_be_bytes());
+        let uid = UID(soroban_sdk::BytesN::from_array(&env, &bytes));
+        sas_client.relay_index(&indexer_id, &uid, &recipient, &schema_uid, &attester);
+
+        assert_eq!(client.get_count_by_recipient(&recipient), i + 1);
+        assert_eq!(client.get_count_by_schema(&schema_uid), i + 1);
+        assert_eq!(client.get_count_by_attester(&attester), i + 1);
+    }
+
+    // Counts agree with the full-history read length, across the
+    // MAX_CHUNK_SIZE rollover.
+    assert_eq!(
+        client.get_count_by_recipient(&recipient),
+        client.get_attestations_by_recipient(&recipient).len()
+    );
+    assert_eq!(
+        client.get_count_by_schema(&schema_uid),
+        client.get_attestations_by_schema(&schema_uid).len()
+    );
+    assert_eq!(
+        client.get_count_by_attester(&attester),
+        client.get_attestations_by_attester(&attester).len()
+    );
+
+    // Status transitions (Active -> Revoked/Replaced) don't decrement the
+    // count: the UID remains indexed, only its filtered visibility changes.
+    let uid0 = UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+    env.as_contract(&indexer_id, || {
+        set_index_status(&env, &uid0, IndexStatus::Revoked);
+    });
+    assert_eq!(client.get_count_by_recipient(&recipient), total);
+}
+
 #[test]
 fn test_reusing_a_uid_with_a_different_recipient_is_rejected() {
     let env = Env::default();

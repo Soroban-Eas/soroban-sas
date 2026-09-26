@@ -30,7 +30,7 @@
     []
   ],
   "ledger": {
-    "protocol_version": 20,
+    "protocol_version": 21,
     "sequence_number": 0,
     "timestamp": 7777,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -244,12 +244,22 @@
                       },
                       {
                         "key": {
-                          "vec": [
+                          "symbol": "VERSION"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "map": [
                             {
-                              "symbol": "DELNONCE"
-                            },
-                            {
-                              "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
+                              "key": {
+                                "symbol": "attester"
+                              },
+                              "val": {
+                                "address": "GDRIVCLQOUZTFPLS732BHZVQWLXRWSVN3J5KFQKB6IZXCKTIO2ZVCFDI"
+                              }
                             }
                           ]
                         },
@@ -297,7 +307,7 @@
             },
             "ext": "v0"
           },
-          15
+          6311999
         ]
       ],
       [
