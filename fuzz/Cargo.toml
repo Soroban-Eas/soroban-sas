@@ -14,6 +14,7 @@ soroban-sas-sdk = { path = "../packages/soroban-sas-sdk" }
 soroban-sdk = { version = "20.0.0", features = ["testutils"] }
 soroban-sas-indexer = { path = "../contracts/indexer", features = ["testutils"] }
 serde_json = "1.0"
+stellar-strkey = "0.0.8"
 
 [[bin]]
 name = "schema_fuzz"
@@ -42,5 +43,11 @@ doc = false
 [[bin]]
 name = "indexer_chunking_fuzz"
 path = "fuzz_targets/indexer_chunking_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "indexer_idempotency_fuzz"
+path = "fuzz_targets/indexer_idempotency_fuzz.rs"
 test = false
 doc = false

@@ -30,6 +30,8 @@ Operators reconcile a fail-open deployment by:
    `IndexerUnavailable`, so callers know to retry later. A successful replay
    emits `Reindexed(uid)` (topic `REINDEX`).
 
+For step-by-step instructions, RPC event filtering shell patterns, CLI/SDK examples, and retry policies, see the [Indexer Reconciliation Runbook](reconciliation.md).
+
 ### Opt-in: fail-closed
 
 Admins that require the mirror to stay in lockstep with issuance call

@@ -2103,10 +2103,16 @@ fn test_delegation_nonce_strictly_increasing_and_out_of_order() {
         s.env
             .storage()
             .instance()
-            .get(&(crate::DELEGATION_NONCE, s.attestation.attester.clone()))
+            .get(&soroban_sas_common::DelegationNonceKey {
+                attester: s.attestation.attester.clone(),
+            })
             .unwrap()
     });
     assert_eq!(last, 13);
+    assert_eq!(
+        s.sas_client.get_delegation_nonce(&s.attestation.attester),
+        Some(13)
+    );
 }
 
 #[test]
