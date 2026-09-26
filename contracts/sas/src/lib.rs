@@ -669,7 +669,7 @@ impl SAS {
         if uids.len() > 100 {
             panic_with_error!(&env, SASError::BatchTooLarge);
         }
-        
+
         let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) else {
             panic_with_error!(&env, SASError::NotInitialized);
         };
@@ -685,7 +685,8 @@ impl SAS {
                 if outcome.is_err() {
                     failed.push_back(uid);
                 } else {
-                    env.events().publish((soroban_sas_common::events::REINDEXED, uid), ());
+                    env.events()
+                        .publish((soroban_sas_common::events::REINDEXED, uid), ());
                 }
             } else {
                 failed.push_back(uid);
@@ -894,7 +895,7 @@ impl SAS {
         if old.revocation_time != 0 {
             panic_with_error!(&env, SASError::AlreadyRevoked);
         }
-        if let Err(_) = validate_expiration(&env, old.expiration_time) {
+        if validate_expiration(&env, old.expiration_time).is_err() {
             panic_with_error!(&env, SASError::InvalidTTL);
         }
         if new_data.attester != old.attester || new_data.recipient != old.recipient {

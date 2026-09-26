@@ -9505,6 +9505,22 @@
                       },
                       {
                         "key": {
+                          "symbol": "QCOUNT"
+                        },
+                        "val": {
+                          "u32": 4
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "QCSEQ"
+                        },
+                        "val": {
+                          "u32": 0
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "SAS"
                         },
                         "val": {

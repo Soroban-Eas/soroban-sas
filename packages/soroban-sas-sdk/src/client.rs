@@ -2587,6 +2587,7 @@ mod tests {
             schema: SorobanString::from_str(&env, "score U32"),
             resolver: resolver.clone(),
             revocable: true,
+            deprecated: false,
         };
 
         // Existing schema returns Some(SchemaRecord)

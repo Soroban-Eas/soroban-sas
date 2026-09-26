@@ -1353,6 +1353,12 @@ fn test_transfer_schema_ownership_deprecated_schema_rejected() {
 mod snapshot_tests {
     use super::*;
 
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SchemaRegistry);
+        (env, contract_id)
+    }
+
     /// Snapshot test infrastructure for XDR event payloads (#256).
     ///
     /// Captures exact XDR encodings of schema registry events and storage
@@ -1384,7 +1390,7 @@ mod snapshot_tests {
         let (env, registry) = setup();
         let admin = Address::generate(&env);
         let owner = Address::generate(&env);
-        let schema_str = String::from_str(&env, "{ type: 'jwt', fields: 3 }");
+        let schema_str = String::from_str(&env, "string jwt_type, uint32 field_count");
         let resolver = Address::generate(&env);
 
         env.mock_all_auths();
@@ -1420,7 +1426,7 @@ mod snapshot_tests {
         let (env, registry) = setup();
         let admin = Address::generate(&env);
         let owner = Address::generate(&env);
-        let schema_str = String::from_str(&env, "deprecated_schema");
+        let schema_str = String::from_str(&env, "bool is_deprecated");
         let resolver = Address::generate(&env);
 
         env.mock_all_auths();
@@ -1440,7 +1446,7 @@ mod snapshot_tests {
         let admin = Address::generate(&env);
         let owner = Address::generate(&env);
         let delegate = Address::generate(&env);
-        let schema_str = String::from_str(&env, "test_schema");
+        let schema_str = String::from_str(&env, "address delegate_test");
         let resolver = Address::generate(&env);
 
         env.mock_all_auths();

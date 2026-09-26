@@ -98,10 +98,17 @@ fn extend_instance_ttl(env: &Env) {
 /// limit has been reached in the current block/sequence.
 fn check_query_limit(env: &Env) -> Result<(), SASError> {
     let current_seq = env.ledger().sequence();
-    let stored_seq: u32 = env.storage().instance().get(&QUERY_COUNTER_SEQ).unwrap_or(0);
+    let stored_seq: u32 = env
+        .storage()
+        .instance()
+        .get(&QUERY_COUNTER_SEQ)
+        .unwrap_or(0);
 
     let count = if current_seq == stored_seq {
-        env.storage().instance().get(&QUERY_COUNTER_COUNT).unwrap_or(0u32)
+        env.storage()
+            .instance()
+            .get(&QUERY_COUNTER_COUNT)
+            .unwrap_or(0u32)
     } else {
         0u32
     };
@@ -111,8 +118,12 @@ fn check_query_limit(env: &Env) -> Result<(), SASError> {
     }
 
     let new_count = count.saturating_add(1);
-    env.storage().instance().set(&QUERY_COUNTER_SEQ, &current_seq);
-    env.storage().instance().set(&QUERY_COUNTER_COUNT, &new_count);
+    env.storage()
+        .instance()
+        .set(&QUERY_COUNTER_SEQ, &current_seq);
+    env.storage()
+        .instance()
+        .set(&QUERY_COUNTER_COUNT, &new_count);
 
     Ok(())
 }

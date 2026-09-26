@@ -30,6 +30,3 @@ pub const UPGRADE_EVENT: Symbol = symbol_short!("UPGRADE");
 /// Storage key for schema delegate allow-lists.
 /// Stored under `(AUTHORIZED_DELEGATES, schema_uid, delegate_address) -> bool`.
 pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");
-/// Storage key for schema text strings, stored separately to optimize
-/// on-chain footprint (#284). Schemas are keyed by UID.
-pub const SCHEMA_TEXT: Symbol = symbol_short!("SCHTEXT");

@@ -214,6 +214,6 @@ fn verify_attestations_for_schema(
 
 ## References
 
-- [SAS Contract Documentation](./README.md)
+- [SAS Contract Documentation](../README.md)
 - [Indexer Availability and Fees](./indexer-availability-and-fees.md)
 - [Schema Registry Integration](./schemas.md)

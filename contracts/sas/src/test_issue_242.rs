@@ -25,6 +25,7 @@ impl MockRegistry {
             resolver: env.current_contract_address(),
             revocable: true,
             schema: soroban_sdk::String::from_str(&env, "bool valid"),
+            deprecated: false,
         })
     }
 }

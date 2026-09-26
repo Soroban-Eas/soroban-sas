@@ -70,6 +70,8 @@ pub enum SASError {
     /// An attestation's `uid` does not match the content-addressed hash of
     /// its `schema_uid`, `recipient`, `attester`, and `data` fields (#215).
     InvalidUID = 416,
+    /// Maximum queries per block limit exceeded.
+    LimitExceeded = 417,
 
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).

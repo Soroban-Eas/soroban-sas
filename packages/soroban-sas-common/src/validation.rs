@@ -1,5 +1,5 @@
 use crate::errors::SASError;
-use soroban_sdk::{Address, Bytes, Env, String};
+use soroban_sdk::{Address, Env, String};
 
 const MAX_SCHEMA_LENGTH: u32 = 1024;
 /// Maximum number of comma-separated fields a schema string may declare.
@@ -92,7 +92,7 @@ fn is_valid_type(bytes: &[u8], start: u32, end: u32) -> bool {
     has_alpha
 }
 
-pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError> {
+pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASError> {
     let schema_len = schema.len() as usize;
     if schema_len == 0 {
         return Err(SASError::EmptySchema);
@@ -108,13 +108,6 @@ pub fn validate_schema_syntax(env: &Env, schema: &String) -> Result<(), SASError
         return Err(SASError::InvalidSchema);
     };
 
-    for i in 0..schema_len {
-        let byte = buf[i];
-        if byte >= b'A' && byte <= b'Z' {
-            return Err(SASError::InvalidSchemaFormat);
-        }
-    }
-    
     let mut field_count = 0u32;
     while start < end {
         let mut field_end = start;
