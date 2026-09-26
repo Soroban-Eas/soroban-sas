@@ -9,3 +9,6 @@ cargo_err.log
 
 .env
 *.env.bak
+
+/fuzz/target/
+/fuzz/artifacts/

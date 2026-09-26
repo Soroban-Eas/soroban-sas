@@ -260,3 +260,20 @@ pub struct BatchRevokedEvent {
     pub count: u32,
     pub attester_count: u32,
 }
+
+/// First topic of a SAS `FeeConfigUpdated` event.
+pub const FEECFG_UPDATED: Symbol = symbol_short!("FEECFGUPD");
+
+/// Fee policy after an authorized `set_fee` or `clear_fee` storage write.
+/// Published with topics `(FEECFG_UPDATED, authorizer)`.
+/// Optional addresses use the SDK 20-compatible encoding described by
+/// [`PreviousAddress`]; amounts use native `Option<i128>`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfigUpdatedEvent {
+    pub old_token: PreviousAddress,
+    pub old_amount: Option<i128>,
+    pub new_token: PreviousAddress,
+    pub new_amount: Option<i128>,
+    pub authorizer: Address,
+}

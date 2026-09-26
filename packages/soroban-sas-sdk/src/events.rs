@@ -61,6 +61,19 @@ pub struct BatchRevoked {
     pub attester_count: u32,
 }
 
+/// First topic of a SAS fee configuration change.
+pub const TOPIC_FEE_CONFIG_UPDATED: &[u8] = b"FEECFGUPD";
+
+/// Decoded SAS fee policy change. `None` denotes no configured fee.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfigUpdated {
+    pub old_token: Option<ScAddress>,
+    pub old_amount: Option<i128>,
+    pub new_token: Option<ScAddress>,
+    pub new_amount: Option<i128>,
+    pub authorizer: ScAddress,
+}
+
 /// Any standardized event emitted by the SAS contracts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SasEvent {
@@ -69,6 +82,7 @@ pub enum SasEvent {
     AttestationRevoked(AttestationRevoked),
     BatchAttested(BatchAttested),
     BatchRevoked(BatchRevoked),
+    FeeConfigUpdated(FeeConfigUpdated),
 }
 
 /// Why an event could not be decoded as a SAS event.
@@ -97,6 +111,22 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
         _ => return Err(EventParseError::NotSasEvent),
     };
     match name {
+        n if n == TOPIC_FEE_CONFIG_UPDATED => {
+            let map = expect_map(data)?;
+            let authorizer = decode_address(map_get(map, b"authorizer")?)?;
+            if topics.len() != 2 || decode_address(&topics[1]) != Ok(authorizer.clone()) {
+                return Err(EventParseError::MalformedPayload(
+                    "authorizer topic does not match payload",
+                ));
+            }
+            Ok(SasEvent::FeeConfigUpdated(FeeConfigUpdated {
+                old_token: decode_optional_address(map_get(map, b"old_token")?)?,
+                old_amount: decode_optional_amount(map_get(map, b"old_amount")?)?,
+                new_token: decode_optional_address(map_get(map, b"new_token")?)?,
+                new_amount: decode_optional_amount(map_get(map, b"new_amount")?)?,
+                authorizer,
+            }))
+        }
         n if n == TOPIC_SCHEMA_REGISTERED => {
             // Topics: `(REGISTERED, schema_uid)`. `schema_uid` topics/payload
             // fields use the same encoding as any other `UID` value, so reuse
@@ -252,6 +282,7 @@ impl TrustedContracts {
             SasEvent::AttestationIssued(_)
             | SasEvent::AttestationRevoked(_)
             | SasEvent::BatchAttested(_)
+            | SasEvent::FeeConfigUpdated(_)
             | SasEvent::BatchRevoked(_) => ("sas", self.sas),
         }
     }
@@ -366,6 +397,32 @@ fn decode_address(val: &ScVal) -> Result<ScAddress, EventParseError> {
     match val {
         ScVal::Address(address) => Ok(address.clone()),
         _ => Err(EventParseError::MalformedPayload("field is not an address")),
+    }
+}
+
+// PreviousAddress is a contract enum: ["None"] or ["Some", Address].
+fn decode_optional_address(val: &ScVal) -> Result<Option<ScAddress>, EventParseError> {
+    if let ScVal::Vec(Some(values)) = val {
+        match values.as_slice() {
+            [ScVal::Symbol(tag)] if tag.0.as_slice() == b"None" => return Ok(None),
+            [ScVal::Symbol(tag), address] if tag.0.as_slice() == b"Some" => {
+                return decode_address(address).map(Some);
+            }
+            _ => {}
+        }
+    }
+    Err(EventParseError::MalformedPayload(
+        "field is not an optional address",
+    ))
+}
+
+fn decode_optional_amount(val: &ScVal) -> Result<Option<i128>, EventParseError> {
+    match val {
+        ScVal::Void => Ok(None),
+        ScVal::I128(parts) => Ok(Some(((parts.hi as i128) << 64) | parts.lo as i128)),
+        _ => Err(EventParseError::MalformedPayload(
+            "field is not an optional i128",
+        )),
     }
 }
 
@@ -873,5 +930,102 @@ mod tests {
             parse_event(&topics, &bad_map),
             Err(EventParseError::MalformedPayload("timestamp is not a u64"))
         );
+    }
+}
+
+#[cfg(test)]
+mod fee_config_tests {
+    use super::*;
+    use soroban_sas_common::{FeeConfigUpdatedEvent, PreviousAddress, FEECFG_UPDATED};
+    use soroban_sdk::xdr::{ContractEventType, ContractEventV0, ExtensionPoint, Hash};
+    use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, TryFromVal, Val};
+
+    fn scval(env: &Env, value: Val) -> ScVal {
+        ScVal::try_from_val(env, &value).unwrap()
+    }
+
+    #[test]
+    fn parses_fee_lifecycle_and_checks_emitting_contract() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+        let other = Address::generate(&env);
+        for (old, new) in [
+            (None, Some((token.clone(), 25))),
+            (Some((token.clone(), 25)), Some((other.clone(), i128::MAX))),
+            (Some((other.clone(), i128::MAX)), None),
+            (None, None),
+        ] {
+            let payload = FeeConfigUpdatedEvent {
+                old_token: old.as_ref().map(|(a, _)| a.clone()).into(),
+                old_amount: old.as_ref().map(|(_, n)| *n),
+                new_token: new.as_ref().map(|(a, _)| a.clone()).into(),
+                new_amount: new.as_ref().map(|(_, n)| *n),
+                authorizer: admin.clone(),
+            };
+            let mut event = ContractEvent {
+                ext: ExtensionPoint::V0,
+                contract_id: Some(Hash([9; 32])),
+                type_: ContractEventType::Contract,
+                body: ContractEventBody::V0(ContractEventV0 {
+                    topics: vec![
+                        scval(&env, FEECFG_UPDATED.into_val(&env)),
+                        scval(&env, admin.into_val(&env)),
+                    ]
+                    .try_into()
+                    .unwrap(),
+                    data: scval(&env, payload.into_val(&env)),
+                }),
+            };
+            let address = |a: &Address| decode_address(&scval(&env, a.into_val(&env))).unwrap();
+            assert_eq!(
+                parse_contract_event(&event).unwrap(),
+                SasEvent::FeeConfigUpdated(FeeConfigUpdated {
+                    old_token: old.as_ref().map(|(a, _)| address(a)),
+                    old_amount: old.map(|(_, n)| n),
+                    new_token: new.as_ref().map(|(a, _)| address(a)),
+                    new_amount: new.map(|(_, n)| n),
+                    authorizer: address(&admin),
+                })
+            );
+            let trusted = TrustedContracts::new().with_sas([9; 32]);
+            assert_eq!(
+                parse_contract_event_verified(&event, &trusted)
+                    .unwrap()
+                    .trust,
+                EventTrust::Trusted
+            );
+            event.contract_id = Some(Hash([8; 32]));
+            assert!(matches!(
+                parse_contract_event_verified(&event, &trusted)
+                    .unwrap()
+                    .trust,
+                EventTrust::Untrusted {
+                    expected_role: "sas",
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_optional_fields_and_authorizer_topic() {
+        let env = Env::default();
+        assert!(decode_optional_address(&ScVal::Void).is_err());
+        assert!(decode_optional_address(&ScVal::Vec(Some(vec![].try_into().unwrap()))).is_err());
+        assert!(decode_optional_amount(&ScVal::U64(1)).is_err());
+        let admin = Address::generate(&env);
+        let other = Address::generate(&env);
+        let payload = FeeConfigUpdatedEvent {
+            old_token: PreviousAddress::None,
+            old_amount: None,
+            new_token: PreviousAddress::None,
+            new_amount: None,
+            authorizer: admin,
+        };
+        let data = scval(&env, payload.into_val(&env));
+        let topic = scval(&env, FEECFG_UPDATED.into_val(&env));
+        assert!(parse_event(&[topic.clone()], &data).is_err());
+        assert!(parse_event(&[topic, scval(&env, other.into_val(&env))], &data).is_err());
     }
 }

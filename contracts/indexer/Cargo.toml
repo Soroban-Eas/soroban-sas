@@ -8,7 +8,10 @@ soroban-sdk = { workspace = true }
 soroban-sas-common = { path = "../../packages/soroban-sas-common" }
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[features]
+testutils = ["soroban-sdk/testutils"]

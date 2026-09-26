@@ -98,12 +98,14 @@ pub fn generate_uid(
     let schema_uid = UID(BytesN::from_array(env, schema_uid));
     let recipient = parse_address(env, recipient, AddressKind::Either, "recipient")
         .map_err(|e| e.to_string())?;
-    let attester = parse_address(env, attester, AddressKind::Either, "attester")
-        .map_err(|e| e.to_string())?;
+    let attester =
+        parse_address(env, attester, AddressKind::Either, "attester").map_err(|e| e.to_string())?;
     let data = Bytes::from_slice(env, data);
-    Ok(soroban_sas_common::attestation_uid(env, &schema_uid, &recipient, &attester, &data)
-        .0
-        .to_array())
+    Ok(
+        soroban_sas_common::attestation_uid(env, &schema_uid, &recipient, &attester, &data)
+            .0
+            .to_array(),
+    )
 }
 
 /// Computes the payload digest for `input` bound to the given network

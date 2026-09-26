@@ -169,7 +169,11 @@ impl SAS {
         if amount <= 0 {
             panic_with_error!(&env, SASError::InvalidValue);
         }
-        env.storage().instance().set(&FEE_CONFIG, &(token, amount));
+        let old = env.storage().instance().get(&FEE_CONFIG);
+        env.storage()
+            .instance()
+            .set(&FEE_CONFIG, &(token.clone(), amount));
+        events::publish_fee_config_updated(&env, old, Some((token, amount)), admin);
         extend_instance_ttl(&env);
     }
 
@@ -179,7 +183,9 @@ impl SAS {
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
+        let old = env.storage().instance().get(&FEE_CONFIG);
         env.storage().instance().remove(&FEE_CONFIG);
+        events::publish_fee_config_updated(&env, old, None, admin);
         extend_instance_ttl(&env);
     }
 

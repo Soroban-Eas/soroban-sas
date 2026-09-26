@@ -116,7 +116,8 @@ impl AttestationRequestBuilder {
         let attester = Address::from_string(&SorobanString::from_str(env, &attester));
         let schema_uid = UID(BytesN::from_array(env, &schema_uid));
 
-        let uid = soroban_sas_common::attestation_uid(env, &schema_uid, &recipient, &attester, &data);
+        let uid =
+            soroban_sas_common::attestation_uid(env, &schema_uid, &recipient, &attester, &data);
 
         Ok(Attestation {
             uid,

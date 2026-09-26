@@ -238,3 +238,27 @@ match parse_contract_event(&event) {
 
 `parse_events` filters a whole batch, and `parse_event` accepts raw
 `ScVal` topics and data for consumers that decode XDR themselves.
+
+## FeeConfigUpdated
+
+Emitted by SAS immediately after every successful `set_fee` or `clear_fee` storage write.
+
+- Topic constant: `soroban_sas_common::events::FEECFG_UPDATED`.
+- Topics: `("FEECFGUPD", authorizer: Address)`.
+- Data: `FeeConfigUpdatedEvent { old_token: PreviousAddress, old_amount: Option<i128>, new_token: PreviousAddress, new_amount: Option<i128>, authorizer: Address }`.
+
+`PreviousAddress` is this repository's SDK 20-compatible optional address type:
+`None` encodes as `["None"]`, and `Some(address)` as `["Some", address]`.
+Native optional amounts encode as XDR `Void` or `I128`. The SDK parser exposes
+both tokens as `Option<ScAddress>` in `SasEvent::FeeConfigUpdated`.
+
+The first fee configuration has absent old values; subsequent changes include
+the previous token and amount. Clearing includes the previous values and absent
+new values. Clearing an already absent fee emits all four values as absent.
+Configured amounts are positive; absence is distinct from zero.
+
+Both entrypoints require admin authorization. Unauthorized calls and nonpositive
+`set_fee` amounts emit no committed event and leave the fee unchanged. For events
+from the trusted SAS contract, the presence of this event is proof the change
+was authorized and durably applied. Use `parse_contract_event_verified` with the
+SAS contract allowlist to reject events spoofed by another contract.

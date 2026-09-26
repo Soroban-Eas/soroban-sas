@@ -183,8 +183,7 @@ fn test_happy_path_attestation() {
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let ref_uid = UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -298,8 +297,7 @@ fn test_revocation_success() {
 
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
     let attestation = Attestation {
         uid: uid.clone(),
         schema_uid,
@@ -692,8 +690,7 @@ fn test_resolver_callback() {
 
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1509,7 +1506,10 @@ fn test_get_attester_key_renews_persistent_ttl_on_read() {
     s.env.ledger().with_mut(|li| {
         li.sequence_number += soroban_sas_common::LEDGERS_IN_ONE_YEAR / 2;
     });
-    assert_eq!(persistent_live_until(&s.env, &key), Some(live_until_at_write));
+    assert_eq!(
+        persistent_live_until(&s.env, &key),
+        Some(live_until_at_write)
+    );
 
     let expected = s.env.ledger().sequence() + soroban_sas_common::LEDGERS_IN_ONE_YEAR;
     let record = s
@@ -1766,8 +1766,7 @@ fn test_comprehensive_lifecycle() {
     let recipient = Address::generate(&env);
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1813,9 +1812,7 @@ fn test_attest_emits_attestation_issued_event() {
     let recipient = Address::generate(&env);
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid = soroban_sas_common::attestation_uid(
-        &env, &schema_uid, &recipient, &attester, &data,
-    );
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -1867,8 +1864,7 @@ fn test_revoke_emits_attestation_revoked_event() {
     let recipient = Address::generate(&env);
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
 
     let attestation = Attestation {
         uid: uid.clone(),
@@ -2418,8 +2414,7 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
 
     let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[2u8; 32]));
     let data = Bytes::new(&env);
-    let uid =
-        soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
     let attestation = Attestation {
         uid,
         schema_uid,
@@ -2641,9 +2636,9 @@ fn test_attest_by_delegation_rejects_a_uid_that_does_not_match_its_content() {
     let signature = offchain::sign(&s, &tampered, nonce);
     let public_key = offchain::public_key(&s);
 
-    let res =
-        s.sas_client
-            .try_attest_by_delegation(&tampered, &nonce, &signature, &public_key);
+    let res = s
+        .sas_client
+        .try_attest_by_delegation(&tampered, &nonce, &signature, &public_key);
     assert_eq!(res, Err(Ok(SASError::InvalidUID.into())));
 }
 
@@ -2716,7 +2711,12 @@ fn test_multi_attest_emits_batch_attested_summary_as_last_event() {
     let issued = |uid: UID, attester: Address| {
         (
             sas_id.clone(),
-            (symbol_short!("ATTESTED"), schema_uid.clone(), attester.clone()).into_val(&env),
+            (
+                symbol_short!("ATTESTED"),
+                schema_uid.clone(),
+                attester.clone(),
+            )
+                .into_val(&env),
             AttestationIssuedEvent {
                 uid,
                 schema_uid: schema_uid.clone(),
@@ -2754,12 +2754,7 @@ fn test_multi_attest_does_not_emit_batch_attested_on_a_reverted_call() {
     let mut batch = soroban_sdk::vec![&env];
     for i in 0..(crate::MAX_MULTI_ATTEST + 1) {
         let seed = (i % 256) as u8;
-        batch.push_back(attestation_fixture(
-            &env,
-            &attester,
-            &recipient,
-            [seed; 32],
-        ));
+        batch.push_back(attestation_fixture(&env, &attester, &recipient, [seed; 32]));
     }
 
     env.mock_all_auths();
@@ -2843,4 +2838,145 @@ fn test_multi_revoke_does_not_emit_batch_revoked_on_a_reverted_call() {
     // Only the earlier successful `attest` call's event remains; nothing
     // from the reverted `multi_revoke`.
     assert_eq!(all_events.len(), 1);
+}
+
+mod fee_config_events {
+    use super::*;
+    use soroban_sas_common::{FeeConfigUpdatedEvent, FEECFG_UPDATED};
+    use soroban_sdk::TryFromVal;
+
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        let registry = env.register_contract(None, mock1::MockRegistry);
+        let sas = env.register_contract(None, SAS);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        SASClient::new(&env, &sas).init(&admin, &registry);
+        (env, sas, admin)
+    }
+
+    fn assert_event(env: &Env, sas: &Address, expected: FeeConfigUpdatedEvent) {
+        let (contract, topics, data) = env.events().all().last().unwrap();
+        assert_eq!(contract, *sas);
+        assert_eq!(
+            topics,
+            (FEECFG_UPDATED, expected.authorizer.clone()).into_val(env)
+        );
+        assert_eq!(
+            FeeConfigUpdatedEvent::try_from_val(env, &data).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn first_set_fee_emits_absent_old_value() {
+        let (env, sas, admin) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::None,
+                old_amount: None,
+                new_token: PreviousAddress::Some(token.clone()),
+                new_amount: Some(25),
+                authorizer: admin,
+            },
+        );
+        assert_eq!(client.get_fee(), Some((token, 25)));
+    }
+
+    #[test]
+    fn subsequent_set_fee_emits_previous_token_and_amount() {
+        let (env, sas, admin) = setup();
+        let old_token = Address::generate(&env);
+        let new_token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&old_token, &25);
+        client.set_fee(&new_token, &i128::MAX);
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::Some(old_token),
+                old_amount: Some(25),
+                new_token: PreviousAddress::Some(new_token.clone()),
+                new_amount: Some(i128::MAX),
+                authorizer: admin,
+            },
+        );
+        assert_eq!(client.get_fee(), Some((new_token, i128::MAX)));
+    }
+
+    #[test]
+    fn clear_fee_emits_previous_value_and_absent_new_value() {
+        let (env, sas, admin) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        client.clear_fee();
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::Some(token),
+                old_amount: Some(25),
+                new_token: PreviousAddress::None,
+                new_amount: None,
+                authorizer: admin,
+            },
+        );
+        assert_eq!(client.get_fee(), None);
+    }
+
+    #[test]
+    fn clear_unconfigured_fee_emits_absent_values() {
+        let (env, sas, admin) = setup();
+        SASClient::new(&env, &sas).clear_fee();
+        assert_event(
+            &env,
+            &sas,
+            FeeConfigUpdatedEvent {
+                old_token: PreviousAddress::None,
+                old_amount: None,
+                new_token: PreviousAddress::None,
+                new_amount: None,
+                authorizer: admin,
+            },
+        );
+    }
+
+    #[test]
+    fn invalid_amount_emits_no_event_and_preserves_fee() {
+        let (env, sas, _) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        let before = env.events().all();
+        for amount in [0, -1, i128::MIN] {
+            assert_eq!(
+                client.try_set_fee(&token, &amount),
+                Err(Ok(SASError::InvalidValue.into()))
+            );
+            assert_eq!(env.events().all(), before);
+            assert_eq!(client.get_fee(), Some((token.clone(), 25)));
+        }
+    }
+
+    #[test]
+    fn unauthorized_fee_changes_emit_no_event_and_preserve_fee() {
+        let (env, sas, _) = setup();
+        let token = Address::generate(&env);
+        let client = SASClient::new(&env, &sas);
+        client.set_fee(&token, &25);
+        let before = env.events().all();
+        env.set_auths(&[]);
+        assert!(client.try_set_fee(&token, &50).is_err());
+        assert_eq!(env.events().all(), before);
+        assert!(client.try_clear_fee().is_err());
+        assert_eq!(env.events().all(), before);
+        assert_eq!(client.get_fee(), Some((token, 25)));
+    }
 }

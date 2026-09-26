@@ -128,3 +128,23 @@ pub fn publish_withdrawal(
         ),
     );
 }
+
+/// Publishes the fee change immediately after its storage mutation.
+pub fn publish_fee_config_updated(
+    env: &Env,
+    old: Option<(Address, i128)>,
+    new: Option<(Address, i128)>,
+    authorizer: Address,
+) {
+    use soroban_sas_common::{FeeConfigUpdatedEvent, FEECFG_UPDATED};
+    env.events().publish(
+        (FEECFG_UPDATED, authorizer.clone()),
+        FeeConfigUpdatedEvent {
+            old_token: old.as_ref().map(|(token, _)| token.clone()).into(),
+            old_amount: old.map(|(_, amount)| amount),
+            new_token: new.as_ref().map(|(token, _)| token.clone()).into(),
+            new_amount: new.map(|(_, amount)| amount),
+            authorizer,
+        },
+    );
+}
