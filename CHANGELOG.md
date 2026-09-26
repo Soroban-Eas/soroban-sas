@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Fuzz target `indexer_idempotency_fuzz` and seed corpus verifying `Indexer::index_attestation` idempotency invariants across first calls, retries, and mutated triples (#235).
+- Fee payment lifecycle coverage in `scripts/smoke_test.sh` covering token deployment, `set_treasury`, `set_fee`, `attest_with_value`, balance assertions, `withdraw_tokens`, and zero-fee paths (#239).
+- Operational runbook `docs/reconciliation.md` documenting detection, enumeration, CLI/SDK invocation, and health checks for `reindex_attestation` fail-open recovery (#238).
+- Typed `DelegationNonceKey` storage key wrapper in `soroban-sas-common` and `contracts/sas` reducing instance storage XDR serialization overhead (#237).
 - Delegated issuance and dynamic schema allow-lists: schema owners can authorize
   and revoke delegates via `add_delegate` and `remove_delegate` on `SchemaRegistry`.
   Authorized delegates can issue and revoke attestations against the schema with

@@ -125,5 +125,22 @@ pub struct Attestation {
     pub data: Bytes,
 }
 
+/// Typed storage key for tracking per-attester delegation nonces (#237).
+///
+/// Serializes as ScVec rather than ScMap (which a raw `(DELEGATION_NONCE, attester)`
+/// tuple serializes to), reducing instance storage overhead and read costs.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegationNonceKey {
+    pub attester: Address,
+}
+
+/// Typed storage key wrapper for attester key records (#237).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttesterKeyStorageKey {
+    pub attester: Address,
+}
+
 #[cfg(test)]
 mod test;

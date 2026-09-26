@@ -64,3 +64,10 @@ This mirrors how `SAS::init` and `Indexer::init` already gate on a
 compatibility probe (`sasreg`/`sasv1`) before trusting a configured
 dependency address — the indexer's SAS binding is a similar one-way trust
 relationship, just enforced per-call instead of once at initialization.
+
+### Indexer Reconciliation
+
+When running under default fail-open mode, any downstream indexing failures emit `IndexFailed(uid)` (`IDXFAIL`) events rather than rolling back core attestation writes. Operators recover missed entries using `SAS::reindex_attestation(uid)`.
+
+For operational instructions covering event detection, unreconciled UID enumeration, CLI/SDK invocation, health checks, and retry strategies, see the [Indexer Reconciliation Runbook](reconciliation.md) and [Indexer Availability Policy](indexer-availability-and-fees.md).
+

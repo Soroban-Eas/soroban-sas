@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use soroban_sas_common::{
-    Attestation, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID,
+    Attestation, DelegationNonceKey, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
@@ -933,7 +933,9 @@ impl SAS {
 
     fn consume_delegation_nonce(env: &Env, attester: &Address, nonce: u64) {
         extend_instance_ttl(env);
-        let key = (DELEGATION_NONCE, attester.clone());
+        let key = DelegationNonceKey {
+            attester: attester.clone(),
+        };
         if let Some(last) = env.storage().instance().get::<_, u64>(&key) {
             if nonce <= last {
                 panic_with_error!(env, SASError::DelegationReplay);
@@ -941,6 +943,13 @@ impl SAS {
         }
         env.storage().instance().set(&key, &nonce);
         extend_instance_ttl(env);
+    }
+
+    /// Returns the highest consumed delegation nonce for `attester`, or 0 if none has been consumed (#237).
+    pub fn get_delegation_nonce(env: Env, attester: Address) -> u64 {
+        extend_instance_ttl(&env);
+        let key = DelegationNonceKey { attester };
+        env.storage().instance().get::<_, u64>(&key).unwrap_or(0)
     }
 
     /// Verifies off-chain attestation signed by attester's ed25519 key.

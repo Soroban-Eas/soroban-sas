@@ -266,3 +266,25 @@ fn test_merkle_root_generation() {
 
     assert_eq!(merkle_root.0, root_bytes);
 }
+
+#[test]
+fn test_delegation_nonce_key_xdr_smaller_than_tuple() {
+    use soroban_sdk::xdr::ToXdr;
+    let env = Env::default();
+    let attester = Address::generate(&env);
+
+    let typed_key = crate::DelegationNonceKey {
+        attester: attester.clone(),
+    };
+    let tuple_key = (soroban_sdk::symbol_short!("DELNONCE"), attester);
+
+    let typed_xdr = typed_key.to_xdr(&env);
+    let tuple_xdr = tuple_key.to_xdr(&env);
+
+    assert!(
+        typed_xdr.len() < tuple_xdr.len(),
+        "Typed DelegationNonceKey XDR ({} bytes) must be smaller than raw tuple XDR ({} bytes)",
+        typed_xdr.len(),
+        tuple_xdr.len()
+    );
+}

@@ -141,3 +141,26 @@ cargo test -p schema-registry -- test_upgrade_rejects_zero_hash
 ```
 
 Keep these green before every Mainnet upgrade.
+
+## 6. State-Breaking Changes & Storage Migrations
+
+### Delegation Nonce Storage Key Migration (#237)
+
+The per-attester delegation nonce watermark storage key was migrated from a raw tuple:
+
+```rust
+(DELEGATION_NONCE, attester) // Serialized as XDR ScMap
+```
+
+to a typed `#[contracttype]` struct:
+
+```rust
+DelegationNonceKey { attester: Address } // Serialized as XDR ScVec
+```
+
+**Impact & Migration Requirement:**
+- **State-breaking change:** Existing entries stored under the raw tuple key will not be found under the new typed key.
+- **New deployments (Testnet / Local):** Safe immediately without migration.
+- **Existing deployments (Mainnet):** Before deploying this change or updating contracts with historical delegation nonces, a migration step must be coordinated. The migration can be staged via a one-time migration function or script that reads each registered attester's nonce from `(DELEGATION_NONCE, attester)` and writes it under `DelegationNonceKey { attester }`.
+- **Efficiency gain:** Serializing as `ScVec` with a type tag significantly reduces the XDR footprint and instance storage read costs compared to `ScMap`.
+
