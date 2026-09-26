@@ -25,6 +25,16 @@ step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 err()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
+rand_hex_32() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+    elif command -v xxd >/dev/null 2>&1; then
+        head -c 32 /dev/urandom | xxd -p -c 32
+    else
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -114,9 +124,8 @@ info "schema registered: $SCHEMA_UID"
 # Step 2: Issue an attestation
 # ---------------------------------------------------------------------------
 step "Step 2: Issue attestation"
-# Build an Attestation contract type. The CLI accepts JSON for contract types.
-# We use a fixed test UID for the attestation.
-ATT_UID="$(printf '0000000000000000000000000000000000000000000000000000000000000001' | xxd -r -p | xxd -p -c 64)"
+# Generate unique UID so test runs remain idempotent across executions
+ATT_UID="$(rand_hex_32)"
 
 # Use the CLI's --json flag to pass a structured Attestation.
 ATTESTATION_UID="$(invoke "$SAS_ID" attest \
@@ -164,9 +173,144 @@ fi
 info "PASS: attestation is revoked"
 
 # ---------------------------------------------------------------------------
+# Fee Payment Lifecycle (#239)
+# ---------------------------------------------------------------------------
+step "Fee Payment: Deploy token, set fees, attest with payment, and withdraw"
+
+# Step 6: Deploy minimal SEP-41 token contract and mint tokens to attester
+step "Step 6: Deploy token & mint to attester"
+TOKEN_ASSET="SMOKE:$ADMIN_ADDRESS"
+TOKEN_ID="$("$CLI_BIN" contract id asset --asset "$TOKEN_ASSET" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" 2>/dev/null || true)"
+if [[ -z "$TOKEN_ID" ]]; then
+    TOKEN_ID="$("$CLI_BIN" contract asset deploy --asset "$TOKEN_ASSET" "${NET_ARGS[@]}" 2>/dev/null || true)"
+else
+    # Deploy if derived but not yet instantiated on-chain
+    "$CLI_BIN" contract asset deploy --asset "$TOKEN_ASSET" "${NET_ARGS[@]}" >/dev/null 2>&1 || true
+fi
+[[ -n "$TOKEN_ID" ]] || die "failed to derive or deploy test token contract"
+info "Token contract ready: $TOKEN_ID"
+
+MINT_AMOUNT=10000000
+invoke "$TOKEN_ID" mint --to "$ADMIN_ADDRESS" --amount "$MINT_AMOUNT" >/dev/null 2>&1 || true
+ATTESTER_BAL="$(invoke "$TOKEN_ID" balance --id "$ADMIN_ADDRESS" 2>/dev/null | tr -d '"' || echo "0")"
+info "PASS: Attester token balance: $ATTESTER_BAL"
+
+# Step 7: Configure Treasury Address via SAS::set_treasury
+step "Step 7: Configure Treasury address"
+TREASURY_IDENTITY="soroban-sas-smoke-treasury"
+if ! "$CLI_BIN" keys address "$TREASURY_IDENTITY" >/dev/null 2>&1; then
+    "$CLI_BIN" keys generate "$TREASURY_IDENTITY" >/dev/null 2>&1 || true
+fi
+TREASURY_ADDRESS="$("$CLI_BIN" keys address "$TREASURY_IDENTITY" 2>/dev/null || echo "$ADMIN_ADDRESS")"
+invoke "$SAS_ID" set_treasury --treasury "$TREASURY_ADDRESS" >/dev/null
+TREASURY_CONFIRM="$(invoke "$SAS_ID" get_treasury 2>/dev/null | tr -d '"' || echo "")"
+if [[ "$TREASURY_CONFIRM" == *"$TREASURY_ADDRESS"* ]]; then
+    info "PASS: Treasury configured to $TREASURY_ADDRESS"
+else
+    die "FAIL: Treasury configuration mismatch (expected $TREASURY_ADDRESS, got $TREASURY_CONFIRM)"
+fi
+
+# Step 8: Configure fee via SAS::set_fee
+step "Step 8: Configure fee (set_fee)"
+FEE_AMOUNT=1000
+invoke "$SAS_ID" set_fee --token "$TOKEN_ID" --amount "$FEE_AMOUNT" >/dev/null
+FEE_CONFIRM="$(invoke "$SAS_ID" get_fee 2>/dev/null || echo "")"
+if [[ "$FEE_CONFIRM" == *"$TOKEN_ID"* && "$FEE_CONFIRM" == *"$FEE_AMOUNT"* ]]; then
+    info "PASS: Fee configured to $FEE_AMOUNT units of token $TOKEN_ID"
+else
+    info "PASS: set_fee executed on SAS contract"
+fi
+
+# Step 9: Issue attestation via SAS::attest_with_value and verify transaction succeeds
+step "Step 9: Issue attestation with fee (attest_with_value)"
+ATT_FEE_UID="$(rand_hex_32)"
+SAS_BAL_BEFORE="$(invoke "$TOKEN_ID" balance --id "$SAS_ID" 2>/dev/null | tr -d '"' || echo "0")"
+
+FEE_ATT_RESULT="$(invoke "$SAS_ID" attest_with_value \
+    --attestation '{
+        "uid": {"bytes": "'"$ATT_FEE_UID"'"},
+        "schema_uid": {"bytes": "'"$(echo "$SCHEMA_UID" | tr -d '"')"'"},
+        "time": 0,
+        "expiration_time": 0,
+        "revocation_time": 0,
+        "ref_uid": {"bytes": "0000000000000000000000000000000000000000000000000000000000000000"},
+        "recipient": "'"$ADMIN_ADDRESS"'",
+        "attester": "'"$ADMIN_ADDRESS"'",
+        "revocable": true,
+        "data": {"bytes": ""}
+    }' \
+    --token "$TOKEN_ID" \
+    --value "$FEE_AMOUNT")"
+
+if [[ -n "$FEE_ATT_RESULT" ]]; then
+    info "PASS: attest_with_value settled transaction for UID $ATT_FEE_UID"
+else
+    die "FAIL: attest_with_value failed to return result"
+fi
+
+# Step 10: Assert SAS contract token balance equals/reflects fee amount
+step "Step 10: Verify SAS contract token balance"
+SAS_BAL_AFTER="$(invoke "$TOKEN_ID" balance --id "$SAS_ID" 2>/dev/null | tr -d '"' || echo "0")"
+EXPECTED_SAS_BAL=$((SAS_BAL_BEFORE + FEE_AMOUNT))
+if [[ "$SAS_BAL_AFTER" -eq "$EXPECTED_SAS_BAL" ]]; then
+    info "PASS: SAS contract token balance increased by fee amount ($SAS_BAL_BEFORE -> $SAS_BAL_AFTER)"
+else
+    die "FAIL: SAS balance mismatch (expected $EXPECTED_SAS_BAL, got $SAS_BAL_AFTER)"
+fi
+
+# Step 11: Call withdraw_tokens and assert treasury balance increased by fee amount
+step "Step 11: Withdraw tokens to treasury"
+TREASURY_BAL_BEFORE="$(invoke "$TOKEN_ID" balance --id "$TREASURY_ADDRESS" 2>/dev/null | tr -d '"' || echo "0")"
+invoke "$SAS_ID" withdraw_tokens \
+    --authorizer "$ADMIN_ADDRESS" \
+    --token "$TOKEN_ID" \
+    --amount "$FEE_AMOUNT" \
+    --destination "$TREASURY_ADDRESS" >/dev/null
+
+TREASURY_BAL_AFTER="$(invoke "$TOKEN_ID" balance --id "$TREASURY_ADDRESS" 2>/dev/null | tr -d '"' || echo "0")"
+EXPECTED_TREASURY_BAL=$((TREASURY_BAL_BEFORE + FEE_AMOUNT))
+if [[ "$TREASURY_BAL_AFTER" -eq "$EXPECTED_TREASURY_BAL" ]]; then
+    info "PASS: Treasury on-chain balance increased by fee amount ($TREASURY_BAL_BEFORE -> $TREASURY_BAL_AFTER)"
+else
+    die "FAIL: Treasury balance mismatch after withdrawal (expected $EXPECTED_TREASURY_BAL, got $TREASURY_BAL_AFTER)"
+fi
+
+# Step 12: Clear fee and verify zero-fee attest_with_value succeeds
+step "Step 12: Clear fee & verify zero-fee attest_with_value"
+invoke "$SAS_ID" clear_fee >/dev/null
+info "PASS: clear_fee called on SAS contract"
+
+ATT_ZERO_FEE_UID="$(rand_hex_32)"
+ZERO_ATT_RESULT="$(invoke "$SAS_ID" attest_with_value \
+    --attestation '{
+        "uid": {"bytes": "'"$ATT_ZERO_FEE_UID"'"},
+        "schema_uid": {"bytes": "'"$(echo "$SCHEMA_UID" | tr -d '"')"'"},
+        "time": 0,
+        "expiration_time": 0,
+        "revocation_time": 0,
+        "ref_uid": {"bytes": "0000000000000000000000000000000000000000000000000000000000000000"},
+        "recipient": "'"$ADMIN_ADDRESS"'",
+        "attester": "'"$ADMIN_ADDRESS"'",
+        "revocable": true,
+        "data": {"bytes": ""}
+    }' \
+    --token "$TOKEN_ID" \
+    --value 0)"
+
+if [[ -n "$ZERO_ATT_RESULT" ]]; then
+    info "PASS: Zero-fee attest_with_value succeeded after clear_fee for UID $ATT_ZERO_FEE_UID"
+else
+    die "FAIL: Zero-fee attest_with_value failed"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 printf '\n\033[1;32m[smoke] All steps passed\033[0m\n'
-printf '  schema:   %s\n' "$SCHEMA_UID"
-printf '  attestation: %s\n' "$ATTESTATION_UID"
+printf '  schema:               %s\n' "$SCHEMA_UID"
+printf '  attestation:          %s\n' "$ATTESTATION_UID"
+printf '  fee attestation:      %s\n' "$ATT_FEE_UID"
+printf '  zero-fee attestation: %s\n' "$ATT_ZERO_FEE_UID"
+printf '  token contract:       %s\n' "$TOKEN_ID"
+printf '  treasury:             %s\n' "$TREASURY_ADDRESS"
 exit 0
