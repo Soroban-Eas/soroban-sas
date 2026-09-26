@@ -332,3 +332,28 @@ pub struct FeeConfigUpdatedEvent {
     pub new_amount: Option<i128>,
     pub authorizer: Address,
 }
+
+/// First topic of every `ContractPaused` event.
+pub const CONTRACT_PAUSED: Symbol = symbol_short!("PAUSED");
+/// First topic of every `ContractUnpaused` event.
+pub const CONTRACT_UNPAUSED: Symbol = symbol_short!("UNPAUSED");
+
+/// Payload of the `ContractPaused` event.
+///
+/// Published with topics `(CONTRACT_PAUSED, authorizer)` when the SAS contract
+/// is paused via `SAS::pause()`. Write operations are blocked when paused.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractPausedEvent {
+    pub authorizer: Address,
+}
+
+/// Payload of the `ContractUnpaused` event.
+///
+/// Published with topics `(CONTRACT_UNPAUSED, authorizer)` when the SAS contract
+/// is unpaused via `SAS::unpause()`. Write operations resume normally.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractUnpausedEvent {
+    pub authorizer: Address,
+}
