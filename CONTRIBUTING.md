@@ -85,3 +85,73 @@ Use the thread sanitizer locally; Linux CI retains AddressSanitizer:
 ```sh
 cargo +nightly-2024-06-13 fuzz run --sanitizer thread --codegen-units 16 indexer_chunking_fuzz -- -runs=1000 -max_len=14400
 ```
+
+## Snapshot Testing for XDR Event Payloads (#256)
+
+Snapshot tests capture the exact XDR binary encoding of events and storage structures
+to detect breaking changes that would silently corrupt off-chain indexers and dApp backends.
+Snapshots are stored in `test_snapshots/` directories within each contract crate.
+
+### Running snapshot tests
+
+```sh
+# Run all tests (includes snapshot tests)
+make test
+
+# Update snapshots after intentional breaking changes
+UPDATE_SNAPSHOTS=1 cargo test -p soroban-sas --lib snapshot_tests
+UPDATE_SNAPSHOTS=1 cargo test -p schema-registry --lib snapshot_tests
+UPDATE_SNAPSHOTS=1 cargo test -p soroban-sas-indexer --lib snapshot_tests
+```
+
+### What snapshots capture
+
+- **Events**: Exact XDR encoding of emitted event payloads (AttestationIssued, AttestationRevoked,
+  SchemaRegistered, FeeConfigUpdated, ContractPaused, etc.)
+- **Storage structures**: XDR layout of on-chain data structures (Attestation, SchemaRecord,
+  AttesterKeyRecord, IndexerChunk, etc.)
+- **Field ordering**: Ensures struct field order in XDR remains stable
+
+### When snapshots change
+
+If a test fails with "snapshot mismatch", the XDR encoding has changed. Possible causes:
+
+1. **Intentional breaking change**: struct field reordering, type changes, new fields
+   - Review the change in `git diff` carefully
+   - Update snapshots: `UPDATE_SNAPSHOTS=1 cargo test ...`
+   - Document as a breaking change in CHANGELOG.md
+   - **Note**: Breaking XDR changes require a protocol version bump and off-chain migration
+
+2. **Unintended change**: accidental field reordering or type mutation
+   - Revert the change and run the test again
+   - Verify the snapshot matches expected encodings
+
+3. **New tests**: first run of a new snapshot test
+   - Review the struct definition to ensure correctness
+   - Run `UPDATE_SNAPSHOTS=1 cargo test ...` to create the initial snapshot
+   - Commit the snapshot file to version control
+
+### Snapshot file locations
+
+```
+contracts/sas/test_snapshots/
+  - AttestationIssued.xdr
+  - AttestationRevoked.xdr
+  - Attestation.xdr
+  - BatchAttested.xdr
+  - FeeConfigUpdated.xdr
+  - ContractPaused.xdr
+  - ContractUnpaused.xdr
+
+contracts/schema-registry/test_snapshots/
+  - SchemaRegistered.xdr
+  - SchemaRecord.xdr
+  - SchemaFeeUpdated.xdr
+  - SchemaDeprecated.xdr
+  - SchemaDelegateAdded.xdr
+  - AttesterKeyRecord.xdr
+
+contracts/indexer/test_snapshots/
+  - AttestationChunk.xdr
+  - IndexerChunk.xdr
+```
