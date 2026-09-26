@@ -50,6 +50,38 @@ required status checks in the `main` branch protection rule or ruleset after
 the workflow has run. Workflow YAML cannot enable branch protection. Replace
 the former **Cargo Audit** required check if it was enabled.
 
+## Mutation testing
+
+Line/branch coverage only proves a test *executed* a piece of code, not that
+the test would actually notice if that code were wrong. `cargo-mutants`
+injects small artificial bugs (flipping `<` to `<=`, negating a condition,
+dropping an authorization check, changing a return value, ...) and re-runs
+the test suite once per mutant; a mutant that still passes tests ("survives")
+marks a gap in coverage.
+
+Run it locally against the contract/library crates:
+
+```sh
+cargo install cargo-mutants --version 24.7.0 --locked
+cargo mutants --workspace \
+    --package schema-registry \
+    --package sas \
+    --package soroban-sas-indexer \
+    --package soroban-sas-common \
+    --package soroban-sas-sdk
+```
+
+Config lives in `.cargo/mutants.toml` (per-mutant timeout, excluded test
+paths). A full workspace run can take a while; scope it to one crate or one
+file while iterating, e.g. `cargo mutants -f contracts/sas/src/lib.rs`, or use
+`--jobs` to parallelize.
+
+CI runs the `Mutation Tests` workflow (`.github/workflows/mutation-tests.yml`)
+on every PR, on `main`, and nightly; it uploads a `mutants-report` artifact
+but does not block merges yet. The goal is >=80% mutant kill rate on contract
+crates before Mainnet deployment — treat surviving mutants reported there as
+a signal to add or strengthen a test, not as noise to ignore.
+
 ## Indexer fuzzing
 
 ```sh
