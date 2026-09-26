@@ -1,166 +1,194 @@
-# SchemaRegistry Upgrade & Recovery Runbook
+# Contract Upgrade and Recovery Runbook
 
-> **Scope**: `schema-registry` is the only contract that exposes an
-> in-place upgrade entry point. `sas` and `soroban-sas-indexer` are
-> **immutable** once deployed — bug fixes there require deploying fresh
-> instances and re-wiring their dependencies (`SAS::set_indexer`,
-> `Indexer::init` binding). Treat every Mainnet `schema-registry` upgrade
-> as a staged, audited deployment.
+## Shared versioning and safety model
 
-## 1. Versioning Model
+`schema-registry`, `sas`, and `soroban-sas-indexer` support in-place,
+admin-authorized upgrades. Each contract stores an instance `VERSION` key,
+treats a missing key on a legacy initialized instance as genesis version `1`,
+and accepts only the exact next version. A skip, current version, or downgrade
+returns `SASError::InvalidValue`; a version above that contract's audited
+`MAX_KNOWN_VERSION` returns `SASError::IncompatibleDependency`. The current
+maximum is `2`, so the audited activation supported by this code is `1 -> 2`.
 
-- Genesis version is `1` (set by `init`). `get_version()` reports it.
-- Every upgrade **must** increment by exactly `1`: `new_version == old_version + 1`.
-  Skips or downgrades are rejected with `SASError::InvalidValue` before any WASM
-  is written.
-- Only **known** versions are accepted. The contract stores `MAX_KNOWN_VERSION`
-  (currently `2`) — any `new_version > MAX_KNOWN_VERSION` is rejected with
-  `SASError::IncompatibleDependency` even if the hash looks valid. Add a new
-  audited release to the allow-list before deploying it.
-- The hash must be **non-zero** (`[0;32]` is rejected). Pin the exact `sha256`
-  of the audited `schema_registry.wasm` for each release in git (`CHANGELOG.md`)
-  and verify with `sha256sum target/wasm32-unknown-unknown/release/schema_registry.wasm`.
+The candidate hash must be non-zero and must already identify uploaded contract
+WASM. Validation and the existing-layout sanity reads happen before version or
+hash storage is changed and before the swap is requested. These reads validate
+the state the currently executing code can deterministically inspect. They do
+not run the candidate WASM or prove its post-installation behavior; simulation,
+state comparison, and review of the candidate remain mandatory.
 
-## 2. Pre-Upgrade Validation (Off-Chain, Required)
+Every successful SAS or Indexer upgrade emits `ContractUpgraded` immediately
+before `update_current_contract_wasm`. Soroban does not expose the current
+contract's installed WASM hash to its own code. Consequently, the first SAS or
+Indexer upgrade on an existing deployment emits an all-zero `old_wasm_hash` as
+an explicit unknown sentinel, never as an asserted genesis hash. The candidate
+hash is then tracked in instance storage, so later upgrade events can report the
+previously targeted hash. Record the deployed genesis hash off-chain as part of
+the release manifest.
 
-1. **Build & audit** the candidate WASM:
+If activation fails, the invocation is rolled back: version/hash writes and
+contract events are not committed to ledger transaction metadata. The SDK 20
+native test host may still expose an event published by a failed call through
+its in-memory `Env::events()` collector; do not treat that collector as proof of
+ledger commitment.
+
+## Common preparation
+
+For the selected contract:
+
+1. Build, optimize, hash, and independently audit the candidate.
+
    ```bash
-   cargo build -p schema-registry --release --target wasm32-unknown-unknown
-   stellar contract optimize --wasm target/wasm32-unknown-unknown/release/schema_registry.wasm
-   # → schema_registry.optimized.wasm
-   sha256sum schema_registry.optimized.wasm | tee WASM_HASH
+   # Set these to schema-registry/schema_registry, sas/sas, or
+   # soroban-sas-indexer/soroban_sas_indexer.
+   PACKAGE=sas
+   WASM_BASENAME=sas
+   stellar contract build --locked --package "$PACKAGE" --optimize --out-dir .upgrade
+   CANDIDATE_WASM=".upgrade/$WASM_BASENAME.optimized.wasm"
+   sha256sum "$CANDIDATE_WASM"
+   stellar contract upload --wasm "$CANDIDATE_WASM" --optimize=false --source-account "$ADMIN_ADDRESS" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE"
    ```
-2. **Dry-run on Testnet** via `stellar contract deploy` + `stellar contract invoke --id <test_registry> -- upgrade --new-wasm-hash <hash> --new-version <next>` and run:
-   - `cargo test -p schema-registry` (includes `test_upgrade_preserves_schemas`)
-   - Manual `get_schema` / `get_schemas` / `validate_schema` against every live
-     schema UID before and after the call.
-   - `get_version` increments by one, `UPGRADE` event is emitted (see §4).
-3. **Storage-migration gate** — the on-chain `upgrade` itself reads
-   `SCHEMA_COUNT` to confirm the persistent layout is still readable. If the
-   new WASM would orphan `SCHEMA_COUNT` or `CREATOR` keys, the gate fails and
-   the upgrade reverts with `IncompatibleDependency`. For larger migrations,
-   deploy a migration contract, simulate it with `stellar tx simulate`, and only
-   then stage the upgrade.
 
-## 3. Staged Activation
+2. Query `get_version` on the target contract and set `NEXT_VERSION` to exactly
+   the returned value plus one. Confirm it does not exceed that build's
+   `MAX_KNOWN_VERSION`.
+3. Save pre-upgrade query results and the contract IDs, bindings, administrator,
+   release commit, optimized WASM hash, ledger sequence, and transaction hash.
+4. Exercise the same version and state on a Testnet or localnet copy. Simulate
+   the exact invocation before submitting it and inspect authorization, events,
+   resource cost, and result.
 
-1. **Announce** the upcoming `old_version → new_version` and its hash at least
-   one week before Mainnet activation (governance forum + on-chain event
-   feed).
-2. **Propose** the upgrade from a cold admin key (hardware wallet). Do not reuse
-   the hot deploy key used for Testnet.
-3. **Simulate** first:
    ```bash
-   stellar contract invoke --id $SCHEMA_REGISTRY_CONTRACT_ID \
-     --source-account $ADMIN_ADDRESS --rpc-url $RPC_URL --network-passphrase "$PASSPHRASE" \
-     -- upgrade --new-wasm-hash <64_hex> --new-version 2 --simulate --cost
+   stellar contract invoke --id "$CONTRACT_ID" --source-account "$ADMIN_ADDRESS" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" --send=no --cost -- upgrade --new-wasm-hash "$WASM_HASH" --new-version "$NEXT_VERSION"
    ```
-   Inspect `--cost` and the returned `UPGRADE` event; abort if the resource
-   fee exceeds the keeper's buffer.
-4. **Execute** the same invocation without `--simulate`:
-   ```bash
-   stellar contract invoke --id $SCHEMA_REGISTRY_CONTRACT_ID \
-     --source-account $ADMIN_ADDRESS --rpc-url $RPC_URL --network-passphrase "$PASSPHRASE" \
-     -- upgrade --new-wasm-hash <64_hex> --new-version 2
-   ```
-5. **Verify** within the same ledger:
-   - `stellar contract invoke --id $SCHEMA_REGISTRY_CONTRACT_ID -- get_version` → `2`
-   - `stellar contract invoke --id $SCHEMA_REGISTRY_CONTRACT_ID -- get_schemas --start 0 --limit 100` returns every pre-upgrade schema unchanged (checked via `sha256` of their XDR).
-   - `validate_schema` on a known UID still returns `true`; deprecated UIDs remain `false`.
 
-## 4. Events & Auditing
+## SchemaRegistry
 
-`upgrade(old_version, new_version, wasm_hash)` publishes:
+### Pre-upgrade and activation
 
-```
-topics: (symbol!("UPGRADE"), old_version: u32, new_version: u32)
-data:   (old_version, new_version, wasm_hash: BytesN<32>)
-```
+- Confirm the registry administrator and query `get_version`, `get_schemas`,
+  representative `get_schema` results, fee configuration, and treasury.
+- The current pre-activation sanity read touches `SCHEMA_COUNT`. This is a
+  compatibility signal for the existing layout, not execution of the candidate
+  and not a complete schema migration proof.
+- Simulate and then submit:
 
-Indexers (Zephyr, The Graph) should subscribe to `UPGRADE` to build a tamper-evident
-upgrade history. Store `(old_version, new_version, hash, ledger_seq, tx_hash)`
-off-chain for incident response.
+  ```bash
+  stellar contract invoke --id "$SCHEMA_REGISTRY_CONTRACT_ID" --source-account "$ADMIN_ADDRESS" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" --send=yes -- upgrade --new-wasm-hash "$WASM_HASH" --new-version "$NEXT_VERSION"
+  ```
 
-## 5. Rollback / Forward Recovery
+### Post-upgrade verification
 
-> There is no implicit `downgrade` entry point. A downgrade is a **forward
-> upgrade** to a previously audited version's hash with the next monotonic
-> version number.
+- Confirm `get_version == NEXT_VERSION`.
+- Compare `get_schemas`, representative records, fee configuration, treasury,
+  creator/delegate behavior, and validation results with the pre-upgrade
+  capture.
+- Confirm the same registry contract ID is still configured in SAS. An in-place
+  upgrade preserves that ID; SAS does not need reinitialization.
 
-### Scenario A: Faulty Activation Detected Within ~10 Ledgers
+## SAS
 
-1. **Halt** new `register` / `deprecate` calls by rotating the admin key's
-   signing authority off (revoke the compromised session; the contract remains
-   readable).
-2. **Re-build** the last known good WASM (e.g. `v1` hash `abc...` or `v2` hash
-   `def...`). Verify its `sha256` matches the `CHANGELOG.md` pin.
-3. **Forward-upgrade** to the good hash as the next version:
-   ```bash
-   # Suppose v2 was faulty; v3 will be a re-upload of v1's hash.
-   stellar contract invoke --id $SCHEMA_REGISTRY_CONTRACT_ID \
-     --source-account $ADMIN_ADDRESS --rpc-url $RPC_URL --network-passphrase "$PASSPHRASE" \
-     -- upgrade --new-wasm-hash <GOOD_HASH> --new-version 3
-   ```
-   The `UPGRADE` event will show `2 → 3 (GOOD_HASH)`.
-4. **Re-verify** every `get_schema` and `get_schemas` — the persistent
-   `SCHEMA_COUNT` / `CREATOR` maps survive upgrades because the storage-migration
-   gate rejects layouts that would orphan them (tested in
-   `test_upgrade_preserves_schemas_and_config`). If any schema is missing,
-   restore from the off-chain backup of `get_schemas` taken before activation.
+### Pre-upgrade and activation
 
-### Scenario B: Faulty Activation After Extended Use
+- Confirm the SAS administrator and `get_version`; inspect the contract's
+  `SCHEMA_REGISTRY` instance entry via RPC/ledger state (there is no public
+  registry getter), and query `get_indexer`. Exercise representative
+  attestation reads and record fee, treasury, strict-indexing, and
+  admin-transfer state when configured.
+- The on-chain sanity gate requires readable `SAS_ADMIN` and `SCHEMA_REGISTRY`
+  addresses and, when `INDEXER` exists, a readable Indexer address. Missing or
+  type-incompatible required layout returns `IncompatibleDependency`.
+- Simulate and then submit:
 
-If bad data was written through the faulty logic, a hash rollback alone is
-insufficient. Follow the same forward-upgrade step, then:
+  ```bash
+  stellar contract invoke --id "$SAS_CONTRACT_ID" --source-account "$ADMIN_ADDRESS" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" --send=yes -- upgrade --new-wasm-hash "$WASM_HASH" --new-version "$NEXT_VERSION"
+  ```
 
-- Replay the off-chain `SchemaRegistered` event log to re-issue any schemas
-  registered under the bad logic (their UIDs are deterministic `sha256(schema_xdr)`).
-- Keep the bad version's `UPGRADE` event in the on-chain history — do not delete
-  it — and document the incident in `CHANGELOG.md` with the ledger range and
-  remediated UIDs.
+### Post-upgrade verification and binding
 
-### Tested Recovery Procedure
+- Confirm `get_version == NEXT_VERSION`, `admin` is unchanged, the
+  `SCHEMA_REGISTRY` instance entry is unchanged, `get_indexer` is unchanged,
+  and representative attestations remain readable and verifiable.
+- Confirm the Indexer's `get_sas` still equals `SAS_CONTRACT_ID` and perform a
+  controlled attestation/index lookup test.
+- An in-place SAS upgrade preserves `SAS_CONTRACT_ID`; do not call
+  `Indexer::init` again. It is one-time-only and will reject a second call.
+- Call `SAS::set_indexer` only when intentionally changing to a different
+  Indexer contract ID, repairing a previously absent/incorrect SAS-side
+  binding, or executing an explicitly reviewed migration. It is not required
+  after a successful in-place upgrade.
 
-`test_upgrade_preserves_schemas_and_config` deploys a genesis registry, registers
-two schemas and sets `fee`/`treasury`, upgrades `1→2`, and asserts:
+## Indexer
 
-- `get_version() == 2` and the `UPGRADE` event `(1,2,hash)` was emitted,
-- both pre-upgrade `get_schema(uid)` still return the exact `SchemaRecord`,
-- `get_schemas(0,10)` returns both,
-- `fee`/`treasury` instance values survive,
-- an upgrade with `new_version == 1` (downgrade) or `new_version == 3`
-  (unknown) or `hash == 0` is rejected with `InvalidValue` / `IncompatibleDependency`
-  **before** `update_current_contract_wasm` is called.
+### Pre-upgrade and activation
 
-Run it with:
+- Confirm the Indexer administrator, `get_version`, and `get_sas`. Capture
+  representative recipient, schema, attester, status, and pagination queries.
+- The on-chain sanity gate requires readable `INDEXER_ADMIN` and `SAS_CONTRACT`
+  addresses. Missing or type-incompatible required layout returns
+  `IncompatibleDependency`.
+- Simulate and then submit:
+
+  ```bash
+  stellar contract invoke --id "$INDEXER_CONTRACT_ID" --source-account "$ADMIN_ADDRESS" --rpc-url "$RPC_URL" --network-passphrase "$PASSPHRASE" --send=yes -- upgrade --new-wasm-hash "$WASM_HASH" --new-version "$NEXT_VERSION"
+  ```
+
+### Post-upgrade verification and binding
+
+- Confirm `get_version == NEXT_VERSION`, `get_admin` and `get_sas` are
+  unchanged, and the captured index queries return the same historical data.
+- Confirm SAS `get_indexer` still equals `INDEXER_CONTRACT_ID`, then issue a
+  controlled attestation and verify that it appears in each expected index.
+- An in-place Indexer upgrade preserves `INDEXER_CONTRACT_ID` and its stored SAS
+  binding. Do not call `Indexer::init` again. Call `SAS::set_indexer` only if a
+  different Indexer ID is deliberately deployed or the SAS-side binding was
+  already absent/incorrect.
+
+## Forward recovery (all contracts)
+
+There is no version downgrade. Recovery is a new, audited release with the next
+monotonic version number, even when its WASM restores previously known-good
+logic. Before recovery can activate version `3`, the recovery build must raise
+its explicit `MAX_KNOWN_VERSION` to `3`; the current v2 code intentionally
+rejects unknown future versions.
+
+1. Halt affected writes operationally and preserve ledger/event evidence.
+2. Identify or build the corrective WASM, audit it, pin its hash, and verify its
+   storage compatibility against a state copy.
+3. Add the next version to the reviewed contract build, upload its WASM,
+   simulate the exact forward upgrade, then activate it.
+4. Repeat every contract-specific post-upgrade and binding check above.
+5. If faulty code wrote bad data, restoring code alone is insufficient. Reconcile
+   affected records from the pre-upgrade capture and committed event history.
+
+Re-wiring is needed only when recovery deploys a new contract ID or a binding
+was already wrong. For a new Indexer ID, call `SAS::set_indexer(new_id)` and
+initialize that new Indexer once with the existing SAS ID. For a new SAS ID,
+deploy or explicitly migrate to an Indexer whose one-time SAS binding targets
+that new ID; an already initialized Indexer cannot be rebound by calling
+`init` again.
+
+## Required release checks
+
+Run the contract-specific upgrade tests plus the complete repository gates:
 
 ```bash
-cargo test -p schema-registry -- test_upgrade_preserves_schemas_and_config
-cargo test -p schema-registry -- test_upgrade_rejects_incompatible_version
-cargo test -p schema-registry -- test_upgrade_rejects_zero_hash
+cargo fmt --all -- --check
+cargo test -p sas
+cargo test -p soroban-sas-indexer
+cargo test -p schema-registry
+TMPDIR=/tmp cargo test --workspace
+./scripts/check_docs.sh
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Keep these green before every Mainnet upgrade.
+Keep the resulting logs with the release manifest and candidate hashes.
 
-## 6. State-Breaking Changes & Storage Migrations
+## State-breaking changes and storage migrations
 
-### Delegation Nonce Storage Key Migration (#237)
-
-The per-attester delegation nonce watermark storage key was migrated from a raw tuple:
-
-```rust
-(DELEGATION_NONCE, attester) // Serialized as XDR ScMap
-```
-
-to a typed `#[contracttype]` struct:
-
-```rust
-DelegationNonceKey { attester: Address } // Serialized as XDR ScVec
-```
-
-**Impact & Migration Requirement:**
-- **State-breaking change:** Existing entries stored under the raw tuple key will not be found under the new typed key.
-- **New deployments (Testnet / Local):** Safe immediately without migration.
-- **Existing deployments (Mainnet):** Before deploying this change or updating contracts with historical delegation nonces, a migration step must be coordinated. The migration can be staged via a one-time migration function or script that reads each registered attester's nonce from `(DELEGATION_NONCE, attester)` and writes it under `DelegationNonceKey { attester }`.
-- **Efficiency gain:** Serializing as `ScVec` with a type tag significantly reduces the XDR footprint and instance storage read costs compared to `ScMap`.
-
+The per-attester SAS delegation nonce watermark key was migrated from the raw
+tuple `(DELEGATION_NONCE, attester)` to the typed `DelegationNonceKey` structure.
+Existing deployments with historical delegation nonces require a separately
+reviewed migration that enumerates known attesters and copies each watermark.
+New deployments use the typed key directly. This migration is not performed by
+the generic upgrade entrypoint.
