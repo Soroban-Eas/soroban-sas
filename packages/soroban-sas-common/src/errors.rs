@@ -12,7 +12,8 @@ pub enum SASError {
 
     /// Schema validation errors
     InvalidSchema = 101,
-    InvalidSchemaFormat = 102,
+    InvalidSchemaFormat = 104,
+    EmptySchema = 105,
     SchemaAlreadyExists = 102,
     SchemaNotFound = 103,
 

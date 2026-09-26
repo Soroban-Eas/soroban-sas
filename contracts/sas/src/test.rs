@@ -3423,3 +3423,77 @@ mod fee_config_events {
         assert_eq!(client.get_fee(), Some((token, 25)));
     }
 }
+
+
+#[test]
+fn test_replace_attestation_rejects_expired() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock1::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[1u8; 32]));
+
+    let current_time = 1000;
+    env.ledger().set_timestamp(current_time);
+
+    let expiration_time = current_time + 100;
+    
+    let uid = soroban_sas_common::attestation_uid(
+        &env,
+        &schema_uid,
+        &recipient,
+        &attester,
+        &12345, // time
+        expiration_time,
+        true,
+        &soroban_sdk::Bytes::from_slice(&env, &[]),
+    );
+
+    let attestation = Attestation {
+        uid: uid.clone(),
+        schema: schema_uid,
+        recipient: recipient.clone(),
+        attester: attester.clone(),
+        time: 12345,
+        expiration_time,
+        revocation_time: 0,
+        ref_uid: UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32])),
+        revocable: true,
+        data: soroban_sdk::Bytes::from_slice(&env, &[]),
+    };
+
+    let created_uid = sas_client.attest(&attestation);
+    assert_eq!(uid, created_uid);
+
+    // Fast forward past expiration
+    env.ledger().set_timestamp(expiration_time + 1);
+    
+    // Now try to replace it
+    let new_uid = soroban_sas_common::attestation_uid(
+        &env,
+        &attestation.schema,
+        &recipient,
+        &attester,
+        &54321,
+        0,
+        true,
+        &soroban_sdk::Bytes::from_slice(&env, &[1]),
+    );
+
+    let mut new_att = attestation.clone();
+    new_att.uid = new_uid;
+    new_att.data = soroban_sdk::Bytes::from_slice(&env, &[1]);
+    new_att.time = 54321;
+    new_att.expiration_time = 0;
+    
+    let res = sas_client.try_replace_attestation(&created_uid, &new_att);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err().unwrap(), soroban_sdk::Error::from_contract_error(9)); // InvalidTTL
+}

@@ -830,6 +830,9 @@ impl SAS {
         if old.revocation_time != 0 {
             panic_with_error!(&env, SASError::AlreadyRevoked);
         }
+        if old.expiration_time != 0 && env.ledger().timestamp() >= old.expiration_time {
+            panic_with_error!(&env, SASError::InvalidTTL);
+        }
         if new_data.attester != old.attester || new_data.recipient != old.recipient {
             panic_with_error!(&env, SASError::Unauthorized);
         }
