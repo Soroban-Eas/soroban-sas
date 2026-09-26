@@ -159,22 +159,40 @@ is `None` the first time a treasury address is set.
 
 ## ContractUpgraded
 
-Emitted by SAS and Indexer on a successful `upgrade`, immediately before the
-new WASM swap is requested. SchemaRegistry retains its versioned `UPGRADE`
-event; its `ContractUpgraded` hash helper is currently test-only.
+Emitted by SAS, Indexer, and the schema registry on a successful `upgrade`,
+immediately before the new WASM swap is requested. The schema registry
+additionally publishes its own versioned `UPGRADE` event (see
+[SchemaRegistry UPGRADE](#schemaregistry-upgrade) below).
 
 - Topics: `("UPGRADED", authorizer: Address)`
 - Data: `ContractUpgradedEvent { old_wasm_hash: BytesN<32>, new_wasm_hash: BytesN<32>, authorizer: Address }`
 
 `upgrade` requires authorization from the emitting contract's administrator.
 Soroban does not expose a way for a contract to read its own installed WASM
-hash. SAS and Indexer therefore use an all-zero `old_wasm_hash` as an explicit
-"unknown" sentinel on the first upgrade of a legacy/genesis instance, then
-track the successfully targeted hash in instance storage for later events.
-Operators must use their release manifest for the authoritative genesis hash.
+hash. SAS, Indexer, and the schema registry therefore use an all-zero
+`old_wasm_hash` as an explicit "unknown" sentinel on the first upgrade of a
+legacy/genesis instance, then track the successfully targeted hash in instance
+storage (`WASMHASH`) so later events report the hash they replaced. Operators
+must use their release manifest for the authoritative genesis hash.
 If the WASM swap fails (for example, the hash was not uploaded), Soroban rolls
 back the invocation, so no success event is committed to ledger transaction
 metadata.
+
+## SchemaRegistry UPGRADE
+
+Emitted by the schema registry on every successful `upgrade`, alongside
+`ContractUpgraded`.
+
+- Topics: `("UPGRADE", old_version: u32, new_version: u32)`
+- Data: `(old_version: u32, new_version: u32, new_wasm_hash: BytesN<32>)`
+
+`old_version` and `new_version` are topics so an indexer can follow registry
+activations by monotonic version without decoding the payload, while
+`ContractUpgraded` carries the WASM hashes the registry tracks. Both events are
+published after the new version and hash have been written to instance storage
+and before `update_current_contract_wasm` is requested, so a failed swap
+discards both along with every other state change made during the invocation.
+`upgrade` requires authorization from the registry admin.
 
 ## SchemaDelegateAdded
 
@@ -232,8 +250,9 @@ Emitted by the schema registry on a successful (state-changing) `deprecate`.
 
 ## Security-sensitive configuration changes
 
-`IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and
-`ContractUpgraded` share a design: each authorization check
+`IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, `ContractUpgraded`,
+and the schema registry's versioned `UPGRADE` share a design: each
+authorization check
 (`require_auth`) happens before any state is written, and each
 event is published only after the corresponding storage write has already
 succeeded (or, for `upgrade`, immediately before the WASM swap that either

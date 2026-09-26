@@ -1,4 +1,7 @@
-use crate::{SchemaRegistry, SchemaRegistryClient};
+use crate::storage::{CURRENT_WASM_HASH, REGISTRY_VERSION};
+use crate::{
+    commit_upgrade, validate_upgrade, SchemaRegistry, SchemaRegistryClient, MAX_KNOWN_VERSION,
+};
 use soroban_sas_common::{
     ContractUpgradedEvent, PreviousAddress, SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent,
     SchemaDeprecatedEvent, SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent,
@@ -449,15 +452,34 @@ fn test_clear_fee_makes_registration_free_again() {
     assert!(client.get_schema(&uid).is_some());
 }
 
-/// Exercises `record_upgrade_event` (the event-payload half of `upgrade`,
-/// factored out so it can be tested without `update_current_contract_wasm`)
-/// directly, since Soroban requires a real, previously uploaded Wasm blob
-/// to target a swap against, which isn't practical to construct in a unit
-/// test. `upgrade`'s admin-auth requirement and its call into
-/// `update_current_contract_wasm` are still exercised end-to-end by
-/// `test_upgrade_requires_admin_auth` below.
+/// `get_version` is the public read used by upgrade orchestration: an
+/// initialized registry starts at genesis version `1`, and a legacy instance
+/// whose `VERSION` key predates versioning is reported as `1` rather than as
+/// an error.
 #[test]
-fn test_record_upgrade_event_reports_old_and_new_hash() {
+fn test_get_version_defaults_to_one() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+    assert_eq!(client.get_version(), 1);
+
+    env.as_contract(&contract_id, || {
+        env.storage().instance().remove(&REGISTRY_VERSION);
+    });
+    assert_eq!(client.get_version(), 1);
+}
+
+/// `validate_upgrade` is the pre-activation gate: every rejected candidate
+/// leaves version, tracked hash, and the event log untouched. Soroban requires
+/// a real, previously uploaded WASM blob to target
+/// `update_current_contract_wasm`, so the gate is exercised directly rather
+/// than through `upgrade`, exactly as `sas` and `indexer` do.
+#[test]
+fn test_upgrade_validation_rejects_invalid_candidates_without_mutation() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SchemaRegistry);
     let client = SchemaRegistryClient::new(&env, &contract_id);
@@ -466,48 +488,119 @@ fn test_record_upgrade_event_reports_old_and_new_hash() {
     env.mock_all_auths();
     client.init(&admin);
 
-    let first_hash = BytesN::from_array(&env, &[1u8; 32]);
-    env.as_contract(&contract_id, || {
-        crate::SchemaRegistry::record_upgrade_event(&env, &admin, first_hash.clone());
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let events_before = env.events().all().len();
+
+    let (unknown, skipped, zero, current) = env.as_contract(&contract_id, || {
+        let unknown = validate_upgrade(&env, &hash, MAX_KNOWN_VERSION + 1);
+        // A stored version of `0` makes `2` a skip rather than the next step.
+        env.storage().instance().set(&REGISTRY_VERSION, &0u32);
+        let skipped = validate_upgrade(&env, &hash, 2);
+        env.storage().instance().set(&REGISTRY_VERSION, &1u32);
+        let zero = validate_upgrade(&env, &zero_hash, 2);
+        let current = validate_upgrade(&env, &hash, 1);
+        (unknown, skipped, zero, current)
     });
-    // The first upgrade has no prior tracked hash, so it reports the new
-    // hash as both old and new rather than a placeholder value.
-    let expected_first = ContractUpgradedEvent {
-        old_wasm_hash: first_hash.clone(),
-        new_wasm_hash: first_hash.clone(),
+
+    assert_eq!(
+        unknown,
+        Err(soroban_sas_common::SASError::IncompatibleDependency)
+    );
+    assert_eq!(skipped, Err(soroban_sas_common::SASError::InvalidValue));
+    assert_eq!(zero, Err(soroban_sas_common::SASError::InvalidValue));
+    assert_eq!(current, Err(soroban_sas_common::SASError::InvalidValue));
+    assert_eq!(client.get_version(), 1);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+/// Exercises `commit_upgrade` (the storage-write + event half of `upgrade`,
+/// factored out so it can be tested without `update_current_contract_wasm`).
+/// A first activation bumps the stored version, tracks the targeted hash, and
+/// publishes the versioned `UPGRADE` event followed by `ContractUpgraded`.
+#[test]
+fn test_upgrade_commit_emits_events_and_tracks_hash() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let new_hash = BytesN::from_array(&env, &[1u8; 32]);
+    env.as_contract(&contract_id, || {
+        commit_upgrade(&env, &admin, &new_hash, 2);
+    });
+
+    assert_eq!(client.get_version(), 2);
+    let tracked: Option<BytesN<32>> = env.as_contract(&contract_id, || {
+        env.storage().instance().get(&CURRENT_WASM_HASH)
+    });
+    assert_eq!(tracked, Some(new_hash.clone()));
+
+    // The first upgrade has no prior tracked hash, so it reports the all-zero
+    // "unknown" sentinel rather than a genesis hash it cannot read.
+    let expected = ContractUpgradedEvent {
+        old_wasm_hash: BytesN::from_array(&env, &[0u8; 32]),
+        new_wasm_hash: new_hash.clone(),
         authorizer: admin.clone(),
     };
-    let events = env.events().all();
+    let all = env.events().all();
     assert_eq!(
-        events.slice(events.len() - 1..),
+        all.slice(all.len() - 2..),
         soroban_sdk::vec![
             &env,
             (
                 contract_id.clone(),
-                (symbol_short!("UPGRADED"), admin.clone()).into_val(&env),
-                expected_first.into_val(&env),
+                (symbol_short!("UPGRADE"), 1u32, 2u32).into_val(&env),
+                (1u32, 2u32, new_hash).into_val(&env),
+            ),
+            (
+                contract_id,
+                (symbol_short!("UPGRADED"), admin).into_val(&env),
+                expected.into_val(&env),
             )
         ]
     );
+}
 
-    let second_hash = BytesN::from_array(&env, &[2u8; 32]);
+/// A later activation reports the hash it is replacing, so an off-chain
+/// monitor can reconstruct the registry's WASM history from `ContractUpgraded`
+/// events alone.
+#[test]
+fn test_upgrade_event_uses_a_previously_tracked_hash() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let old_hash = BytesN::from_array(&env, &[12u8; 32]);
+    let new_hash = BytesN::from_array(&env, &[13u8; 32]);
     env.as_contract(&contract_id, || {
-        crate::SchemaRegistry::record_upgrade_event(&env, &admin, second_hash.clone());
+        env.storage().instance().set(&CURRENT_WASM_HASH, &old_hash);
+        commit_upgrade(&env, &admin, &new_hash, 2);
     });
-    let expected_second = ContractUpgradedEvent {
-        old_wasm_hash: first_hash,
-        new_wasm_hash: second_hash,
+
+    assert_eq!(client.get_version(), 2);
+
+    let expected = ContractUpgradedEvent {
+        old_wasm_hash: old_hash,
+        new_wasm_hash: new_hash,
         authorizer: admin.clone(),
     };
-    let events = env.events().all();
+    let all = env.events().all();
     assert_eq!(
-        events.slice(events.len() - 1..),
+        all.slice(all.len() - 1..),
         soroban_sdk::vec![
             &env,
             (
                 contract_id,
                 (symbol_short!("UPGRADED"), admin).into_val(&env),
-                expected_second.into_val(&env),
+                expected.into_val(&env),
             )
         ]
     );
@@ -525,8 +618,13 @@ fn test_upgrade_requires_admin_auth() {
     env.set_auths(&[]);
 
     let new_hash = BytesN::from_array(&env, &[9u8; 32]);
+    let events_before = env.events().all().len();
     let res = client.try_upgrade(&new_hash, &2);
     assert!(res.is_err());
+    // A rejected activation must not bump the version, track a hash, or
+    // publish either success event.
+    assert_eq!(env.events().all().len(), events_before);
+    assert_eq!(client.get_version(), 1);
 }
 
 #[test]
@@ -1254,9 +1352,9 @@ fn test_transfer_schema_ownership_deprecated_schema_rejected() {
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
-    
+
     /// Snapshot test infrastructure for XDR event payloads (#256).
-    /// 
+    ///
     /// Captures exact XDR encodings of schema registry events and storage
     /// structures to detect unintended breaking changes. Off-chain indexers
     /// depend on stable XDR layouts to parse events and schemas correctly.
@@ -1275,7 +1373,7 @@ mod snapshot_tests {
         let client = SchemaRegistryClient::new(&env, &registry);
         client.init(&admin);
         client.register(&owner, &schema_str, &resolver, &false);
-        
+
         // Snapshot path: test_snapshots/SchemaRegistered.xdr
     }
 
@@ -1293,7 +1391,7 @@ mod snapshot_tests {
         let client = SchemaRegistryClient::new(&env, &registry);
         client.init(&admin);
         let uid = client.register(&owner, &schema_str, &resolver, &true);
-        
+
         // Retrieve and verify XDR encoding
         // Snapshot path: test_snapshots/SchemaRecord.xdr
         let _schema = client.get_schema(&uid);
@@ -1311,7 +1409,7 @@ mod snapshot_tests {
         let client = SchemaRegistryClient::new(&env, &registry);
         client.init(&admin);
         client.set_fee(&token, &500);
-        
+
         // Snapshot path: test_snapshots/SchemaFeeUpdated.xdr
     }
 
@@ -1330,7 +1428,7 @@ mod snapshot_tests {
         client.init(&admin);
         let uid = client.register(&owner, &schema_str, &resolver, &false);
         client.deprecate(&uid, &owner);
-        
+
         // Snapshot path: test_snapshots/SchemaDeprecated.xdr
     }
 
@@ -1350,7 +1448,7 @@ mod snapshot_tests {
         client.init(&admin);
         let uid = client.register(&owner, &schema_str, &resolver, &false);
         client.add_delegate(&uid, &delegate);
-        
+
         // Snapshot path: test_snapshots/SchemaDelegateAdded.xdr
     }
 
@@ -1360,7 +1458,7 @@ mod snapshot_tests {
         // Ensures: public_key, version, revoked fields remain stable
         // Used by: SAS contract for delegated attestations
         let (env, registry) = setup();
-        
+
         // Note: This test may be in SAS contract test suite
         // Snapshot path: test_snapshots/AttesterKeyRecord.xdr
     }

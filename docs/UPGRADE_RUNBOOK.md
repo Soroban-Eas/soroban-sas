@@ -17,14 +17,16 @@ the state the currently executing code can deterministically inspect. They do
 not run the candidate WASM or prove its post-installation behavior; simulation,
 state comparison, and review of the candidate remain mandatory.
 
-Every successful SAS or Indexer upgrade emits `ContractUpgraded` immediately
-before `update_current_contract_wasm`. Soroban does not expose the current
-contract's installed WASM hash to its own code. Consequently, the first SAS or
-Indexer upgrade on an existing deployment emits an all-zero `old_wasm_hash` as
-an explicit unknown sentinel, never as an asserted genesis hash. The candidate
-hash is then tracked in instance storage, so later upgrade events can report the
-previously targeted hash. Record the deployed genesis hash off-chain as part of
-the release manifest.
+Every successful SAS, Indexer, or SchemaRegistry upgrade emits
+`ContractUpgraded` immediately before `update_current_contract_wasm`;
+SchemaRegistry additionally emits its own versioned `UPGRADE` event with
+`(old_version, new_version, new_wasm_hash)`. Soroban does not expose the
+current contract's installed WASM hash to its own code. Consequently, the
+first SAS, Indexer, or SchemaRegistry upgrade on an existing deployment emits
+an all-zero `old_wasm_hash` as an explicit unknown sentinel, never as an
+asserted genesis hash. The candidate hash is then tracked in instance storage
+(`WASMHASH`), so later upgrade events can report the previously targeted hash.
+Record the deployed genesis hash off-chain as part of the release manifest.
 
 If activation fails, the invocation is rolled back: version/hash writes and
 contract events are not committed to ledger transaction metadata. The SDK 20
@@ -80,6 +82,11 @@ For the selected contract:
 ### Post-upgrade verification
 
 - Confirm `get_version == NEXT_VERSION`.
+- Confirm the activation transaction's metadata contains the registry's
+  `ContractUpgraded` event (`("UPGRADED", admin)`) with `new_wasm_hash` equal
+  to the uploaded candidate hash, and its versioned `UPGRADE` event
+  (`("UPGRADE", previous_version, NEXT_VERSION)`) with the same hash.
+  A rejected activation emits neither.
 - Compare `get_schemas`, representative records, fee configuration, treasury,
   creator/delegate behavior, and validation results with the pre-upgrade
   capture.

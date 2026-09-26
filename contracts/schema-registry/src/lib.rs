@@ -2,23 +2,25 @@
 #![no_std]
 #![allow(unused_variables)]
 
-#[cfg(test)]
-use soroban_sas_common::{events::CONTRACT_UPGRADED, ContractUpgradedEvent};
 use soroban_sas_common::{
     events::{
-        SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_DEPRECATED, SCHEMA_FEE_UPDATED,
-        SCHEMA_OWNERSHIP_TRANSFERRED, TREASURY_UPDATED,
+        CONTRACT_UPGRADED, SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_DEPRECATED,
+        SCHEMA_FEE_UPDATED, SCHEMA_OWNERSHIP_TRANSFERRED, TREASURY_UPDATED,
     },
-    validate_schema_syntax, PreviousAddress, SASError, SchemaDelegateAddedEvent,
-    SchemaDelegateRemovedEvent, SchemaDeprecatedEvent, SchemaFeeUpdatedEvent,
-    SchemaOwnershipTransferredEvent, SchemaRecord, TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
+    validate_schema_syntax, ContractUpgradedEvent, PreviousAddress, SASError,
+    SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent, SchemaDeprecatedEvent,
+    SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent, SchemaRecord, TreasuryUpdatedEvent,
+    LEDGERS_IN_ONE_YEAR, UID,
 };
-#[cfg(test)]
-use soroban_sdk::BytesN;
-use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, BytesN, Env, String};
 
 #[contract]
 pub struct SchemaRegistry;
+
+/// Highest version whose upgrade path this build knows and has been audited
+/// to activate. Genesis `1` -> only `2` is known; expand this allow-list as
+/// new releases are audited and their WASM hashes are pinned.
+pub const MAX_KNOWN_VERSION: u32 = 2;
 
 mod storage;
 use storage::*;
@@ -44,12 +46,108 @@ fn renew_schema_record(env: &Env, uid: &UID) {
         .extend_ttl(uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
-fn require_registry_admin(env: &Env) -> Address {
-    let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
-    match admin {
-        Some(a) => a,
-        None => panic_with_error!(env, SASError::NotInitialized),
+/// Reads the registry admin, or `Err(NotInitialized)` when the registry has
+/// not been initialized yet. The non-panicking counterpart of
+/// [`require_registry_admin`], used by the upgrade validation path so a
+/// candidate can be rejected with a typed error before any state is written.
+fn registry_admin(env: &Env) -> Result<Address, SASError> {
+    match env.storage().instance().get(&REGISTRY_ADMIN) {
+        Some(admin) => Ok(admin),
+        None => Err(SASError::NotInitialized),
     }
+}
+
+fn require_registry_admin(env: &Env) -> Address {
+    match registry_admin(env) {
+        Ok(admin) => admin,
+        Err(error) => panic_with_error!(env, error),
+    }
+}
+
+/// Validates an upgrade candidate without mutating any state, returning the
+/// registry admin that must authorize the activation.
+///
+/// Split out of [`SchemaRegistry::upgrade`] so every validation rule can be
+/// exercised in unit tests without going through
+/// `update_current_contract_wasm`, which requires a real, previously uploaded
+/// WASM blob to target — the same split `sas` and `indexer` use.
+fn validate_upgrade(
+    env: &Env,
+    new_wasm_hash: &BytesN<32>,
+    new_version: u32,
+) -> Result<Address, SASError> {
+    // The admin that authorizes the upgrade must still be readable, so a
+    // candidate that would orphan the registry's own configuration is
+    // rejected before anything is written.
+    let admin = registry_admin(env)?;
+
+    // Storage-migration gate: existing persistent keys must still be
+    // readable after the upgrade path. This is a lightweight sanity check
+    // that the new contract's storage layout still contains the
+    // `SCHEMA_COUNT` key; a real migration would compare full schema counts
+    // before/after via simulation.
+    let _count: Option<u32> = env.storage().persistent().get(&SCHEMA_COUNT);
+
+    let old_version: u32 = env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1);
+
+    // Reject unknown future versions before writing any state.
+    if new_version > MAX_KNOWN_VERSION {
+        return Err(SASError::IncompatibleDependency);
+    }
+    if new_version != old_version.saturating_add(1) {
+        return Err(SASError::InvalidValue);
+    }
+    // Hash must be non-zero.
+    if new_wasm_hash.to_array() == [0u8; 32] {
+        return Err(SASError::InvalidValue);
+    }
+    Ok(admin)
+}
+
+/// Commits an already-validated upgrade: persists the new version and the
+/// targeted WASM hash, then publishes the events that describe it.
+///
+/// Emits the versioned `UPGRADE` event (`(old_version, new_version,
+/// new_wasm_hash)`) and the standardized `ContractUpgraded` event
+/// (`(old_wasm_hash, new_wasm_hash, authorizer)`), so off-chain indexers can
+/// follow registry activations either by version or by WASM hash. Both are
+/// published before `update_current_contract_wasm` is requested; Soroban
+/// rolls the whole invocation back if the swap fails, so an event a consumer
+/// actually observes always corresponds to an activation that durably stuck.
+fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_version: u32) {
+    let old_version: u32 = env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1);
+    // Soroban does not expose a way to read the currently installed WASM hash
+    // from within the contract itself, so the first upgrade on a given
+    // deployment has no prior tracked hash and reports the all-zero "unknown"
+    // sentinel instead of asserting a genesis hash it cannot verify. Every
+    // upgrade after that carries the hash it is replacing (matching `sas` and
+    // `indexer`).
+    let old_wasm_hash: BytesN<32> = env
+        .storage()
+        .instance()
+        .get(&CURRENT_WASM_HASH)
+        .unwrap_or_else(|| BytesN::from_array(env, &[0u8; 32]));
+
+    env.storage()
+        .instance()
+        .set(&REGISTRY_VERSION, &new_version);
+    env.storage()
+        .instance()
+        .set(&CURRENT_WASM_HASH, new_wasm_hash);
+    extend_instance_ttl(env);
+
+    env.events().publish(
+        (UPGRADE_EVENT, old_version, new_version),
+        (old_version, new_version, new_wasm_hash.clone()),
+    );
+    env.events().publish(
+        (CONTRACT_UPGRADED, admin.clone()),
+        ContractUpgradedEvent {
+            old_wasm_hash,
+            new_wasm_hash: new_wasm_hash.clone(),
+            authorizer: admin.clone(),
+        },
+    );
 }
 
 const MAX_SCAN_BUDGET: u32 = 100;
@@ -85,6 +183,7 @@ impl SchemaRegistry {
     }
 
     /// Versioned upgrade. Validates the candidate before activation:
+    ///  - the registry admin must still be readable
     ///  - `new_version` must be exactly `current + 1` (no skips/downgrades)
     ///  - only known versions (currently 2, i.e. next after genesis) are
     ///    accepted — unknown future versions are rejected before any WASM
@@ -94,77 +193,29 @@ impl SchemaRegistry {
     ///    faulty WASM that would orphan existing schemas is caught on the
     ///    upgrade path itself)
     /// Emits an `UPGRADE` event with `(old_version, new_version, wasm_hash)`
-    /// and bumps the stored version before calling
+    /// and a `ContractUpgraded` event with `(old_wasm_hash, new_wasm_hash,
+    /// authorizer)`, then bumps the stored version and hash before calling
     /// `update_current_contract_wasm`. See `docs/UPGRADE_RUNBOOK.md` for the
     /// staged activation / rollback procedure.
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, new_version: u32) {
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>, new_version: u32) {
         extend_instance_ttl(&env);
+        let layout_admin = match validate_upgrade(&env, &new_wasm_hash, new_version) {
+            Ok(admin) => admin,
+            Err(error) => panic_with_error!(&env, error),
+        };
+        // Re-read through the panicking accessor so the address that actually
+        // authorizes the activation is re-checked against the admin the
+        // candidate was validated against, matching `sas` and `indexer`.
         let admin = require_registry_admin(&env);
+        if admin != layout_admin {
+            panic_with_error!(&env, SASError::IncompatibleDependency);
+        }
         admin.require_auth();
         extend_instance_ttl(&env);
 
-        let old_version: u32 = env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1);
-
-        // Reject unknown future versions before writing any state.
-        // Genesis 1 -> only 2 is known; expand this allow-list as new
-        // releases are audited and their WASM hashes are pinned.
-        const MAX_KNOWN_VERSION: u32 = 2;
-        if new_version > MAX_KNOWN_VERSION {
-            panic_with_error!(&env, SASError::IncompatibleDependency);
-        }
-        if new_version != old_version.saturating_add(1) {
-            panic_with_error!(&env, SASError::InvalidValue);
-        }
-        // Hash must be non-zero.
-        if new_wasm_hash.to_array() == [0u8; 32] {
-            panic_with_error!(&env, SASError::InvalidValue);
-        }
-
-        // Storage-migration gate: existing persistent keys must still be
-        // readable after the upgrade path. This is a lightweight sanity
-        // check that the new contract's storage layout still contains the
-        // `SCHEMA_COUNT` key; a real migration would compare full schema
-        // counts before/after via simulation.
-        let _count: Option<u32> = env.storage().persistent().get(&SCHEMA_COUNT);
-
-        env.events().publish(
-            (UPGRADE_EVENT, old_version, new_version),
-            (old_version, new_version, new_wasm_hash.clone()),
-        );
-
-        env.storage()
-            .instance()
-            .set(&REGISTRY_VERSION, &new_version);
+        commit_upgrade(&env, &admin, &new_wasm_hash, new_version);
 
         env.deployer().update_current_contract_wasm(new_wasm_hash);
-    }
-
-    /// Records the WASM-hash rotation and emits `ContractUpgraded`.
-    /// Factored out of `upgrade` so its event-payload logic (reading the
-    /// previously tracked hash, building the event) can be exercised in
-    /// tests without going through `update_current_contract_wasm`, which
-    /// requires a real, previously uploaded WASM blob to target.
-    #[cfg(test)]
-    fn record_upgrade_event(env: &Env, admin: &Address, new_wasm_hash: BytesN<32>) {
-        let old_wasm_hash: Option<BytesN<32>> = env.storage().instance().get(&CURRENT_WASM_HASH);
-        // Soroban does not expose a way to read the currently installed
-        // WASM hash from within the contract itself, so the first upgrade
-        // on a given deployment has no prior tracked hash to report; every
-        // upgrade after that carries the hash it is replacing.
-        let old_wasm_hash = old_wasm_hash.unwrap_or_else(|| new_wasm_hash.clone());
-
-        env.storage()
-            .instance()
-            .set(&CURRENT_WASM_HASH, &new_wasm_hash);
-
-        env.events().publish(
-            (CONTRACT_UPGRADED, admin.clone()),
-            ContractUpgradedEvent {
-                old_wasm_hash,
-                new_wasm_hash,
-                authorizer: admin.clone(),
-            },
-        );
     }
 
     /// Pins the asset and exact amount `register_with_value` charges for
@@ -430,25 +481,27 @@ impl SchemaRegistry {
     ///
     /// See `docs/schemas.md` for the schema syntax specification.
 
-
     pub fn transfer_ownership(env: Env, sender: Address, uid: UID, new_owner: Address) {
         sender.require_auth();
         extend_instance_ttl(&env);
-        
+
         // Ensure schema exists
         let _record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
             panic_with_error!(&env, SASError::SchemaNotFound);
         });
 
         // Validate sender is current creator/owner
-        let creator: Option<Address> = env.storage().persistent().get(&(SCHEMA_CREATOR, uid.clone()));
+        let creator: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&(SCHEMA_CREATOR, uid.clone()));
         let mut authorized = false;
         if let Some(ref c) = creator {
             if *c == sender {
                 authorized = true;
             }
         }
-        
+
         // Admins can also transfer ownership (optional, but robust)
         if !authorized {
             let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
@@ -464,19 +517,25 @@ impl SchemaRegistry {
         }
 
         // Set new owner
-        env.storage().persistent().set(&(SCHEMA_CREATOR, uid.clone()), &new_owner);
-        env.events().publish((SCHEMA_OWNERSHIP_TRANSFERRED, uid), (sender, new_owner));
+        env.storage()
+            .persistent()
+            .set(&(SCHEMA_CREATOR, uid.clone()), &new_owner);
+        env.events()
+            .publish((SCHEMA_OWNERSHIP_TRANSFERRED, uid), (sender, new_owner));
     }
 
     pub fn deprecate_schema(env: Env, sender: Address, uid: UID) {
         sender.require_auth();
         extend_instance_ttl(&env);
-        
+
         let mut record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
             panic_with_error!(&env, SASError::SchemaNotFound);
         });
 
-        let creator: Option<Address> = env.storage().persistent().get(&(SCHEMA_CREATOR, uid.clone()));
+        let creator: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&(SCHEMA_CREATOR, uid.clone()));
         let mut authorized = false;
         if let Some(c) = creator {
             if c == sender {
