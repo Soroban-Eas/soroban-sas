@@ -42,6 +42,26 @@ attestation/schema data it governs:
   where their independent expiry from the chunk data they count could reset
   a counter to zero while its chunks survived, corrupting the index with
   duplicate UIDs on the next write (#219).
+
+## Contract Upgrades
+
+All three contracts are upgraded in place by an admin-authorized
+`upgrade(new_wasm_hash, new_version)`. Each contract stores a monotonic
+instance `VERSION` (a missing key on a legacy instance reads as genesis `1`),
+accepts only the exact next audited version, and requires the candidate to be
+non-zero and already uploaded. Validation reads the existing layout before any
+state is written; the version and the targeted hash (`WASMHASH`) are then
+committed, and each contract emits `ContractUpgraded` with
+`(old_wasm_hash, new_wasm_hash, authorizer)` immediately before the swap is
+requested. The schema registry additionally emits its own versioned
+`UPGRADE("UPGRADE", old_version, new_version)` event. Because Soroban rolls a
+failed invocation back, an upgrade event an off-chain consumer observes always
+corresponds to an activation that durably took effect.
+
+See [Contract Events](events.md) for the payloads and the
+[Contract Upgrade and Recovery Runbook](UPGRADE_RUNBOOK.md) for the staged
+activation and rollback procedure.
+
 ## Trust Boundaries
 
 ### Indexer writes

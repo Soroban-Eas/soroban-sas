@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- `SchemaRegistry::upgrade` now emits the standardized `ContractUpgraded` event
+  (`("UPGRADED", authorizer)` with `old_wasm_hash`/`new_wasm_hash`) in addition
+  to its versioned `UPGRADE` event, tracking the activated WASM hash in instance
+  storage so later activations report the hash they replaced. The upgrade path
+  is split into `validate_upgrade`/`commit_upgrade`, dropping the previous
+  test-only event helper, with coverage for validation rejections, the first
+  activation, and hash history. (#283)
 - Fuzz target `indexer_idempotency_fuzz` and seed corpus verifying `Indexer::index_attestation` idempotency invariants across first calls, retries, and mutated triples (#235).
 - Fee payment lifecycle coverage in `scripts/smoke_test.sh` covering token deployment, `set_treasury`, `set_fee`, `attest_with_value`, balance assertions, `withdraw_tokens`, and zero-fee paths (#239).
 - Operational runbook `docs/reconciliation.md` documenting detection, enumeration, CLI/SDK invocation, and health checks for `reindex_attestation` fail-open recovery (#238).
