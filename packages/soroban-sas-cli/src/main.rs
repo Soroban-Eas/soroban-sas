@@ -321,7 +321,53 @@ enum Commands {
 enum SasCommands {
     /// Read the currently configured attestation fee, if any.
     #[command(name = "get-fee")]
-    GetFee {
+    Get {
+        #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Admin: configure the token and amount charged for attestations.
+    #[command(name = "set-fee")]
+    Set {
+        #[arg(long, help = "Fee asset: token contract address (C...)")]
+        token: String,
+        #[arg(long, help = "Fee amount, in the token's smallest unit (must be > 0)")]
+        amount: i128,
+        #[arg(
+            long,
+            help = "SAS admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Admin: remove the attestation fee requirement.
+    #[command(name = "clear-fee")]
+    Clear {
+        #[arg(
+            long,
+            help = "SAS admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
         #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
@@ -846,7 +892,7 @@ fn main() {
         Some(Commands::Offchain { action }) => run_offchain(action, output, network, identity),
         Some(Commands::Schema { action }) => run_schema(action, output, network, identity),
         Some(Commands::Attest { action }) => run_attest(action, output, network, identity),
-        Some(Commands::Sas { action }) => run_sas(action, output, network),
+        Some(Commands::Sas { action }) => run_sas(action, output, network, identity),
         Some(Commands::Query { action }) => run_query(action, output, network),
         Some(Commands::Delegate { action }) => run_delegate(action, output, network, identity),
         _ => emit_ok(
@@ -888,10 +934,11 @@ fn run_sas(
     action: SasCommands,
     output: OutputFormat,
     network: Option<String>,
+    identity: Option<String>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
-        SasCommands::GetFee {
+        SasCommands::Get {
             contract_id,
             rpc_url,
         } => {
@@ -904,7 +951,95 @@ fn run_sas(
             let json_val = fee_to_json(&fee);
             emit_ok(output, || println!("{human_msg}"), json_val)
         }
+        SasCommands::Set {
+            token,
+            amount,
+            secret_key,
+            network_passphrase,
+            contract_id,
+            rpc_url,
+        } => {
+            validate_fee_amount(amount)?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let result = client
+                .set_fee(&env, &rpc, &network_passphrase, &seed, &token, amount)
+                .map_err(format_sas_admin_error)?;
+            print_sas_fee_admin_result(result, output, Some((&token, amount)))
+        }
+        SasCommands::Clear {
+            secret_key,
+            network_passphrase,
+            contract_id,
+            rpc_url,
+        } => {
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let result = client
+                .clear_fee(&env, &rpc, &network_passphrase, &seed)
+                .map_err(format_sas_admin_error)?;
+            print_sas_fee_admin_result(result, output, None)
+        }
     }
+}
+
+fn validate_fee_amount(amount: i128) -> Result<(), String> {
+    if amount <= 0 {
+        Err("--amount must be greater than 0".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn format_sas_admin_error(error: soroban_sas_sdk::errors::SdkError) -> String {
+    match error {
+        soroban_sas_sdk::errors::SdkError::ContractError(301) => {
+            "SASError::Unauthorized: caller is not the SAS admin".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+fn sas_fee_admin_output(
+    result: &soroban_sas_sdk::rpc::GetTransactionResult,
+    configured_fee: Option<(&str, i128)>,
+) -> Result<(String, serde_json::Value), String> {
+    if result.status != "SUCCESS" {
+        return Err(format!(
+            "SAS fee update failed with status {}",
+            result.status
+        ));
+    }
+    let hash = result
+        .hash
+        .as_deref()
+        .ok_or_else(|| "successful SAS fee update returned no transaction hash".to_string())?;
+    let human = match configured_fee {
+        Some((token, amount)) => {
+            format!("Fee set: {amount} of {token}\nTransaction hash: {hash}")
+        }
+        None => format!("Fee cleared — attestation is now fee-free\nTransaction hash: {hash}"),
+    };
+    Ok((human, serde_json::json!({ "tx_hash": hash })))
+}
+
+fn print_sas_fee_admin_result(
+    result: soroban_sas_sdk::rpc::GetTransactionResult,
+    output: OutputFormat,
+    configured_fee: Option<(&str, i128)>,
+) -> Result<(), String> {
+    let (human, data) = sas_fee_admin_output(&result, configured_fee)?;
+    emit_ok(output, || println!("{human}"), data)
 }
 
 fn run_attest(

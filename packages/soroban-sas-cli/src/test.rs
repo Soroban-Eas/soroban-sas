@@ -4,8 +4,9 @@ mod tests {
     use soroban_sdk::testutils::Address as _;
 
     use crate::{
-        decode_hex_or_base64, fee_to_human, fee_to_json, parse_uid, validate_schema_syntax,
-        AttestCommands, Cli, Commands, OutputFormat, SasCommands,
+        decode_hex_or_base64, fee_to_human, fee_to_json, parse_uid, sas_fee_admin_output,
+        validate_fee_amount, validate_schema_syntax, AttestCommands, Cli, Commands, OutputFormat,
+        SasCommands,
     };
 
     #[test]
@@ -343,7 +344,7 @@ mod tests {
         assert_eq!(cli.output, OutputFormat::Json);
         let Some(Commands::Sas {
             action:
-                SasCommands::GetFee {
+                SasCommands::Get {
                     contract_id,
                     rpc_url,
                 },
@@ -362,6 +363,192 @@ mod tests {
     }
 
     #[test]
+    fn parses_sas_set_fee_flags_and_globals() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--identity",
+            "admin",
+            "--network",
+            "testnet",
+            "--output",
+            "json",
+            "sas",
+            "set-fee",
+            "--token",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--amount",
+            "1000000",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.identity.as_deref(), Some("admin"));
+        assert_eq!(cli.network.as_deref(), Some("testnet"));
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Sas {
+            action:
+                SasCommands::Set {
+                    token,
+                    amount,
+                    secret_key,
+                    network_passphrase,
+                    rpc_url,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected sas set-fee command");
+        };
+        assert!(token.starts_with('C'));
+        assert_eq!(amount, 1_000_000);
+        assert!(secret_key.is_none());
+        assert_eq!(
+            crate::resolve_network_passphrase(network_passphrase, cli.network.as_deref()).unwrap(),
+            "Test SDF Network ; September 2015"
+        );
+        assert_eq!(
+            crate::resolve_rpc_url(rpc_url, cli.network.as_deref()).unwrap(),
+            "https://soroban-testnet.stellar.org"
+        );
+    }
+
+    #[test]
+    fn parses_sas_clear_fee_flags_and_mainnet_network_defaults() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--identity",
+            "admin",
+            "--network",
+            "mainnet",
+            "sas",
+            "clear-fee",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.identity.as_deref(), Some("admin"));
+        let Some(Commands::Sas {
+            action:
+                SasCommands::Clear {
+                    secret_key,
+                    network_passphrase,
+                    rpc_url,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected sas clear-fee command");
+        };
+        assert!(secret_key.is_none());
+        assert!(
+            crate::resolve_network_passphrase(network_passphrase, cli.network.as_deref())
+                .unwrap()
+                .contains("Public Global Stellar Network")
+        );
+        assert_eq!(
+            crate::resolve_rpc_url(rpc_url, cli.network.as_deref()).unwrap(),
+            "https://mainnet.sorobanrpc.com"
+        );
+    }
+
+    #[test]
+    fn sas_fee_admin_commands_use_global_identity_resolution() {
+        let contract_id = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+        let set_error = crate::run_sas(
+            SasCommands::Set {
+                token: contract_id.to_string(),
+                amount: 1,
+                secret_key: None,
+                network_passphrase: None,
+                contract_id: contract_id.to_string(),
+                rpc_url: None,
+            },
+            OutputFormat::Human,
+            Some("testnet".to_string()),
+            Some("../invalid".to_string()),
+        )
+        .unwrap_err();
+        assert!(set_error.contains("invalid --identity"));
+
+        let clear_error = crate::run_sas(
+            SasCommands::Clear {
+                secret_key: None,
+                network_passphrase: None,
+                contract_id: contract_id.to_string(),
+                rpc_url: None,
+            },
+            OutputFormat::Human,
+            Some("testnet".to_string()),
+            Some("../invalid".to_string()),
+        )
+        .unwrap_err();
+        assert!(clear_error.contains("invalid --identity"));
+    }
+
+    #[test]
+    fn sas_set_fee_rejects_non_positive_amounts_before_rpc_setup() {
+        assert_eq!(
+            validate_fee_amount(0).unwrap_err(),
+            "--amount must be greater than 0"
+        );
+        assert_eq!(
+            validate_fee_amount(-1).unwrap_err(),
+            "--amount must be greater than 0"
+        );
+
+        for amount in [0, -1] {
+            let error = crate::run_sas(
+                SasCommands::Set {
+                    token: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4".to_string(),
+                    amount,
+                    secret_key: None,
+                    network_passphrase: None,
+                    contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+                        .to_string(),
+                    rpc_url: Some("http://127.0.0.1:1".to_string()),
+                },
+                OutputFormat::Human,
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error, "--amount must be greater than 0");
+        }
+    }
+
+    #[test]
+    fn sas_fee_admin_success_formatters_match_required_output() {
+        let result = soroban_sas_sdk::rpc::GetTransactionResult {
+            status: "SUCCESS".to_string(),
+            latest_ledger: 1,
+            envelope_xdr: None,
+            result_xdr: None,
+            hash: Some("abc123".to_string()),
+        };
+        let (_, json) = sas_fee_admin_output(&result, Some(("Ctoken", 1_000_000))).unwrap();
+        assert_eq!(json["tx_hash"], "abc123");
+
+        let (human, _) = sas_fee_admin_output(&result, None).unwrap();
+        assert!(human.contains("Fee cleared — attestation is now fee-free"));
+        assert!(human.contains("abc123"));
+    }
+
+    #[test]
+    fn sas_admin_unauthorized_error_is_explicit() {
+        let message =
+            crate::format_sas_admin_error(soroban_sas_sdk::errors::SdkError::ContractError(301));
+        assert_eq!(
+            message,
+            "SASError::Unauthorized: caller is not the SAS admin"
+        );
+        let other =
+            crate::format_sas_admin_error(soroban_sas_sdk::errors::SdkError::ContractError(302));
+        assert!(!other.contains("Unauthorized"));
+    }
+
+    #[test]
     fn sas_get_fee_works_without_identity_and_resolves_network() {
         let cli = Cli::try_parse_from([
             "soroban-sas",
@@ -377,7 +564,7 @@ mod tests {
         assert!(cli.identity.is_none());
         let Some(Commands::Sas {
             action:
-                SasCommands::GetFee {
+                SasCommands::Get {
                     contract_id,
                     rpc_url,
                 },
@@ -761,11 +948,12 @@ mod online_verification_tests {
         let contract_id = stellar_strkey::Contract([5u8; 32]).to_string();
         let url = spawn_single_response_mock_server(fee_none_response());
         let res = crate::run_sas(
-            crate::SasCommands::GetFee {
+            crate::SasCommands::Get {
                 contract_id,
                 rpc_url: Some(url),
             },
             crate::OutputFormat::Json,
+            None,
             None,
         );
         assert!(res.is_ok());
@@ -782,11 +970,12 @@ mod online_verification_tests {
             1_000_000,
         ));
         let res = crate::run_sas(
-            crate::SasCommands::GetFee {
+            crate::SasCommands::Get {
                 contract_id,
                 rpc_url: Some(url),
             },
             crate::OutputFormat::Human,
+            None,
             None,
         );
         assert!(res.is_ok());
