@@ -1,0 +1,84 @@
+name: Integration
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  SOROBAN_RPC_URL: http://localhost:8000/soroban/rpc
+  NETWORK_PASSPHRASE: "Standalone Network ; February 2017"
+
+jobs:
+  integration:
+    name: Integration (live Soroban RPC node)
+    runs-on: ubuntu-latest
+
+    services:
+      stellar-quickstart:
+        image: stellar/quickstart:testing
+        options: >-
+          --health-cmd "curl -s -f -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getHealth\"}' http://localhost:8000/soroban/rpc | grep -q '\"status\":[[:space:]]*\"healthy\"'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 10s
+        ports:
+          - 8000:8000
+        # Mirrors docker-compose.yml's `command: --standalone --enable-soroban-rpc`.
+        env:
+          ENABLE_SOROBAN_RPC: "true"
+
+    steps:
+      - uses: actions/checkout@v4.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.79.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-integration-
+            ${{ runner.os }}-cargo-
+
+      - name: Install stellar-cli
+        run: cargo install --locked stellar-cli --version ^22
+
+      - name: Wait for Soroban RPC readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -s -f -X POST -H 'Content-Type: application/json' \
+                 -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+                 "$SOROBAN_RPC_URL" | grep -q '"status":[[:space:]]*"healthy"'; then
+              echo "Soroban RPC is healthy"
+              exit 0
+            fi
+            echo "waiting for Soroban RPC ($i/60)..."
+            sleep 2
+          done
+          echo "Soroban RPC never became healthy" >&2
+          exit 1
+
+      - name: Generate and fund the integration test account
+        run: |
+          IDENTITY_NAME="ci-integration"
+          stellar keys generate "$IDENTITY_NAME" --network standalone --rpc-url "$SOROBAN_RPC_URL" \
+            --network-passphrase "$NETWORK_PASSPHRASE" --fund
+          SECRET_KEY="$(stellar keys show "$IDENTITY_NAME")"
+          echo "::add-mask::$SECRET_KEY"
+          echo "STELLAR_SECRET_KEY=$SECRET_KEY" >> "$GITHUB_ENV"
+
+      - name: Run integration tests
+        run: cargo test --test integration -- --ignored --test-threads=1

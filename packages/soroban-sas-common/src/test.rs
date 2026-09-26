@@ -142,6 +142,56 @@ fn sample_domain(env: &Env, nonce: u64) -> AttestationDomain {
     }
 }
 
+/// Golden vectors for `schema_uid`/`attestation_uid` (#248), pinning the
+/// exact digest produced by these functions for a fixed set of inputs so a
+/// cross-language implementation (the TypeScript SDK) can assert
+/// byte-identical output against the same inputs.
+mod uid_golden_vectors {
+    use super::account_address;
+    use crate::{attestation_uid, schema_uid, UID};
+    use soroban_sdk::{Bytes, BytesN, Env, String as SorobanString};
+
+    #[test]
+    fn golden_vector_schema_uid() {
+        let env = Env::default();
+        let schema = SorobanString::from_str(&env, "bool verified");
+        let resolver = account_address(&env, &[0x11u8; 32]);
+
+        let uid = schema_uid(&env, &schema, &resolver, true);
+
+        let expected: [u8; 32] = [
+            146, 100, 182, 216, 54, 242, 50, 235, 155, 202, 243, 176, 169, 46, 166, 119, 188, 40,
+            43, 56, 107, 202, 5, 219, 141, 246, 102, 45, 245, 237, 57, 121,
+        ];
+        assert_eq!(
+            uid.0.to_array(),
+            expected,
+            "golden schema_uid digest mismatch - cross-check TS hashing.ts before changing"
+        );
+    }
+
+    #[test]
+    fn golden_vector_attestation_uid() {
+        let env = Env::default();
+        let schema_uid_val = UID(BytesN::from_array(&env, &[0x02u8; 32]));
+        let recipient = account_address(&env, &[0x22u8; 32]);
+        let attester = account_address(&env, &[0x11u8; 32]);
+        let data = Bytes::from_slice(&env, b"golden vector data");
+
+        let uid = attestation_uid(&env, &schema_uid_val, &recipient, &attester, &data);
+
+        let expected: [u8; 32] = [
+            69, 223, 100, 152, 78, 106, 147, 32, 181, 3, 111, 219, 137, 53, 251, 12, 219, 222,
+            253, 33, 88, 253, 190, 86, 203, 201, 116, 113, 228, 193, 16, 142,
+        ];
+        assert_eq!(
+            uid.0.to_array(),
+            expected,
+            "golden attestation_uid digest mismatch - cross-check TS hashing.ts before changing"
+        );
+    }
+}
+
 #[test]
 fn test_offchain_hash_deterministic() {
     let env = Env::default();

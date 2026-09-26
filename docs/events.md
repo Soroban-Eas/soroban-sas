@@ -137,6 +137,21 @@ indexer is bound; every rebinding after that carries the address it
 replaced, so an off-chain monitor can reconstruct the full indexer-binding
 history from the event log alone.
 
+## IndexerStrictUpdated
+
+Emitted by the SAS contract on a successful `set_indexer_strict`.
+
+- Topics: `("IDXSTRUP", admin: Address)`
+- Data: `IndexerStrictUpdatedEvent { old_strict: bool, new_strict: bool, admin: Address }`
+
+`set_indexer_strict` requires authorization from SAS's admin, so `admin` is
+always that admin address. `false` is fail-open (the default: a failed
+Indexer push is tolerated and surfaced via `IndexFailed`); `true` is
+fail-closed (a failed push aborts the attestation with
+`SASError::IndexerUnavailable`). The event is published only after the new
+policy has already been written to instance storage, so a failed or
+unauthorized call never emits it.
+
 ## SchemaFeeUpdated
 
 Emitted by the schema registry on a successful `set_fee`.
@@ -223,7 +238,7 @@ Emitted by the schema registry on a successful `transfer_schema_ownership`.
 
 ## Security-sensitive configuration changes
 
-`IndexerUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and
+`IndexerUpdated`, `IndexerStrictUpdated`, `SchemaFeeUpdated`, `TreasuryUpdated`, and
 `ContractUpgraded` share a design: each authorization check
 (`require_auth`) happens before any state is written, and each
 event is published only after the corresponding storage write has already
@@ -260,6 +275,9 @@ match parse_contract_event(&event) {
     }
     Ok(SasEvent::BatchRevoked(batch)) => {
         // batch.count, batch.attester_count
+    }
+    Ok(SasEvent::IndexerStrictUpdated(update)) => {
+        // update.old_strict, update.new_strict, update.admin
     }
     Err(_) => { /* not a SAS event */ }
 }
