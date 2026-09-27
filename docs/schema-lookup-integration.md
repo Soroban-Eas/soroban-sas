@@ -14,6 +14,20 @@ The Schema Registry stores schema definitions and maintains their metadata. Each
 - Context data (metadata about the schema)
 - Creation and update timestamps
 
+Two read paths exist for a schema:
+
+| Call | Keyed by | Use when |
+| --- | --- | --- |
+| `get_schema(uid)` | 32-byte content-addressed `schema_uid` | You already hold the UID (for example, from an attestation). |
+| `get_schema_by_content(schema, resolver, revocable)` | The raw definition | You hold the definition and want to avoid re-deriving the UID off-chain. |
+
+`get_schema_by_content` re-derives the UID inside the contract with the same
+canonical rules `register` uses — see
+[Schema Definitions and Payloads](schemas.md#looking-up-a-schema-by-content) —
+so an off-chain byte-encoding mismatch cannot make a registered schema look
+missing. It returns `None` for unregistered or deprecated content, and reverts
+with `SASError::InvalidSchema` for a malformed schema string.
+
 ## Indexer Contract Integration
 
 The Indexer contract maintains indices of attestations organized by:
