@@ -504,6 +504,30 @@ enum SchemaCommands {
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
     },
+    /// Look up an existing schema by its raw definition, without computing its
+    /// UID off-chain. The registry derives the content-addressed UID with the
+    /// same canonical rules `register` uses, so callers that cannot reproduce
+    /// the host hashing rules can still check whether a definition is already
+    /// registered. A malformed schema string is rejected.
+    GetByContent {
+        #[arg(long, help = "Schema definition string")]
+        schema: String,
+        #[arg(
+            long,
+            help = "Resolver contract address (C...) invoked on attest/revoke"
+        )]
+        resolver: String,
+        #[arg(long, help = "Whether attestations against this schema can be revoked")]
+        revocable: bool,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
     /// Register a new schema, paying the configured registration fee.
     /// `token`/`value` must match what the registry admin configured via
     /// `set-fee`, or the call fails before anything is registered.
@@ -1733,6 +1757,61 @@ fn run_schema(
                             "found": true,
                             "uid": uid_hex.clone(),
                             "resolver": resolver.clone(),
+                            "revocable": revocable,
+                            "schema": schema_str.clone(),
+                        }),
+                    )
+                }
+            }
+        }
+        SchemaCommands::GetByContent {
+            schema,
+            resolver,
+            revocable,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let resolver_addr = soroban_sas_sdk::strkey::parse_address(
+                &env,
+                &resolver,
+                soroban_sas_sdk::strkey::AddressKind::Contract,
+                "resolver",
+            )
+            .map_err(|e| e.to_string())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let schema_record = client
+                .get_schema_by_content(
+                    &env,
+                    &rpc,
+                    &registry_contract_id,
+                    &schema,
+                    &resolver_addr,
+                    revocable,
+                )
+                .map_err(|e| e.to_string())?;
+
+            match schema_record {
+                None => emit_ok(
+                    output,
+                    || println!("Schema not found"),
+                    serde_json::json!({ "found": false }),
+                ),
+                Some(record) => {
+                    let uid_hex = hex::encode(record.uid.0.to_array());
+                    let schema_str = soroban_string_to_std(&record.schema);
+                    let revocable = record.revocable;
+                    emit_ok(
+                        output,
+                        || {
+                            println!("uid:       {uid_hex}");
+                            println!("revocable: {revocable}");
+                            println!("schema:    {schema_str}");
+                        },
+                        serde_json::json!({
+                            "found": true,
+                            "uid": uid_hex.clone(),
                             "revocable": revocable,
                             "schema": schema_str.clone(),
                         }),
