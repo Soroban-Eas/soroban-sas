@@ -32,6 +32,52 @@ Two ceilings bound the size of a schema string:
   attestation issued under the schema, so this ceiling protects that budget.
   Real identity, KYC, and governance schemas rarely exceed 20 fields.
 
+### Looking up a schema by content
+
+`get_schema(uid)` keys off the 32-byte content-addressed `schema_uid`.
+Reproducing that UID off-chain means matching the host's XDR hashing rules
+exactly; a byte-encoding mismatch yields a UID that was never registered, so a
+caller wrongly concludes the schema is missing and attempts a duplicate
+registration that reverts.
+
+`get_schema_by_content(schema, resolver, revocable)` removes that step: the
+contract derives the UID internally with the same canonical derivation
+[`register`](#creating-a-schema) uses, so callers pass the definition they
+already hold.
+
+```rust
+pub fn get_schema_by_content(
+    env: Env,
+    schema: String,
+    resolver: Address,
+    revocable: bool,
+) -> Option<SchemaRecord>
+```
+
+Behaviour:
+
+- Returns `Some(SchemaRecord)` when `(schema, resolver, revocable)` is
+  registered and active.
+- Returns `None` for content that was never registered, and for a deprecated
+  schema — matching `get_schema`.
+- All three fields participate in the UID, so changing only `resolver` or only
+  `revocable` addresses different (normally unregistered) content. See
+  [Schema identity and UID derivation](../specs/protocol-v1.md#schema-identity-and-uid-derivation).
+- A malformed `schema` string panics with `SASError::InvalidSchema` — the same
+  error `register` raises — rather than returning a misleading `None`. Syntax
+  is validated before the UID is derived.
+
+Rust SDK: `SASClient::fetch_schema_by_content(schema, resolver, revocable)`.
+
+CLI:
+
+```bash
+soroban-sas-cli schema get-by-content \
+  --schema "bool certified" \
+  --resolver $RESOLVER \
+  --revocable true
+```
+
 ## Verification
 When verifying an attestation off-chain or on-chain, the client decodes the raw `data` field using the associated schema definition. The schema enforces that every issued attestation strictly conforms to the expected layout.
 
