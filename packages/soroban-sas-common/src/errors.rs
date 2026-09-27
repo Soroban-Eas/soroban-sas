@@ -77,3 +77,48 @@ pub enum SASError {
     /// The contract is paused and write operations are not permitted (#255).
     ContractPaused = 501,
 }
+
+/// Errors raised while validating a typed-data schema or hashing typed data
+/// (#299). Kept separate from [`SASError`] because typed-data hashing is a
+/// library surface used by off-chain callers, the SDK, and (potentially)
+/// multiple contracts, so its codes must not shift when a contract error is
+/// renumbered.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum TypedDataError {
+    /// The schema declares no structs, or no types.
+    EmptySchema = 1,
+    /// A struct or field name is empty.
+    EmptyName = 2,
+    /// A struct or field name exceeds `MAX_NAME_BYTES`.
+    NameTooLong = 3,
+    /// Two struct definitions share a name.
+    DuplicateStructName = 4,
+    /// A struct declares the same field name twice. EIP-712 requires unique
+    /// field names: duplicates make `encodeType` ambiguous, so two different
+    /// payloads could hash to one digest.
+    DuplicateFieldName = 5,
+    /// A field's `type_index` is outside the type table.
+    TypeIndexOutOfRange = 6,
+    /// A `Struct` type node's `reference` is outside the struct table.
+    StructIndexOutOfRange = 7,
+    /// An elementary type node carries a `reference` other than
+    /// `NO_REFERENCE`.
+    UnexpectedReference = 8,
+    /// The type graph contains a cycle, which would make encoding recurse
+    /// forever.
+    CyclicTypeReference = 9,
+    /// The schema exceeds the struct or type table size caps.
+    SchemaTooLarge = 10,
+    /// A struct declares more fields than `MAX_STRUCT_FIELDS`.
+    StructTooLarge = 11,
+    /// A `String` value exceeds `MAX_STRING_VALUE_BYTES`.
+    StringValueTooLong = 12,
+    /// A value's variant does not match the kind the schema declares for that
+    /// field.
+    TypeMismatch = 13,
+    /// The number of values supplied for a struct does not match its field
+    /// count.
+    ArityMismatch = 14,
+}

@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
+pub mod eip712;
 pub mod errors;
 pub mod events;
 pub mod macros;
@@ -8,6 +9,7 @@ pub mod signature;
 pub mod typed_data;
 pub mod validation;
 
+pub use eip712::*;
 pub use errors::*;
 pub use events::*;
 pub use merkle::*;

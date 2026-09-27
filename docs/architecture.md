@@ -11,6 +11,20 @@ The Soroban Attestation Service (SAS) is composed of three primary components:
 - Minimal gas overhead.
 - Strict payload boundaries to prevent gas exhaustion attacks.
 
+## Hashing
+
+Two digest schemes live in `packages/soroban-sas-common`, both SHA-256 based and
+prefix-separated so neither can be replayed as the other:
+
+- `typed_data`: the fixed off-chain attestation layout with pinned golden
+  vectors.
+- `eip712`: generic EIP-712 equivalent structured-data hashing for arbitrary
+  schema-shaped payloads — a signature can cover any struct an issuer defines,
+  and the schema itself is bound into the digest.
+
+See [Typed-Data Hashing](typed-data.md) for the algorithm, the type-to-word
+mapping, the validation rules, and the deliberate deviations from EIP-712.
+
 ## Storage Retention Policy
 
 Soroban has two independent expiry mechanisms, and each contract's core
