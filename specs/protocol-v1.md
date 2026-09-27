@@ -23,6 +23,14 @@ migration map from legacy UIDs to new UIDs. New registrations after the upgrade
 always use the canonical derivation. Golden vectors for the new derivation are
 locked in `contracts/schema-registry` tests.
 
+The derivation is also exposed as a read-only lookup so callers never have to
+reproduce it: `SchemaRegistry::get_schema_by_content(schema, resolver,
+revocable)` re-derives the canonical UID with the rules above and returns the
+same `Option<SchemaRecord>` as `get_schema`, with `None` for unregistered or
+deprecated content. It is a view over this derivation, not a second identity:
+all three fields still participate in the preimage, and a malformed schema
+string is rejected with `SASError::InvalidSchema` before any UID is derived.
+
 ## Recipient invariants
 
 Soroban `Address` values are already structurally validated by the host. SAS therefore applies semantic rules rather than duplicating address-format checks: the recipient must not be the protocol's zero account or zero contract sentinel, and it must differ from the attester. Self-targeting is rejected because an attestation is a claim made by an issuer about a distinct subject; accepting it would make issuer/subject separation ambiguous for consumers. These rules are applied by `attest`, `attest_with_value`, and `multi_attest` before an attestation is stored.
