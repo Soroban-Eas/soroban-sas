@@ -94,6 +94,9 @@ Usage examples:
 
 ```bash
 cargo run -p soroban-sas-cli -- --output json schema get --uid UID... --registry-contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json schema withdraw-fees --amount 1000000 \
+  --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
+  --registry-contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json attest verify --uid UID... --contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json attest attest \
   --schema-uid UID... --recipient G... --data 0xdeadbeef \

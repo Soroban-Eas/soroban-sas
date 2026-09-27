@@ -624,6 +624,168 @@ fn sas_set_fee_surfaces_unauthorized_simulation_as_contract_error_301() {
     assert!(matches!(error, crate::errors::SdkError::ContractError(301)));
 }
 
+#[test]
+fn schema_withdraw_fees_encodes_amount_and_settles() {
+    let env = Env::default();
+    let seed = [51u8; 32];
+    let registry_contract_id = stellar_strkey::Contract([52u8; 32]).to_string();
+    let (request_tx, request_rx) = std::sync::mpsc::channel();
+    let (url, server) = spawn_fee_pipeline_server(seed, request_tx);
+    let rpc = crate::rpc::RpcClient::new(url).with_timeout(Duration::from_secs(5));
+    let client = crate::client::SASClient::new(registry_contract_id.clone());
+
+    let first = client
+        .withdraw_schema_fees(
+            &env,
+            &rpc,
+            "Test SDF Network ; September 2015",
+            &seed,
+            &registry_contract_id,
+            500,
+        )
+        .unwrap();
+    let second = client
+        .withdraw_schema_fees(
+            &env,
+            &rpc,
+            "Test SDF Network ; September 2015",
+            &seed,
+            &registry_contract_id,
+            250,
+        )
+        .unwrap();
+    assert_eq!(first.status, "SUCCESS");
+    assert_eq!(second.status, "SUCCESS");
+    server.join().unwrap();
+
+    let requests: Vec<_> = request_rx.try_iter().collect();
+    let methods: Vec<_> = requests
+        .iter()
+        .map(|request| request["method"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "getLedgerEntries",
+            "simulateTransaction",
+            "sendTransaction",
+            "getTransaction",
+            "getLedgerEntries",
+            "simulateTransaction",
+            "sendTransaction",
+            "getTransaction"
+        ]
+    );
+
+    let invocations: Vec<_> = requests
+        .iter()
+        .filter(|request| request["method"] == "simulateTransaction")
+        .map(|request| {
+            let xdr = request["params"]["transaction"].as_str().unwrap();
+            let TransactionEnvelope::Tx(envelope) =
+                TransactionEnvelope::from_xdr_base64(xdr, Limits::none()).unwrap()
+            else {
+                panic!("expected V1 transaction envelope");
+            };
+            let OperationBody::InvokeHostFunction(operation) = &envelope.tx.operations[0].body
+            else {
+                panic!("expected InvokeHostFunction operation");
+            };
+            let HostFunction::InvokeContract(invocation) = &operation.host_function else {
+                panic!("expected InvokeContract host function");
+            };
+            invocation.clone()
+        })
+        .collect();
+    assert_eq!(
+        invocations[0].function_name.0.to_string(),
+        "withdraw_fees"
+    );
+    assert_eq!(invocations[0].args.len(), 1);
+    assert_eq!(
+        invocations[0].args[0],
+        crate::simulate::encode_arg(&env, &500i128).unwrap()
+    );
+    assert_eq!(
+        invocations[1].function_name.0.to_string(),
+        "withdraw_fees"
+    );
+    assert_eq!(
+        invocations[1].args[0],
+        crate::simulate::encode_arg(&env, &250i128).unwrap()
+    );
+}
+
+#[test]
+fn schema_withdraw_fees_rejects_non_positive_amount_before_rpc() {
+    let env = Env::default();
+    let client = crate::client::SASClient::new(stellar_strkey::Contract([53u8; 32]).to_string());
+    let rpc = crate::rpc::RpcClient::new("http://127.0.0.1:1".to_string());
+    let registry_contract_id = stellar_strkey::Contract([53u8; 32]).to_string();
+    for amount in [0, -1] {
+        let error = client
+            .withdraw_schema_fees(
+                &env,
+                &rpc,
+                "network",
+                &[54u8; 32],
+                &registry_contract_id,
+                amount,
+            )
+            .unwrap_err();
+        assert!(matches!(error, crate::errors::SdkError::InvalidInput(_)));
+    }
+}
+
+#[test]
+fn schema_withdraw_fees_surfaces_unauthorized_simulation_as_contract_error_301() {
+    let env = Env::default();
+    let seed = [55u8; 32];
+    let (account_xdr, _) = write_pipeline_fixture(seed);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for expected_method in ["getLedgerEntries", "simulateTransaction"] {
+            let (stream, _) = listener.accept().unwrap();
+            let request = read_rpc_request(&stream);
+            assert_eq!(request["method"], expected_method);
+            let id = request["id"].clone();
+            let response = if expected_method == "getLedgerEntries" {
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "result": {
+                        "entries": [{"key": "AAAAAA==", "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
+                        "latestLedger": 1
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "result": {
+                        "latestLedger": 1,
+                        "error": "HostError: Error(301, Unauthorized)"
+                    }
+                })
+            };
+            write_rpc_response(stream, &response);
+        }
+    });
+
+    let rpc = crate::rpc::RpcClient::new(url).with_timeout(Duration::from_secs(5));
+    let client = crate::client::SASClient::new(stellar_strkey::Contract([56u8; 32]).to_string());
+    let registry_contract_id = stellar_strkey::Contract([56u8; 32]).to_string();
+    let error = client
+        .withdraw_schema_fees(
+            &env,
+            &rpc,
+            "network",
+            &seed,
+            &registry_contract_id,
+            500,
+        )
+        .unwrap_err();
+    server.join().unwrap();
+    assert!(matches!(error, crate::errors::SdkError::ContractError(301)));
+}
+
 /// Issue #132 acceptance criterion: two writes for the same account, built
 /// concurrently while sharing one [`SequenceManager`], are handed **distinct**
 /// sequence numbers instead of both reading the same on-chain value and

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Schema-registration fee withdrawal is now exposed end to end: the SDK method
+  `SASClient::withdraw_schema_fees` and the `soroban-sas schema withdraw-fees`
+  CLI subcommand call the existing `SchemaRegistry::withdraw_fees` entry point,
+  so a registry admin can withdraw accumulated schema-registration fees from a
+  shipped client instead of only configuring the fee and treasury. (#292)
 - Generic EIP-712 structured-data hashing in `soroban-sas-common::eip712`:
   `encode_type`/`type_hash`/`encode_data`/`hash_struct`/`hash_typed_data`
   derived from `StructDef`/`FieldDef` declarations, covering nested structs,

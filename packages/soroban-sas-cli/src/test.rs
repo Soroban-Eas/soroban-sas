@@ -6,7 +6,7 @@ mod tests {
     use crate::{
         decode_hex_or_base64, fee_to_human, fee_to_json, parse_uid, sas_fee_admin_output,
         validate_fee_amount, validate_schema_syntax, AttestCommands, Cli, Commands, OutputFormat,
-        SasCommands,
+        SasCommands, SchemaCommands,
     };
 
     #[test]
@@ -507,6 +507,78 @@ mod tests {
                     network_passphrase: None,
                     contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
                         .to_string(),
+                    rpc_url: Some("http://127.0.0.1:1".to_string()),
+                },
+                OutputFormat::Human,
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error, "--amount must be greater than 0");
+        }
+    }
+
+    #[test]
+    fn parses_schema_withdraw_fees_flags() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--identity",
+            "admin",
+            "--network",
+            "testnet",
+            "--output",
+            "json",
+            "schema",
+            "withdraw-fees",
+            "--amount",
+            "500000",
+            "--registry-contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.identity.as_deref(), Some("admin"));
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Schema {
+            action:
+                SchemaCommands::WithdrawFees {
+                    amount,
+                    secret_key,
+                    network_passphrase,
+                    registry_contract_id,
+                    rpc_url,
+                },
+        }) = cli.command
+        else {
+            panic!("expected schema withdraw-fees command");
+        };
+        assert_eq!(amount, 500_000);
+        assert!(secret_key.is_none());
+        assert_eq!(
+            registry_contract_id,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+        );
+        assert_eq!(rpc_url, None);
+        assert_eq!(
+            crate::resolve_network_passphrase(network_passphrase, cli.network.as_deref()).unwrap(),
+            "Test SDF Network ; September 2015"
+        );
+        assert_eq!(
+            crate::resolve_rpc_url(rpc_url, cli.network.as_deref()).unwrap(),
+            "https://soroban-testnet.stellar.org"
+        );
+    }
+
+    #[test]
+    fn schema_withdraw_fees_rejects_non_positive_amounts_before_rpc_setup() {
+        let contract_id = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+        for amount in [0, -1] {
+            let error = crate::run_schema(
+                SchemaCommands::WithdrawFees {
+                    amount,
+                    secret_key: None,
+                    network_passphrase: None,
+                    registry_contract_id: contract_id.to_string(),
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
                 },
                 OutputFormat::Human,
@@ -1175,5 +1247,154 @@ mod by_attester_query_tests {
         let request: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
         assert_eq!(request["method"], "simulateTransaction");
         assert!(request["params"]["transaction"].as_str().is_some());
+    }
+}
+
+#[cfg(test)]
+mod schema_withdraw_fees_tests {
+    use soroban_sdk::xdr::{
+        AccountEntry, AccountEntryExt, AccountId, ExtensionPoint, LedgerEntryData, LedgerFootprint,
+        Limits, PublicKey, SequenceNumber, SorobanResources, SorobanTransactionData, String32,
+        Thresholds, Uint256, VecM, WriteXdr,
+    };
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    use crate::{OutputFormat, SchemaCommands};
+
+    /// Answers the four calls one signed write pipeline makes —
+    /// `getLedgerEntries`, `simulateTransaction`, `sendTransaction`,
+    /// `getTransaction` — and settles the write with `SUCCESS`. The
+    /// `getTransaction` reply deliberately omits `envelopeXdr`, which the
+    /// SDK treats as "envelope not checked" rather than a decode failure.
+    fn spawn_write_pipeline_mock(seed: [u8; 32]) -> String {
+        let public_key = soroban_sas_sdk::signature::derive_public_key(&seed);
+        let account_entry_xdr = LedgerEntryData::Account(AccountEntry {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(public_key))),
+            balance: 100_000_000,
+            seq_num: SequenceNumber(7),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: String32::default(),
+            thresholds: Thresholds([1, 0, 0, 0]),
+            signers: Default::default(),
+            ext: AccountEntryExt::V0,
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+        let transaction_data_xdr = SorobanTransactionData {
+            ext: ExtensionPoint::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint {
+                    read_only: VecM::default(),
+                    read_write: VecM::default(),
+                },
+                instructions: 0,
+                read_bytes: 0,
+                write_bytes: 0,
+            },
+            resource_fee: 0,
+        }
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for expected_method in [
+                "getLedgerEntries",
+                "simulateTransaction",
+                "sendTransaction",
+                "getTransaction",
+            ] {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                let request = read_request(&stream);
+                assert_eq!(request["method"], expected_method);
+                let id = request["id"].clone();
+                let response = match expected_method {
+                    "getLedgerEntries" => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "entries": [{
+                                "key": "AAAAAA==",
+                                "xdr": account_entry_xdr,
+                                "lastModifiedLedgerSeq": 1
+                            }],
+                            "latestLedger": 1
+                        }
+                    }),
+                    "simulateTransaction" => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "latestLedger": 1,
+                            "results": [{"xdr": "AAAAAA=="}],
+                            "transactionData": transaction_data_xdr,
+                            "minResourceFee": "0"
+                        }
+                    }),
+                    "sendTransaction" => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "status": "PENDING", "hash": "withdraw-hash", "latestLedger": 1
+                        }
+                    }),
+                    _ => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "status": "SUCCESS", "latestLedger": 1, "resultXdr": "AAAAAQAAAAA="
+                        }
+                    }),
+                };
+                write_response(stream, &response);
+            }
+        });
+        url
+    }
+
+    fn read_request(stream: &TcpStream) -> serde_json::Value {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            let read = reader.read_line(&mut line).unwrap_or(0);
+            if read == 0 || line == "\r\n" || line == "\n" {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0u8; content_length];
+        let _ = reader.read_exact(&mut body);
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    fn write_response(mut stream: TcpStream, response: &serde_json::Value) {
+        let body = response.to_string();
+        let http = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(http.as_bytes());
+        let _ = stream.flush();
+    }
+
+    #[test]
+    fn schema_withdraw_fees_runs_end_to_end_with_json_output() {
+        let seed = [61u8; 32];
+        let url = spawn_write_pipeline_mock(seed);
+        let res = crate::run_schema(
+            SchemaCommands::WithdrawFees {
+                amount: 500,
+                secret_key: Some(hex::encode(seed)),
+                network_passphrase: Some("Test SDF Network ; September 2015".to_string()),
+                registry_contract_id: stellar_strkey::Contract([62u8; 32]).to_string(),
+                rpc_url: Some(url),
+            },
+            OutputFormat::Json,
+            None,
+            None,
+        );
+        assert!(res.is_ok(), "withdraw-fees should settle: {res:?}");
     }
 }

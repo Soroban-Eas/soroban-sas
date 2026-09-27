@@ -621,6 +621,35 @@ enum SchemaCommands {
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
     },
+    /// Admin: withdraw accumulated registration fees from the registry.
+    WithdrawFees {
+        #[arg(
+            long,
+            help = "Amount to withdraw, in the fee token's smallest unit (must be > 0)"
+        )]
+        amount: i128,
+        #[arg(
+            long,
+            help = "Registry admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
     /// Read the currently configured registration fee, if any.
     GetFee {
         #[arg(
@@ -1850,6 +1879,33 @@ fn run_schema(
                     &seed,
                     &registry_contract_id,
                     &treasury,
+                )
+                .map_err(|e| e.to_string())?;
+            print_transaction_result(result, output)
+        }
+        SchemaCommands::WithdrawFees {
+            amount,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            validate_fee_amount(amount)?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let result = client
+                .withdraw_schema_fees(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    amount,
                 )
                 .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)

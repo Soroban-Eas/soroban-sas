@@ -877,6 +877,42 @@ impl SASClient {
         )
     }
 
+    /// Calls `SchemaRegistry::withdraw_fees(amount)`, withdrawing `amount`
+    /// of the registry's configured fee token from the balance accumulated
+    /// by `register_schema_with_value`. Requires `admin_secret_seed`'s
+    /// account to be the registry's admin.
+    ///
+    /// The on-chain `withdraw_fees` gates the call on the registry admin's
+    /// authorization (`admin.require_auth()`). Mirroring the client-side
+    /// guard `set_fee` uses on the SAS client, a non-positive `amount` is
+    /// rejected with `SdkError::InvalidInput` before any RPC call is made,
+    /// so a meaningless withdrawal never costs a simulation fee.
+    pub fn withdraw_schema_fees(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        amount: i128,
+    ) -> Result<GetTransactionResult, SdkError> {
+        if amount <= 0 {
+            return Err(SdkError::InvalidInput(
+                "withdraw amount must be greater than 0".to_string(),
+            ));
+        }
+        let args = vec![simulate::encode_arg(env, &amount)?];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            admin_secret_seed,
+            registry_contract_id,
+            "withdraw_fees",
+            args,
+        )
+    }
+
     /// Reads the `(token, amount)` fee `register_schema_with_value`
     /// requires, or `None` when registration is fee-free.
     pub fn get_schema_fee(
