@@ -342,6 +342,31 @@ impl SASClient {
         invoke_read_only(env, rpc, registry_contract_id, "get_schema", vec![arg])
     }
 
+    /// Calls `SchemaRegistry::get_schema_by_content(schema, resolver,
+    /// revocable)` on `registry_contract_id` via `simulateTransaction` — a pure
+    /// read, same as [`get_schema`](Self::get_schema).
+    ///
+    /// Lets callers that hold a raw definition skip reproducing the
+    /// content-addressed UID off-chain; the registry derives it with the same
+    /// canonical rules it uses on registration.
+    pub fn get_schema_by_content(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        schema: &str,
+        resolver: &Address,
+        revocable: bool,
+    ) -> Result<Option<SchemaRecord>, SdkError> {
+        let schema_val = SorobanString::from_str(env, schema);
+        let args = vec![
+            simulate::encode_arg(env, &schema_val)?,
+            simulate::encode_arg(env, resolver)?,
+            simulate::encode_arg(env, &revocable)?,
+        ];
+        invoke_read_only(env, rpc, registry_contract_id, "get_schema_by_content", args)
+    }
+
     /// Calls `SAS::get_attester_key(attester)` via `simulateTransaction` — a
     /// pure read, same pattern as `get_schema`. Returns `Ok(None)` when
     /// `attester` never registered a delegated-verification key;
@@ -394,6 +419,39 @@ impl SASClient {
         })?;
         let env = self.env.clone().unwrap_or_default();
         self.get_schema(&env, rpc, registry_id, schema_uid)
+    }
+
+    /// Fetches a schema record by its raw definition from the configured
+    /// Schema Registry contract.
+    ///
+    /// Simulates `SchemaRegistry::get_schema_by_content(schema, resolver,
+    /// revocable)` against the registry bound to this [`SASClient`] via
+    /// [`with_registry`](Self::with_registry), so callers that only hold the
+    /// definition never have to reproduce the host's UID hashing rules.
+    ///
+    /// Requires both an RPC client (via [`with_rpc`](Self::with_rpc)) and a
+    /// registry contract address (via [`with_registry`](Self::with_registry)).
+    /// Returns `Ok(None)` for unregistered or deprecated content, and
+    /// `Ok(Some(SchemaRecord))` when the definition is registered.
+    pub fn fetch_schema_by_content(
+        &self,
+        schema: &str,
+        resolver: &Address,
+        revocable: bool,
+    ) -> Result<Option<SchemaRecord>, SdkError> {
+        let registry_id = self.registry_contract_id.as_deref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "registry address is required on SASClient; configure it via with_registry(...)"
+                    .to_string(),
+            )
+        })?;
+        let rpc = self.rpc.as_ref().ok_or_else(|| {
+            SdkError::InvalidInput(
+                "RPC client is required on SASClient; configure it via with_rpc(...)".to_string(),
+            )
+        })?;
+        let env = self.env.clone().unwrap_or_default();
+        self.get_schema_by_content(&env, rpc, registry_id, schema, resolver, revocable)
     }
 
     /// Fetches the full `Attestation` record for `uid` via the
@@ -2639,6 +2697,83 @@ mod tests {
         let client_with_reg =
             client.with_registry("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM");
         let err_no_rpc = client_with_reg.fetch_schema(&[0u8; 32]).unwrap_err();
+        assert!(matches!(err_no_rpc, SdkError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn fetch_schema_by_content_round_trip_and_missing() {
+        let env = Env::default();
+        let resolver = Address::generate(&env);
+        let registry_id = stellar_strkey::Contract([2u8; 32]).to_string();
+        let client_id = stellar_strkey::Contract([1u8; 32]).to_string();
+
+        let uid = SASClient::compute_schema_uid(&env, "score U32", &resolver, true);
+        let record = SchemaRecord {
+            uid,
+            schema: SorobanString::from_str(&env, "score U32"),
+            resolver: resolver.clone(),
+            revocable: true,
+            deprecated: false,
+        };
+
+        let opt: Option<SchemaRecord> = Some(record.clone());
+        let result_xdr = simulate::encode_arg(&env, &opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let url = spawn_mock_rpc_server(body);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(client_id.clone())
+            .with_rpc(rpc)
+            .with_registry(registry_id.clone())
+            .with_env(env.clone());
+
+        let fetched = client
+            .fetch_schema_by_content("score U32", &resolver, true)
+            .unwrap();
+        assert_eq!(fetched, Some(record));
+
+        // Unregistered content comes back as None, not an error.
+        let none_opt: Option<SchemaRecord> = None;
+        let none_xdr = simulate::encode_arg(&env, &none_opt)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let none_body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{none_xdr}"}}]}}}}"#
+        );
+        let none_url = spawn_mock_rpc_server(none_body);
+        let none_rpc = RpcClient::new(none_url);
+        let none_client = SASClient::new(client_id)
+            .with_rpc(none_rpc)
+            .with_registry(registry_id)
+            .with_env(env);
+
+        let missing = none_client
+            .fetch_schema_by_content("uint32 score", &resolver, true)
+            .unwrap();
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn fetch_schema_by_content_requires_registry_and_rpc() {
+        let env = Env::default();
+        let resolver = Address::generate(&env);
+        let client =
+            SASClient::new("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".to_string());
+        let err_no_reg = client
+            .fetch_schema_by_content("score U32", &resolver, true)
+            .unwrap_err();
+        assert!(matches!(err_no_reg, SdkError::InvalidInput(_)));
+
+        let client_with_reg =
+            client.with_registry("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM");
+        let err_no_rpc = client_with_reg
+            .fetch_schema_by_content("score U32", &resolver, true)
+            .unwrap_err();
         assert!(matches!(err_no_rpc, SdkError::InvalidInput(_)));
     }
 
