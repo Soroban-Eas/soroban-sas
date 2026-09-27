@@ -56,6 +56,12 @@ pub const MAX_MULTI_ATTEST: u32 = 100;
 /// `MAX_MULTI_ATTEST` so the loop cannot exhaust the Soroban budget and
 /// callers get a predictable `BatchTooLarge` error up front.
 pub const MAX_MULTI_REVOKE: u32 = 100;
+/// Ceiling on how many UIDs one `verify_attestations` /
+/// `verify_all_attestations` call may check. Verification is a read (plus TTL
+/// renewal), but the bound keeps the worst-case cost of a single invocation
+/// predictable and matches the other batch entrypoints, so callers learn about
+/// oversized batches up front as `BatchTooLarge` (#297).
+pub const MAX_VERIFY_BATCH: u32 = 100;
 const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
 fn extend_instance_ttl(env: &Env) {
@@ -105,6 +111,31 @@ fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError
         return Err(SASError::IncompatibleDependency);
     };
     Address::try_from_val(env, &raw).map_err(|_| SASError::IncompatibleDependency)
+}
+
+/// Shared verdict for a single attestation UID (#297).
+///
+/// Both the single-UID entrypoint ([`SAS::verify_attestation`]) and the batch
+/// entrypoints ([`SAS::verify_attestations`] / [`SAS::verify_all_attestations`])
+/// route through this function, so a batched verdict can never disagree with
+/// the equivalent single-call verdict. A live record has its persistent TTL
+/// renewed on every check, exactly as the single-UID path always did; a
+/// missing or archived UID is simply `false` and writes nothing.
+fn verify_attestation_record(env: &Env, uid: &UID) -> bool {
+    let Some(attestation) = env.storage().persistent().get::<_, Attestation>(uid) else {
+        return false;
+    };
+
+    let ttl = SAS::compute_storage_ttl(env, attestation.expiration_time);
+    env.storage().persistent().extend_ttl(uid, ttl, ttl);
+
+    if attestation.revocation_time != 0 {
+        return false;
+    }
+    if validate_expiration(env, attestation.expiration_time).is_err() {
+        return false;
+    }
+    true
 }
 
 fn validate_upgrade(
@@ -1351,19 +1382,57 @@ impl SAS {
 
     pub fn verify_attestation(env: Env, uid: UID) -> bool {
         extend_instance_ttl(&env);
-        if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
-            let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-            env.storage().persistent().extend_ttl(&uid, ttl, ttl);
-            if attestation.revocation_time != 0 {
-                return false;
-            }
-            if validate_expiration(&env, attestation.expiration_time).is_err() {
-                return false;
-            }
-            true
-        } else {
-            false
+        verify_attestation_record(&env, &uid)
+    }
+
+    /// Verify a batch of attestations in one call (#297).
+    ///
+    /// Returns exactly one boolean per input UID, in the same order as `uids`,
+    /// with the identical semantics of [`Self::verify_attestation`]: `true`
+    /// when the UID exists, is not revoked, and has not expired. Batching
+    /// removes the per-call fixed cost (invocation, dispatch, instance TTL
+    /// renewal) that dominates polling many UIDs one at a time, without
+    /// changing a single verdict.
+    ///
+    /// Duplicate UIDs are allowed and each entry is verified independently, so
+    /// callers keep a stable input-index -> verdict mapping. The batch is
+    /// capped at [`MAX_VERIFY_BATCH`]; a larger batch is rejected with
+    /// `SASError::BatchTooLarge` rather than silently truncated, matching
+    /// `multi_attest` / `multi_revoke` / `bulk_reindex`.
+    pub fn verify_attestations(env: Env, uids: soroban_sdk::Vec<UID>) -> soroban_sdk::Vec<bool> {
+        extend_instance_ttl(&env);
+        if uids.len() > MAX_VERIFY_BATCH {
+            panic_with_error!(&env, SASError::BatchTooLarge);
         }
+
+        let mut results: soroban_sdk::Vec<bool> = soroban_sdk::Vec::new(&env);
+        for uid in uids.iter() {
+            results.push_back(verify_attestation_record(&env, &uid));
+        }
+        results
+    }
+
+    /// Returns `true` only when every UID in `uids` verifies (#297).
+    ///
+    /// Equivalent to requiring every entry of [`Self::verify_attestations`] to
+    /// be `true`, but stops at the first failing UID, so a mostly-invalid batch
+    /// costs a fraction of a full scan while reporting the same combined
+    /// verdict. Bounded by [`MAX_VERIFY_BATCH`] like the rest of the batch API.
+    ///
+    /// An empty batch is vacuously `true`, which lets callers treat this as
+    /// "nothing to check, nothing failed" without special-casing the call.
+    pub fn verify_all_attestations(env: Env, uids: soroban_sdk::Vec<UID>) -> bool {
+        extend_instance_ttl(&env);
+        if uids.len() > MAX_VERIFY_BATCH {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+
+        for uid in uids.iter() {
+            if !verify_attestation_record(&env, &uid) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Fetch an attestation by UID with TTL renewal. This is the
@@ -1439,3 +1508,5 @@ mod test_extra;
 mod test_issue_242;
 #[cfg(test)]
 mod test_issue_252;
+#[cfg(test)]
+mod verify_batch_test;
