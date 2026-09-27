@@ -12,7 +12,10 @@ use soroban_sas_common::{
     SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent, SchemaRecord, TreasuryUpdatedEvent,
     LEDGERS_IN_ONE_YEAR, UID,
 };
-use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, BytesN, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, panic_with_error, token, Address, BytesN, Env, String,
+    Vec,
+};
 
 #[contract]
 pub struct SchemaRegistry;
@@ -151,6 +154,237 @@ fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_ve
 }
 
 const MAX_SCAN_BUDGET: u32 = 100;
+
+// ===== MULTI-SIGNATURE SCHEMA OWNERS (#288) =====
+
+/// Multi-signature owner configuration for one schema.
+///
+/// When a set is configured, ownership-changing operations must collect at
+/// least `threshold` approvals from distinct members of `owners` instead of
+/// relying on a single creator signature.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnerSet {
+    /// Distinct addresses allowed to own and approve operations for the schema.
+    pub owners: Vec<Address>,
+    /// Number of distinct approvals required to execute an ownership transfer.
+    /// Always in `1..=owners.len()`.
+    pub threshold: u32,
+    /// Bumped on every reconfiguration. In-flight approvals are stamped with
+    /// the version they were collected under, so a set change invalidates them.
+    pub version: u32,
+}
+
+/// An ownership transfer that is waiting for enough owner approvals.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingOwnershipTransfer {
+    /// `OwnerSet::version` the collected approvals belong to.
+    pub owner_set_version: u32,
+    /// Address that takes over as creator once the threshold is reached.
+    pub new_owner: Address,
+    /// Distinct owners that have approved so far, in approval order.
+    pub approvals: Vec<Address>,
+    /// Ledger timestamp of the first approval.
+    pub created_at: u64,
+}
+
+/// Result of proposing or approving a multi-signature ownership transfer.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipTransferStatus {
+    /// Address that takes over once `executed` is true (or will, if not yet).
+    pub new_owner: Address,
+    /// Distinct approvals collected so far.
+    pub approvals: u32,
+    /// Approvals required by the schema's owner set (1 when none is configured).
+    pub threshold: u32,
+    /// True when this call reached the threshold and moved ownership.
+    pub executed: bool,
+}
+
+/// Reads a schema's configured owner set, if one exists.
+fn owner_set(env: &Env, uid: &UID) -> Option<OwnerSet> {
+    env.storage().persistent().get(&(SCHEMA_OWNERS, uid.clone()))
+}
+
+/// Reads a schema's creator/owner, kept in its own key so `SchemaRecord`
+/// stays byte-stable.
+fn schema_creator(env: &Env, uid: &UID) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&(SCHEMA_CREATOR, uid.clone()))
+}
+
+/// Version-aligned membership test that avoids relying on `Vec: PartialEq`
+/// so the check stays valid across SDK releases.
+fn members_contain(members: &Vec<Address>, needle: &Address) -> bool {
+    let mut index = 0;
+    while index < members.len() {
+        if let Some(member) = members.get(index) {
+            if &member == needle {
+                return true;
+            }
+        }
+        index = index.saturating_add(1);
+    }
+    false
+}
+
+/// Returns the owner set that governs `uid` together with the number of
+/// approvals required. A schema without a configured set behaves exactly as
+/// before: the creator alone is the owner and one approval is enough.
+fn effective_owner_set(env: &Env, uid: &UID) -> (Option<OwnerSet>, u32) {
+    match owner_set(env, uid) {
+        Some(set) => {
+            let threshold = set.threshold;
+            (Some(set), threshold)
+        }
+        None => (None, 1),
+    }
+}
+
+/// True when `who` may act as an owner of `uid`: a member of the configured
+/// owner set when one exists, the creator otherwise, or the registry admin.
+fn is_owner_address(env: &Env, uid: &UID, who: &Address) -> bool {
+    if let Some(set) = owner_set(env, uid) {
+        if members_contain(&set.owners, who) {
+            return true;
+        }
+    }
+
+    if let Some(creator) = schema_creator(env, uid) {
+        if &creator == who {
+            return true;
+        }
+    }
+
+    match env.storage().instance().get::<_, Address>(&REGISTRY_ADMIN) {
+        Some(admin) => &admin == who,
+        None => false,
+    }
+}
+
+/// Rejects owner sets that could never reach their own threshold or that
+/// contain duplicate/absent members.
+fn validate_owner_set(env: &Env, owners: &Vec<Address>, threshold: u32) {
+    let length = owners.len();
+    if length == 0 || length > MAX_OWNER_SET {
+        panic_with_error!(env, SASError::LimitExceeded);
+    }
+    if threshold == 0 || threshold > length {
+        panic_with_error!(env, SASError::InvalidValue);
+    }
+
+    let mut seen: Vec<Address> = Vec::new(env);
+    let mut index = 0;
+    while index < length {
+        let Some(owner) = owners.get(index) else {
+            panic_with_error!(env, SASError::InvalidValue);
+        };
+        if members_contain(&seen, &owner) {
+            panic_with_error!(env, SASError::InvalidValue);
+        }
+        seen.push_back(owner);
+        index = index.saturating_add(1);
+    }
+}
+
+/// Commits an ownership transfer: rewrites the creator key, drops any pending
+/// approval state, and publishes the standard ownership event.
+fn finalize_ownership_transfer(env: &Env, uid: &UID, old_owner: &Address, new_owner: &Address) {
+    let creator_key = (SCHEMA_CREATOR, uid.clone());
+    env.storage().persistent().set(&creator_key, new_owner);
+    env.storage().persistent().extend_ttl(
+        &creator_key,
+        LEDGERS_IN_ONE_YEAR,
+        LEDGERS_IN_ONE_YEAR,
+    );
+    env.storage()
+        .persistent()
+        .remove(&(PENDING_OWNERSHIP, uid.clone()));
+    renew_schema_record(env, uid);
+
+    env.events().publish(
+        (SCHEMA_OWNERSHIP_TRANSFERRED, uid.clone()),
+        SchemaOwnershipTransferredEvent {
+            schema_uid: uid.clone(),
+            old_owner: old_owner.clone(),
+            new_owner: new_owner.clone(),
+        },
+    );
+
+    extend_instance_ttl(env);
+}
+
+/// Shared guard for the single-signature ownership entrypoints: a schema that
+/// requires more than one approval must move ownership through
+/// `propose_ownership_transfer`/`approve_ownership_transfer`, so no individual
+/// owner can bypass the set.
+fn reject_single_sig_transfer_for_multisig(env: &Env, uid: &UID) {
+    let (_, threshold) = effective_owner_set(env, uid);
+    if threshold > 1 {
+        panic_with_error!(env, SASError::Unauthorized);
+    }
+}
+
+/// Shared precondition check for ownership-transfer entrypoints.
+fn require_transferable_schema(env: &Env, uid: &UID) {
+    if !env.storage().persistent().has(uid) {
+        panic_with_error!(env, SASError::SchemaNotFound);
+    }
+    if env
+        .storage()
+        .persistent()
+        .get(&(DEPRECATED, uid.clone()))
+        .unwrap_or(false)
+    {
+        panic_with_error!(env, SASError::InvalidSchema);
+    }
+}
+
+/// Records one distinct owner approval and returns the updated pending state.
+fn record_approval(env: &Env, uid: &UID, approver: &Address) -> PendingOwnershipTransfer {
+    let pending_key = (PENDING_OWNERSHIP, uid.clone());
+    let Some(mut pending) = env
+        .storage()
+        .persistent()
+        .get::<_, PendingOwnershipTransfer>(&pending_key)
+    else {
+        panic_with_error!(env, SASError::SchemaNotFound);
+    };
+
+    let (set, _) = effective_owner_set(env, uid);
+    let expected_version = set.map(|s| s.version).unwrap_or(0);
+    if pending.owner_set_version != expected_version {
+        panic_with_error!(env, SASError::Unauthorized);
+    }
+
+    if !is_owner_address(env, uid, approver) {
+        panic_with_error!(env, SASError::Unauthorized);
+    }
+    if members_contain(&pending.approvals, approver) {
+        panic_with_error!(env, SASError::InvalidValue);
+    }
+
+    pending.approvals.push_back(approver.clone());
+    env.storage()
+        .persistent()
+        .set(&pending_key, &pending);
+    env.storage().persistent().extend_ttl(
+        &pending_key,
+        LEDGERS_IN_ONE_YEAR,
+        LEDGERS_IN_ONE_YEAR,
+    );
+
+    let count = pending.approvals.len();
+    env.events().publish(
+        (SCHEMA_OWNER_APPROVED, uid.clone()),
+        (approver.clone(), count),
+    );
+
+    pending
+}
 
 #[contractimpl]
 impl SchemaRegistry {
@@ -449,6 +683,10 @@ impl SchemaRegistry {
             panic_with_error!(&env, SASError::InvalidSchema);
         }
 
+        // A schema owned by a multi-signature set can only change hands
+        // through propose/approve, so a single owner cannot bypass it.
+        reject_single_sig_transfer_for_multisig(&env, &uid);
+
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         let creator: Option<Address> = env.storage().persistent().get(&creator_key);
         let Some(old_owner) = creator else {
@@ -490,6 +728,10 @@ impl SchemaRegistry {
             panic_with_error!(&env, SASError::SchemaNotFound);
         });
 
+        // Multi-signature schemas must move ownership through
+        // propose/approve so the threshold cannot be bypassed.
+        reject_single_sig_transfer_for_multisig(&env, &uid);
+
         // Validate sender is current creator/owner
         let creator: Option<Address> = env
             .storage()
@@ -524,6 +766,239 @@ impl SchemaRegistry {
             .publish((SCHEMA_OWNERSHIP_TRANSFERRED, uid), (sender, new_owner));
     }
 
+    /// Configures (or replaces) the multi-signature owner set for schema `uid` (#288).
+    ///
+    /// `authorizer` must be a current owner of the schema (the creator, a
+    /// member of the existing owner set, or the registry admin) and must
+    /// authorize the call. `owners` must be a non-empty list of at most
+    /// `MAX_OWNER_SET` distinct addresses and `threshold` must be in
+    /// `1..=owners.len()`.
+    ///
+    /// Reconfiguring the set bumps `OwnerSet::version` and drops any in-flight
+    /// ownership transfer, because approvals are only meaningful against the
+    /// owner set they were collected under.
+    ///
+    /// Emits `(SCHEMA_OWNER_SET_UPDATED, uid)` with `(authorizer, OwnerSet)`.
+    pub fn configure_owner_set(
+        env: Env,
+        uid: UID,
+        authorizer: Address,
+        owners: Vec<Address>,
+        threshold: u32,
+    ) -> OwnerSet {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &uid);
+
+        authorizer.require_auth();
+        if !is_owner_address(&env, &uid, &authorizer) {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+        validate_owner_set(&env, &owners, threshold);
+
+        let version = match owner_set(&env, &uid) {
+            Some(existing) => existing.version.saturating_add(1),
+            None => 1,
+        };
+        let set = OwnerSet {
+            owners,
+            threshold,
+            version,
+        };
+
+        let set_key = (SCHEMA_OWNERS, uid.clone());
+        env.storage().persistent().set(&set_key, &set);
+        env.storage().persistent().extend_ttl(
+            &set_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
+        // Approvals gathered under the previous set can no longer authorize
+        // anything, so the transfer is abandoned rather than left to be
+        // completed by addresses that may no longer be owners.
+        env.storage()
+            .persistent()
+            .remove(&(PENDING_OWNERSHIP, uid.clone()));
+
+        env.events().publish(
+            (SCHEMA_OWNER_SET_UPDATED, uid.clone()),
+            (authorizer, set.clone()),
+        );
+
+        extend_instance_ttl(&env);
+        set
+    }
+
+    /// Returns the schema's multi-signature owner set, or `None` when the
+    /// schema is still single-signature (creator-only).
+    pub fn get_owner_set(env: Env, uid: UID) -> Option<OwnerSet> {
+        extend_instance_ttl(&env);
+        owner_set(&env, &uid)
+    }
+
+    /// True when `who` may act as an owner of schema `uid`: a member of the
+    /// configured owner set, the creator, or the registry admin.
+    pub fn is_schema_owner(env: Env, uid: UID, who: Address) -> bool {
+        extend_instance_ttl(&env);
+        if !env.storage().persistent().has(&uid) {
+            return false;
+        }
+        is_owner_address(&env, &uid, &who)
+    }
+
+    /// Returns the pending multi-signature ownership transfer for `uid`, if any.
+    pub fn get_pending_ownership_transfer(env: Env, uid: UID) -> Option<PendingOwnershipTransfer> {
+        extend_instance_ttl(&env);
+        env.storage()
+            .persistent()
+            .get(&(PENDING_OWNERSHIP, uid.clone()))
+    }
+
+    /// Proposes a multi-signature ownership transfer and casts the proposer's
+    /// approval (#288).
+    ///
+    /// When the schema has no owner set (or a threshold of 1) the transfer
+    /// executes immediately, which keeps the single-owner flow unchanged.
+    /// Otherwise the proposal is stored until enough distinct owners approve
+    /// it with `approve_ownership_transfer`.
+    ///
+    /// The creator cannot be replaced by itself (`InvalidValue`), and a
+    /// multi-signature schema must go through this path — its single-signature
+    /// entrypoints reject the transfer outright.
+    pub fn propose_ownership_transfer(
+        env: Env,
+        uid: UID,
+        proposer: Address,
+        new_owner: Address,
+    ) -> OwnershipTransferStatus {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &uid);
+
+        proposer.require_auth();
+        if !is_owner_address(&env, &uid, &proposer) {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        let Some(current_owner) = schema_creator(&env, &uid) else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+        if current_owner == new_owner {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let (set, threshold) = effective_owner_set(&env, &uid);
+        let version = set.map(|s| s.version).unwrap_or(0);
+
+        let mut approvals: Vec<Address> = Vec::new(&env);
+        approvals.push_back(proposer.clone());
+
+        let pending = PendingOwnershipTransfer {
+            owner_set_version: version,
+            new_owner: new_owner.clone(),
+            approvals,
+            created_at: env.ledger().timestamp(),
+        };
+
+        if threshold <= 1 {
+            finalize_ownership_transfer(&env, &uid, &current_owner, &new_owner);
+            return OwnershipTransferStatus {
+                new_owner,
+                approvals: 1,
+                threshold,
+                executed: true,
+            };
+        }
+
+        let pending_key = (PENDING_OWNERSHIP, uid.clone());
+        env.storage().persistent().set(&pending_key, &pending);
+        env.storage().persistent().extend_ttl(
+            &pending_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
+        env.events().publish(
+            (SCHEMA_OWNER_PROPOSED, uid.clone()),
+            (proposer, pending.clone()),
+        );
+
+        extend_instance_ttl(&env);
+        OwnershipTransferStatus {
+            new_owner,
+            approvals: 1,
+            threshold,
+            executed: false,
+        }
+    }
+
+    /// Adds `approver`'s approval to the in-flight ownership transfer for `uid`.
+    ///
+    /// `approver` must be an owner and must not have approved already
+    /// (`SchemaAlreadyExists`); each owner counts once. Once `threshold`
+    /// distinct owners have approved, the transfer executes inside this call
+    /// and `executed` is `true`.
+    pub fn approve_ownership_transfer(
+        env: Env,
+        uid: UID,
+        approver: Address,
+    ) -> OwnershipTransferStatus {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &uid);
+
+        approver.require_auth();
+
+        let pending = record_approval(&env, &uid, &approver);
+        let (_, threshold) = effective_owner_set(&env, &uid);
+        let collected = pending.approvals.len();
+
+        if collected < threshold {
+            extend_instance_ttl(&env);
+            return OwnershipTransferStatus {
+                new_owner: pending.new_owner,
+                approvals: collected,
+                threshold,
+                executed: false,
+            };
+        }
+
+        let old_owner = schema_creator(&env, &uid).unwrap_or_else(|| {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        });
+        finalize_ownership_transfer(&env, &uid, &old_owner, &pending.new_owner);
+
+        OwnershipTransferStatus {
+            new_owner: pending.new_owner,
+            approvals: collected,
+            threshold,
+            executed: true,
+        }
+    }
+
+    /// Abandons the in-flight ownership transfer for `uid`. Caller must be a
+    /// current owner of the schema.
+    ///
+    /// Emits `(SCHEMA_OWNER_TRANSFER_CANCELLED, uid)` with the cancelling owner.
+    pub fn cancel_ownership_transfer(env: Env, uid: UID, canceller: Address) {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &uid);
+
+        canceller.require_auth();
+        if !is_owner_address(&env, &uid, &canceller) {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        let pending_key = (PENDING_OWNERSHIP, uid.clone());
+        if !env.storage().persistent().has(&pending_key) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+        env.storage().persistent().remove(&pending_key);
+
+        env.events()
+            .publish((SCHEMA_OWNER_TRANSFER_CANCELLED, uid.clone()), canceller);
+
+        extend_instance_ttl(&env);
+    }
+
     pub fn deprecate_schema(env: Env, sender: Address, uid: UID) {
         sender.require_auth();
         extend_instance_ttl(&env);
@@ -532,25 +1007,11 @@ impl SchemaRegistry {
             panic_with_error!(&env, SASError::SchemaNotFound);
         });
 
-        let creator: Option<Address> = env
-            .storage()
-            .persistent()
-            .get(&(SCHEMA_CREATOR, uid.clone()));
-        let mut authorized = false;
-        if let Some(c) = creator {
-            if c == sender {
-                authorized = true;
-            }
-        }
-        if !authorized {
-            let admin: Option<Address> = env.storage().instance().get(&REGISTRY_ADMIN);
-            if let Some(a) = admin {
-                if a == sender {
-                    authorized = true;
-                }
-            }
-        }
-        if !authorized {
+        // Deprecation is an owner action: the creator, any member of the
+        // configured multi-signature owner set, or the registry admin may
+        // perform it. Unlike ownership transfer it is not irreversible
+        // ownership movement, so a single owner's signature is enough.
+        if !is_owner_address(&env, &uid, &sender) {
             panic_with_error!(&env, SASError::Unauthorized);
         }
 
@@ -945,3 +1406,5 @@ impl SchemaRegistry {
 mod test;
 #[cfg(test)]
 mod test_extra;
+#[cfg(test)]
+mod owner_multisig_test;
