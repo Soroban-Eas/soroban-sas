@@ -15,11 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
-- Schema-registration fee withdrawal is now exposed end to end: the SDK method
-  `SASClient::withdraw_schema_fees` and the `soroban-sas schema withdraw-fees`
-  CLI subcommand call the existing `SchemaRegistry::withdraw_fees` entry point,
-  so a registry admin can withdraw accumulated schema-registration fees from a
-  shipped client instead of only configuring the fee and treasury. (#292)
+- Revocability semantics coverage: delegated, batch, and paid issuance now
+  each have an acceptance test for `revocable = true` under a revocable
+  schema (rejection was already covered on every issuance path),
+  `replace_attestation` is covered replacing a revocable attestation with an
+  irrevocable successor, and `soroban-sas-common` unit tests pin the
+  `check_revocable` truth table and `schema_uid`'s sensitivity to the flag.
+  (#303)
 - Generic EIP-712 structured-data hashing in `soroban-sas-common::eip712`:
   `encode_type`/`type_hash`/`encode_data`/`hash_struct`/`hash_typed_data`
   derived from `StructDef`/`FieldDef` declarations, covering nested structs,

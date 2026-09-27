@@ -49,6 +49,24 @@ fn test_attestation_uid_is_deterministic_and_content_addressed() {
     );
 }
 
+/// `schema_uid` is documented (docs/schemas.md, "Schema ID Collision
+/// Resistance") as hashing the revocability flag together with the schema
+/// string and resolver, so a revocable and a non-revocable schema that are
+/// otherwise identical must never share a UID.
+#[test]
+fn test_schema_uid_is_sensitive_to_the_revocable_flag() {
+    let env = Env::default();
+    let resolver = Address::generate(&env);
+    let schema = SorobanString::from_str(&env, "score U32");
+
+    let revocable = crate::schema_uid(&env, &schema, &resolver, true);
+    let irrevocable = crate::schema_uid(&env, &schema, &resolver, false);
+
+    assert_ne!(revocable, irrevocable);
+    assert_eq!(revocable, crate::schema_uid(&env, &schema, &resolver, true));
+}
+
+use crate::validation::check_revocable;
 use crate::validation::validate_recipient;
 use crate::validation::validate_schema_syntax;
 use crate::validation::validate_ttl;
@@ -65,6 +83,22 @@ fn test_validate_ttl() {
     // Invalid cases
     assert!(validate_ttl(&env, 200, 100).is_err());
     assert!(validate_ttl(&env, 100, 100).is_err()); // expired exactly at current time
+}
+
+/// `check_revocable` is the single place the schema-level revocability
+/// ceiling is enforced, shared by every issuance path. Pin its full truth
+/// table: only `(non-revocable schema, revocable attestation)` is rejected.
+#[test]
+fn test_check_revocable_truth_table() {
+    let env = Env::default();
+
+    assert!(check_revocable(&env, false, false).is_ok());
+    assert!(check_revocable(&env, true, true).is_ok());
+    assert!(check_revocable(&env, true, false).is_ok());
+    assert_eq!(
+        check_revocable(&env, false, true),
+        Err(crate::errors::SASError::NotRevocable)
+    );
 }
 
 #[test]

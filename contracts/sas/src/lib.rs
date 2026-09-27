@@ -1432,6 +1432,8 @@ impl SAS {
 #[cfg(test)]
 mod demo;
 #[cfg(test)]
+mod revocation_properties;
+#[cfg(test)]
 mod test;
 #[cfg(test)]
 mod test_extra;
