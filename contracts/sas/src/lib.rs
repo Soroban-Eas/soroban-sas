@@ -466,6 +466,88 @@ impl SAS {
         Self::attest_internal(env, attestation)
     }
 
+    /// Issues a batch of off-chain-signed attestations in one relayed
+    /// transaction. Companion to
+    /// [`attest_by_delegation`](Self::attest_by_delegation), mirroring how
+    /// `multi_attest` batches the direct path.
+    ///
+    /// `attestations`, `nonces`, `signatures`, and `public_keys` are parallel
+    /// vectors and must all have the same length; the batch is capped at
+    /// `MAX_MULTI_ATTEST` (`SASError::BatchTooLarge`, checked before any
+    /// signature is verified or state is written). Each item carries its own
+    /// nonce and signing key, so one relayer can submit signatures produced by
+    /// several independent attesters in a single transaction.
+    ///
+    /// Every signature is verified and its nonce consumed before the matching
+    /// attestation is stored. A Soroban invocation is atomic, so a failure on
+    /// any item reverts the whole batch — no partially issued attestations and
+    /// no partially advanced nonce watermark. Nonces for the same attester
+    /// must appear in strictly increasing order, exactly as when they are
+    /// submitted one call at a time.
+    pub fn multi_attest_by_delegation(
+        env: Env,
+        attestations: soroban_sdk::Vec<Attestation>,
+        nonces: soroban_sdk::Vec<u64>,
+        signatures: soroban_sdk::Vec<BytesN<64>>,
+        public_keys: soroban_sdk::Vec<BytesN<32>>,
+    ) -> soroban_sdk::Vec<UID> {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+
+        let len = attestations.len();
+        if len > MAX_MULTI_ATTEST {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+        if nonces.len() != len || signatures.len() != len || public_keys.len() != len {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        // Same serialization defence as `multi_attest` (#296): a nested batch
+        // cannot interleave its storage writes with ours.
+        enter_reentrancy_guard(&env);
+        let mut uids = soroban_sdk::Vec::new(&env);
+        let mut attesters: soroban_sdk::Map<Address, bool> = soroban_sdk::Map::new(&env);
+
+        for i in 0..len {
+            let attestation = attestations.get(i).unwrap();
+            let nonce = nonces.get(i).unwrap();
+            let signature = signatures.get(i).unwrap();
+            let public_key = public_keys.get(i).unwrap();
+
+            if attestation.revocation_time != 0 {
+                panic_with_error!(&env, SASError::AlreadyRevoked);
+            }
+            Self::require_attester_key(&env, &attestation.attester, &public_key);
+            let domain = soroban_sas_common::AttestationDomain {
+                network_id: env.ledger().network_id(),
+                contract: env.current_contract_address(),
+                nonce,
+            };
+            let payload_hash =
+                soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain);
+            soroban_sas_common::verify_offchain_signature(
+                &env,
+                &payload_hash,
+                &public_key,
+                &signature,
+            );
+            Self::consume_delegation_nonce(&env, &attestation.attester, nonce);
+
+            attesters.set(attestation.attester.clone(), true);
+            let uid = Self::attest_internal(env.clone(), attestation);
+            uids.push_back(uid);
+        }
+
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationIssued event first (#213). Reaching this line means the
+        // whole batch committed.
+        events::publish_batch_attested(&env, uids.len(), attesters.len());
+        exit_reentrancy_guard(&env);
+        uids
+    }
+
     fn attest_internal(env: Env, mut attestation: Attestation) -> UID {
         extend_instance_ttl(&env);
         // Resolved up front so a missing registry is always reported as the
@@ -833,6 +915,105 @@ impl SAS {
         Self::consume_delegation_nonce(&env, &attestation.attester, nonce);
 
         Self::revoke_internal(env, uid)
+    }
+
+    /// Revokes a batch of attestations using off-chain delegation signatures.
+    /// Companion to [`revoke_by_delegation`](Self::revoke_by_delegation),
+    /// mirroring how `multi_revoke` batches the direct path.
+    ///
+    /// `uids`, `nonces`, `signatures`, and `public_keys` are parallel vectors
+    /// and must all have the same length; the batch is capped at
+    /// `MAX_MULTI_REVOKE` (`SASError::BatchTooLarge`). The whole batch is
+    /// validated — duplicate UIDs, missing/irrevocable/already-revoked
+    /// attestations, key binding, and every signature — before any nonce is
+    /// consumed or any revocation is written, so an invalid item cannot leave
+    /// a half-applied batch.
+    ///
+    /// Each item's public key and signature are checked against the
+    /// **recorded** attester of that attestation, never a caller-supplied one,
+    /// so a relayer cannot pair a valid signature with a different record.
+    pub fn multi_revoke_by_delegation(
+        env: Env,
+        uids: soroban_sdk::Vec<UID>,
+        nonces: soroban_sdk::Vec<u64>,
+        signatures: soroban_sdk::Vec<BytesN<64>>,
+        public_keys: soroban_sdk::Vec<BytesN<32>>,
+    ) {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+
+        let len = uids.len();
+        if len > MAX_MULTI_REVOKE {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+        if nonces.len() != len || signatures.len() != len || public_keys.len() != len {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let mut seen: soroban_sdk::Map<UID, bool> = soroban_sdk::Map::new(&env);
+        let mut distinct: soroban_sdk::Map<Address, bool> = soroban_sdk::Map::new(&env);
+
+        // Pass 1: validate every item and verify every signature before any
+        // state is written, mirroring `multi_revoke`'s all-or-nothing commit.
+        for i in 0..len {
+            let uid = uids.get(i).unwrap();
+            let nonce = nonces.get(i).unwrap();
+            let signature = signatures.get(i).unwrap();
+            let public_key = public_keys.get(i).unwrap();
+
+            if seen.contains_key(uid.clone()) {
+                panic_with_error!(&env, SASError::DuplicateAttestation);
+            }
+            seen.set(uid.clone(), true);
+
+            let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+                panic_with_error!(&env, SASError::AttestationNotFound);
+            };
+            if !attestation.revocable {
+                panic_with_error!(&env, SASError::NotRevocable);
+            }
+            if attestation.revocation_time != 0 {
+                panic_with_error!(&env, SASError::AlreadyRevoked);
+            }
+
+            Self::require_attester_key(&env, &attestation.attester, &public_key);
+            let domain = soroban_sas_common::AttestationDomain {
+                network_id: env.ledger().network_id(),
+                contract: env.current_contract_address(),
+                nonce,
+            };
+            let payload_hash = soroban_sas_common::hash_delegated_revocation(
+                &env,
+                &uid,
+                &attestation.attester,
+                &domain,
+            );
+            soroban_sas_common::verify_offchain_signature(
+                &env,
+                &payload_hash,
+                &public_key,
+                &signature,
+            );
+
+            distinct.set(attestation.attester.clone(), true);
+        }
+
+        // Pass 2: consume each nonce and revoke, in the submitted order so
+        // per-attester nonces stay strictly increasing. `uids` is unchanged
+        // and each entry was already proven present in pass 1.
+        for i in 0..len {
+            let uid = uids.get(i).unwrap();
+            let nonce = nonces.get(i).unwrap();
+            let attester = env.storage().persistent().get::<_, Attestation>(&uid).unwrap().attester;
+            Self::consume_delegation_nonce(&env, &attester, nonce);
+            Self::revoke_internal(env.clone(), uid);
+        }
+
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationRevoked event first (#213).
+        events::publish_batch_revoked(&env, len, distinct.len());
     }
 
     fn revoke_internal(env: Env, uid: UID) {
@@ -1481,5 +1662,7 @@ mod test_extra;
 mod test_issue_242;
 #[cfg(test)]
 mod test_issue_252;
+#[cfg(test)]
+mod test_issue_293;
 #[cfg(test)]
 mod test_issue_296;

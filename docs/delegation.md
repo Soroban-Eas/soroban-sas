@@ -60,6 +60,41 @@ After signature verification, the contract consumes the nonce for the recorded
 attester and runs the normal revocation checks. The attestation must exist, be
 revocable, and not already be revoked.
 
+## Batch delegation
+
+Issuers that produce many signatures (for example an offline job that signs a
+day's worth of claims) can hand a relayer a single batch call instead of one
+call per signature. `multi_attest_by_delegation` and
+`multi_revoke_by_delegation` mirror `multi_attest` and `multi_revoke`, which
+already batch the direct paths.
+
+Both entry points take four parallel vectors, which must all have the same
+length:
+
+- `multi_attest_by_delegation(attestations, nonces, signatures, public_keys)`
+- `multi_revoke_by_delegation(uids, nonces, signatures, public_keys)`
+
+`multi_attest_by_delegation` accepts at most `MAX_MULTI_ATTEST` (100) items and
+`multi_revoke_by_delegation` at most `MAX_MULTI_REVOKE` (100); a larger batch
+fails with `SASError::BatchTooLarge` before any signature is verified or state
+is written. A length mismatch fails with `SASError::InvalidValue`.
+
+Each item is verified and authorized independently: it carries its own nonce,
+signature, and public key, so one transaction can relay signatures produced by
+several different attesters. The per-attester nonce high-watermark described
+below is unchanged — within one batch, items for the same attester must appear
+in strictly increasing nonce order, exactly as if they were submitted one call
+at a time. `multi_revoke_by_delegation` additionally rejects duplicate UIDs in
+a batch with `SASError::DuplicateAttestation`, and checks each signature
+against the *recorded* attester of that attestation, never a caller-supplied
+one.
+
+A Soroban invocation is atomic, so a failure on any item reverts the whole
+batch: no attestation is issued, no revocation is written, and no nonce is
+consumed. The batch's `BatchAttested` / `BatchRevoked` summary event is emitted
+only after every per-item event, so a consumer that sees the summary knows the
+whole batch committed.
+
 ## Nonce model and limitations
 
 Delegated attestations and delegated revocations share one per-attester `u64`
@@ -286,4 +321,59 @@ let result = client.revoke_by_delegation(
 ```
 
 These SDK methods submit already-signed operations; they do not allocate a
-nonce or create the issuer signature.
+nonce. They do, however, take an already-created issuer signature, and the SDK
+can produce that signature too.
+
+Since a batch is submitted with the same four parallel vectors the contract
+takes, use `SASClient::multi_attest_by_delegation` /
+`SASClient::multi_revoke_by_delegation` for the batched forms.
+
+### Producing the signature from the SDK
+
+The `soroban_sas_sdk::delegation` module signs with the same
+`soroban_sas_common` hashing the contract verifies against, so a wallet or
+offline signer does not need the CLI or a second implementation of the
+byte layout:
+
+```rust,no_run
+use soroban_sas_sdk::delegation::{
+    delegation_domain, sign_delegated_revocation, sign_offchain_attestation,
+    verify_offchain_attestation,
+};
+# use soroban_sas_common::{Attestation, UID};
+# use soroban_sdk::Env;
+# fn example(
+#     env: &Env,
+#     attestation: &Attestation,
+#     uid: &UID,
+# ) -> Result<(), soroban_sas_sdk::errors::SdkError> {
+let issuer_seed: [u8; 32] = /* loaded securely */ [0_u8; 32];
+let network = "Test SDF Network ; September 2015";
+let contract_id = "C...SAS_CONTRACT";
+
+// Attestation: signs the full payload plus network, contract, and nonce.
+let signed = sign_offchain_attestation(env, &issuer_seed, attestation, 1, network, contract_id)?;
+let domain = delegation_domain(env, network, contract_id, signed.nonce)?;
+verify_offchain_attestation(env, attestation, &domain, &signed.public_key, &signed.signature)?;
+
+// Revocation: signs the UID and the recorded attester instead.
+let signed_revocation = sign_delegated_revocation(
+    env,
+    &issuer_seed,
+    uid,
+    &attestation.attester,
+    2,
+    network,
+    contract_id,
+)?;
+# let _ = signed_revocation;
+# Ok(())
+# }
+```
+
+`sign_offchain_attestation` and `sign_delegated_revocation` return a
+`DelegationSignature { nonce, public_key, signature, digest }`. Feed
+`public_key`, `signature`, and `nonce` to the matching submission helper (or to
+a `multi_*_by_delegation` call as single-element slices). Both reject a key
+that is not the declared attester with `SdkError::ValidationError` instead of
+producing a signature the contract would refuse.

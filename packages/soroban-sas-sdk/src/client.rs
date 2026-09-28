@@ -1359,6 +1359,78 @@ impl SASClient {
         )
     }
 
+    /// Calls `SAS::multi_attest_by_delegation(attestations, nonces,
+    /// signatures, public_keys)`: submits a batch of already off-chain-signed
+    /// attestations in one relayed transaction. Companion to
+    /// [`attest_by_delegation`](Self::attest_by_delegation), mirroring
+    /// [`multi_attest`](Self::multi_attest).
+    ///
+    /// The four slices must have the same length; each signature is verified
+    /// on-chain against its own item's payload and nonce. `relayer_secret_seed`
+    /// does not need to be any of the attesters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn multi_attest_by_delegation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        relayer_secret_seed: &[u8; 32],
+        attestations: &[Attestation],
+        nonces: &[u64],
+        signatures: &[[u8; 64]],
+        public_keys: &[[u8; 32]],
+    ) -> Result<GetTransactionResult, SdkError> {
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            relayer_secret_seed,
+            &self.contract_id,
+            "multi_attest_by_delegation",
+            vec![
+                encode_multi_attest_arg(env, attestations)?,
+                encode_u64_vec_arg(env, nonces)?,
+                encode_signature_vec_arg(env, signatures)?,
+                encode_public_key_vec_arg(env, public_keys)?,
+            ],
+        )
+    }
+
+    /// Calls `SAS::multi_revoke_by_delegation(uids, nonces, signatures,
+    /// public_keys)`: submits a batch of off-chain-signed revocations in one
+    /// relayed transaction. Companion to
+    /// [`revoke_by_delegation`](Self::revoke_by_delegation).
+    ///
+    /// The four slices must have the same length. Each item's signature is
+    /// checked on-chain against the *recorded* attester of its attestation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn multi_revoke_by_delegation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        relayer_secret_seed: &[u8; 32],
+        uids: &[&[u8; 32]],
+        nonces: &[u64],
+        signatures: &[[u8; 64]],
+        public_keys: &[[u8; 32]],
+    ) -> Result<GetTransactionResult, SdkError> {
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            relayer_secret_seed,
+            &self.contract_id,
+            "multi_revoke_by_delegation",
+            vec![
+                encode_multi_revoke_arg(env, uids)?,
+                encode_u64_vec_arg(env, nonces)?,
+                encode_signature_vec_arg(env, signatures)?,
+                encode_public_key_vec_arg(env, public_keys)?,
+            ],
+        )
+    }
+
     /// Calls `SAS::replace_attestation(old_uid, new_data)`, same
     /// signing/submission flow as `attest`. Requires `secret_seed`'s
     /// account to be both `old_uid`'s attester and `new_data.attester`
@@ -1443,6 +1515,45 @@ fn encode_multi_revoke_arg(env: &Env, uids: &[&[u8; 32]]) -> Result<ScVal, SdkEr
     let encoded: VecM<ScVal> = encoded
         .try_into()
         .map_err(|e| SdkError::RpcError(format!("too many uids: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn encode_u64_vec_arg(env: &Env, values: &[u64]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = values
+        .iter()
+        .map(|value| simulate::encode_arg(env, value))
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many nonces: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn encode_signature_vec_arg(env: &Env, signatures: &[[u8; 64]]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = signatures
+        .iter()
+        .map(|raw_signature| {
+            let signature = BytesN::<64>::from_array(env, raw_signature);
+            simulate::encode_arg(env, &signature)
+        })
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many signatures: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn encode_public_key_vec_arg(env: &Env, public_keys: &[[u8; 32]]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = public_keys
+        .iter()
+        .map(|raw_public_key| {
+            let public_key = BytesN::<32>::from_array(env, raw_public_key);
+            simulate::encode_arg(env, &public_key)
+        })
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many public keys: {e:?}")))?;
     Ok(ScVal::Vec(Some(encoded.into())))
 }
 
@@ -2185,6 +2296,33 @@ mod tests {
 
         let ScVal::Vec(Some(values)) = arg else {
             panic!("expected multi_revoke argument to be an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn delegation_args_encode_each_parallel_vector_as_one_arg() {
+        let env = Env::default();
+        let nonces = vec![1u64, 2u64];
+        let signatures = vec![[1u8; 64], [2u8; 64]];
+        let public_keys = vec![[3u8; 32], [4u8; 32]];
+
+        let nonce_arg = encode_u64_vec_arg(&env, &nonces).unwrap();
+        let signature_arg = encode_signature_vec_arg(&env, &signatures).unwrap();
+        let public_key_arg = encode_public_key_vec_arg(&env, &public_keys).unwrap();
+
+        let ScVal::Vec(Some(values)) = nonce_arg else {
+            panic!("expected nonces to encode as an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+
+        let ScVal::Vec(Some(values)) = signature_arg else {
+            panic!("expected signatures to encode as an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+
+        let ScVal::Vec(Some(values)) = public_key_arg else {
+            panic!("expected public keys to encode as an ScVal vector");
         };
         assert_eq!(values.len(), 2);
     }

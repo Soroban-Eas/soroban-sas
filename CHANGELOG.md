@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Batched off-chain delegation signatures: `SAS::multi_attest_by_delegation`
+  and `SAS::multi_revoke_by_delegation` accept parallel `attestations`/`uids`,
+  `nonces`, `signatures`, and `public_keys` vectors and validate each item
+  independently, so one relayed transaction can carry signatures from several
+  attesters. Length mismatches fail with `InvalidValue`, oversized batches
+  with `BatchTooLarge`, and a failure on any item reverts the whole batch
+  (no partial issuance and no consumed nonce). The SAS contract reuses the
+  same per-attester nonce high-watermark as the single-item paths. (#293)
+- `soroban-sas-sdk` gains `delegation`, with `sign_offchain_attestation`,
+  `sign_delegated_revocation`, `delegation_domain`,
+  `attestation_digest`/`revocation_digest`, and local
+  `verify_offchain_attestation`/`verify_delegated_revocation` helpers. These
+  let wallets and dApps produce (and self-check) the typed-data signature the
+  delegated entry points verify, instead of relying on the CLI's private
+  signing code. The SDK client also exposes
+  `multi_attest_by_delegation`/`multi_revoke_by_delegation` submission
+  wrappers. (#293)
 - Revocability semantics coverage: delegated, batch, and paid issuance now
   each have an acceptance test for `revocable = true` under a revocable
   schema (rejection was already covered on every issuance path),
@@ -167,4 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a stale cursor and duplicate a UID into it. (#219)
 
 ### Known Issues
-- Delegated attest/revoke signatures do not bind the full attestation payload or a nonce, permitting potential replay.
+- Off-chain delegated signatures are ed25519-only and must bind to a classic
+  Ed25519 account via the structural address check, or to a key registered
+  on-chain with `register_attester_key`. There is no off-chain key-registration
+  flow yet.

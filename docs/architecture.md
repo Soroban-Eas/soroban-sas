@@ -96,6 +96,23 @@ When running under default fail-open mode, any downstream indexing failures emit
 
 For operational instructions covering event detection, unreconciled UID enumeration, CLI/SDK invocation, health checks, and retry strategies, see the [Indexer Reconciliation Runbook](reconciliation.md) and [Indexer Availability Policy](indexer-availability-and-fees.md).
 
+### Delegated signature authorization
+
+`attest_by_delegation`, `revoke_by_delegation`, and their batch variants
+(`multi_attest_by_delegation`, `multi_revoke_by_delegation`) authorize a write
+from an off-chain ed25519 signature instead of `require_auth()` on the
+attester. The relayer that submits the transaction consequently needs no
+special privilege: it only funds and signs the envelope, and the contract
+derives authority from the issuer's signature.
+
+A signature commits to the network id, the SAS contract address, and a
+per-attester nonce, then to the action's own fields (the full attestation, or
+the UID plus recorded attester for a revocation). That binding is what makes a
+signature meaningful for exactly one network, one contract deployment, and one
+nonce, and it is what prevents a relayer from substituting a different payload.
+The nonce high-watermark is per attester and shared by issuance and revocation;
+see [Delegated Issuance and Revocation](delegation.md) for the full model,
+limitations, and the SDK signing helpers.
 
 ## Attestation Lifecycle and State Machine
 
