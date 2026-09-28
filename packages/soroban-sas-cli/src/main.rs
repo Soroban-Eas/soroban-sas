@@ -395,10 +395,10 @@ enum OffchainCommands {
         #[arg(long, help = "SAS contract address (C...) the signature is bound to")]
         contract_id: String,
         #[arg(
-            long,
+            long = "out-file",
             help = "Write the signed attestation to this file instead of stdout"
         )]
-        output: Option<String>,
+        out_file: Option<String>,
     },
     /// Verify a signed off-chain attestation.
     ///
@@ -504,6 +504,30 @@ enum SchemaCommands {
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
     },
+    /// Look up an existing schema by its raw definition, without computing its
+    /// UID off-chain. The registry derives the content-addressed UID with the
+    /// same canonical rules `register` uses, so callers that cannot reproduce
+    /// the host hashing rules can still check whether a definition is already
+    /// registered. A malformed schema string is rejected.
+    GetByContent {
+        #[arg(long, help = "Schema definition string")]
+        schema: String,
+        #[arg(
+            long,
+            help = "Resolver contract address (C...) invoked on attest/revoke"
+        )]
+        resolver: String,
+        #[arg(long, help = "Whether attestations against this schema can be revoked")]
+        revocable: bool,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
     /// Register a new schema, paying the configured registration fee.
     /// `token`/`value` must match what the registry admin configured via
     /// `set-fee`, or the call fails before anything is registered.
@@ -599,6 +623,35 @@ enum SchemaCommands {
     SetTreasury {
         #[arg(long, help = "Treasury address (G... account or C... contract)")]
         treasury: String,
+        #[arg(
+            long,
+            help = "Registry admin's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Admin: withdraw accumulated registration fees from the registry.
+    WithdrawFees {
+        #[arg(
+            long,
+            help = "Amount to withdraw, in the fee token's smallest unit (must be > 0)"
+        )]
+        amount: i128,
         #[arg(
             long,
             help = "Registry admin's signing key: S... strkey seed or 32-byte hex seed",
@@ -781,10 +834,51 @@ enum AttestCommands {
     },
 }
 
+/// Largest page `query by-* --limit` accepts. Each page is one
+/// `simulateTransaction`, so keeping pages to one indexer chunk's worth of
+/// UIDs keeps a single request comfortably inside the read budget (#306).
+const MAX_QUERY_PAGE_SIZE: u32 = 100;
+
+/// Pagination flags shared by the `query by-*` commands (#306). Without
+/// either flag a query returns the complete history, exactly as before.
+#[derive(clap::Args, Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PageArgs {
+    #[arg(
+        long,
+        help = "Zero-based position in the history (oldest first) to start the page at. \
+                Enables pagination; resume with the `next_cursor` a page reports."
+    )]
+    cursor: Option<u32>,
+    #[arg(
+        long,
+        help = "Maximum UIDs per page (1-100, default 100 when only --cursor is given). \
+                Enables pagination; without --cursor/--limit the complete history is returned."
+    )]
+    limit: Option<u32>,
+}
+
+impl PageArgs {
+    /// `None` for an unpaginated query, otherwise the validated
+    /// `(cursor, limit)` window. Checked before any RPC call.
+    fn resolve(self) -> Result<Option<(u32, u32)>, String> {
+        if self.cursor.is_none() && self.limit.is_none() {
+            return Ok(None);
+        }
+        let limit = self.limit.unwrap_or(MAX_QUERY_PAGE_SIZE);
+        if limit == 0 || limit > MAX_QUERY_PAGE_SIZE {
+            return Err(format!(
+                "--limit must be between 1 and {MAX_QUERY_PAGE_SIZE}, got {limit}"
+            ));
+        }
+        Ok(Some((self.cursor.unwrap_or(0), limit)))
+    }
+}
+
 #[derive(Subcommand)]
 #[allow(clippy::enum_variant_names)] // Mirrors the public `query by-*` command names.
 enum QueryCommands {
-    /// Query attestations by recipient address
+    /// Query attestations by recipient address: the complete history, or
+    /// one page of it with --cursor/--limit
     ByRecipient {
         #[arg(long, help = "Recipient account address (G...)")]
         address: String,
@@ -796,8 +890,11 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
     },
-    /// Query attestations by attester address
+    /// Query attestations by attester address: the complete history, or
+    /// one page of it with --cursor/--limit
     ByAttester {
         #[arg(long, help = "Attester/issuer account address (G...)")]
         address: String,
@@ -809,8 +906,11 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
     },
-    /// Query attestations by schema UID
+    /// Query attestations by schema UID: the complete history, or one page
+    /// of it with --cursor/--limit
     BySchema {
         #[arg(long, help = "32-byte schema UID, hex encoded")]
         uid: String,
@@ -822,6 +922,8 @@ enum QueryCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
     },
 }
 
@@ -1088,6 +1190,9 @@ fn run_attest(
                 soroban_sas_sdk::signature::derive_public_key(&seed),
             )
             .to_string();
+            // Before any RPC call (including the ledger-clock fetch below):
+            // a missing/self recipient is a local input error (#304).
+            offchain::validate_onchain_recipient(&env, &recipient, &attester)?;
 
             let local_now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1181,6 +1286,7 @@ fn run_attest(
                 ));
             }
             let attestation = offchain::parse_attestation(&env, &input)?;
+            offchain::validate_onchain_parties(&env, &attestation)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
@@ -1261,6 +1367,7 @@ fn run_attest(
                 ));
             }
             let new_data = offchain::parse_attestation(&env, &input)?;
+            offchain::validate_onchain_parties(&env, &new_data)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
@@ -1442,43 +1549,145 @@ fn run_query(
             address,
             contract_id,
             rpc_url,
+            page,
         } => {
+            let page = page.resolve()?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
+            let Some((cursor, limit)) = page else {
+                let uids = client
+                    .get_attestations_by_recipient(&env, &rpc, &address)
+                    .map_err(|e| e.to_string())?;
+                return print_uids(&uids, output);
+            };
             let uids = client
-                .get_attestations_by_recipient(&env, &rpc, &address)
+                .get_attestations_by_recipient_paginated(&env, &rpc, &address, cursor, limit)
                 .map_err(|e| e.to_string())?;
-            print_uids(&uids, output)
+            let total = client
+                .get_count_by_recipient(&env, &rpc, &address)
+                .map_err(|e| e.to_string())?;
+            print_page(None, &uids, cursor, limit, total, output)
         }
         QueryCommands::ByAttester {
             address,
             contract_id,
             rpc_url,
+            page,
         } => {
+            let page = page.resolve()?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
+            let Some((cursor, limit)) = page else {
+                let uids = client
+                    .get_attestations_by_attester(&env, &rpc, &address)
+                    .map_err(|e| e.to_string())?;
+                return print_attestations_by_attester(&address, &uids, output);
+            };
             let uids = client
-                .get_attestations_by_attester(&env, &rpc, &address)
+                .get_attestations_by_attester_paginated(&env, &rpc, &address, cursor, limit)
                 .map_err(|e| e.to_string())?;
-            print_attestations_by_attester(&address, &uids, output)
+            let total = client
+                .get_count_by_attester(&env, &rpc, &address)
+                .map_err(|e| e.to_string())?;
+            print_page(
+                Some(("attester", &address)),
+                &uids,
+                cursor,
+                limit,
+                total,
+                output,
+            )
         }
         QueryCommands::BySchema {
             uid,
             contract_id,
             rpc_url,
+            page,
         } => {
+            let page = page.resolve()?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let schema_uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
+            let Some((cursor, limit)) = page else {
+                let uids = client
+                    .get_attestations_by_schema(&env, &rpc, &schema_uid)
+                    .map_err(|e| e.to_string())?;
+                return print_uids(&uids, output);
+            };
             let uids = client
-                .get_attestations_by_schema(&env, &rpc, &schema_uid)
+                .get_attestations_by_schema_paginated(&env, &rpc, &schema_uid, cursor, limit)
                 .map_err(|e| e.to_string())?;
-            print_uids(&uids, output)
+            let total = client
+                .get_count_by_schema(&env, &rpc, &schema_uid)
+                .map_err(|e| e.to_string())?;
+            print_page(None, &uids, cursor, limit, total, output)
         }
     }
+}
+
+/// Renders one page of a `query by-* --cursor/--limit` result (#306).
+///
+/// `next_cursor` is `cursor + page.len()` while entries remain past this
+/// page and `null` once the history is exhausted, so a caller loops until
+/// it sees `null` and never skips or repeats a UID. `key` echoes the looked
+/// up key where the unpaginated command already does (`by-attester`).
+fn format_page(
+    key: Option<(&str, &str)>,
+    uids: &soroban_sdk::Vec<soroban_sas_common::UID>,
+    cursor: u32,
+    limit: u32,
+    total: u32,
+) -> (String, serde_json::Value) {
+    let hex_uids: Vec<String> = uids
+        .iter()
+        .map(|uid| hex::encode(uid.0.to_array()))
+        .collect();
+    let end = cursor.saturating_add(uids.len());
+    let next_cursor = (end < total).then_some(end);
+
+    let mut human = if hex_uids.is_empty() {
+        "No attestations found".to_string()
+    } else {
+        hex_uids.join("\n")
+    };
+    human.push('\n');
+    if hex_uids.is_empty() {
+        human.push_str(&format!(
+            "Page: cursor {cursor} is past the end ({total} total)"
+        ));
+    } else {
+        human.push_str(&format!("Page: {}-{end} of {total}", cursor + 1));
+    }
+    if let Some(next) = next_cursor {
+        human.push_str(&format!(" (next: --cursor {next})"));
+    }
+
+    let mut data = serde_json::json!({
+        "uids": hex_uids,
+        "cursor": cursor,
+        "limit": limit,
+        "total": total,
+        "next_cursor": next_cursor,
+    });
+    if let Some((name, value)) = key {
+        data[name] = serde_json::Value::String(value.to_string());
+    }
+    (human, data)
+}
+
+fn print_page(
+    key: Option<(&str, &str)>,
+    uids: &soroban_sdk::Vec<soroban_sas_common::UID>,
+    cursor: u32,
+    limit: u32,
+    total: u32,
+    output: OutputFormat,
+) -> Result<(), String> {
+    let (human, data) = format_page(key, uids, cursor, limit, total);
+    emit_ok(output, || println!("{human}"), data)
 }
 
 fn format_attestations_by_attester(
@@ -1601,6 +1810,7 @@ fn run_delegate(
             offchain::verify_offchain_attestation(&signed)?;
 
             let attestation = offchain::parse_attestation(&env, &signed.attestation)?;
+            offchain::validate_onchain_parties(&env, &attestation)?;
             let public_key = parse_uid(&signed.public_key)?;
             let signature = decode_hex64(&signed.signature)?;
             let relayer_seed = offchain::parse_secret_seed(&secret_key)?;
@@ -1740,6 +1950,61 @@ fn run_schema(
                 }
             }
         }
+        SchemaCommands::GetByContent {
+            schema,
+            resolver,
+            revocable,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let resolver_addr = soroban_sas_sdk::strkey::parse_address(
+                &env,
+                &resolver,
+                soroban_sas_sdk::strkey::AddressKind::Contract,
+                "resolver",
+            )
+            .map_err(|e| e.to_string())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let schema_record = client
+                .get_schema_by_content(
+                    &env,
+                    &rpc,
+                    &registry_contract_id,
+                    &schema,
+                    &resolver_addr,
+                    revocable,
+                )
+                .map_err(|e| e.to_string())?;
+
+            match schema_record {
+                None => emit_ok(
+                    output,
+                    || println!("Schema not found"),
+                    serde_json::json!({ "found": false }),
+                ),
+                Some(record) => {
+                    let uid_hex = hex::encode(record.uid.0.to_array());
+                    let schema_str = soroban_string_to_std(&record.schema);
+                    let revocable = record.revocable;
+                    emit_ok(
+                        output,
+                        || {
+                            println!("uid:       {uid_hex}");
+                            println!("revocable: {revocable}");
+                            println!("schema:    {schema_str}");
+                        },
+                        serde_json::json!({
+                            "found": true,
+                            "uid": uid_hex.clone(),
+                            "revocable": revocable,
+                            "schema": schema_str.clone(),
+                        }),
+                    )
+                }
+            }
+        }
         SchemaCommands::RegisterWithValue {
             schema,
             resolver,
@@ -1854,6 +2119,33 @@ fn run_schema(
                 .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
         }
+        SchemaCommands::WithdrawFees {
+            amount,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            validate_fee_amount(amount)?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let result = client
+                .withdraw_schema_fees(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    amount,
+                )
+                .map_err(|e| e.to_string())?;
+            print_transaction_result(result, output)
+        }
         SchemaCommands::GetFee {
             registry_contract_id,
             rpc_url,
@@ -1939,7 +2231,7 @@ fn run_offchain(
             nonce,
             network_passphrase,
             contract_id,
-            output: output_file,
+            out_file,
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let network_passphrase =
@@ -1957,7 +2249,7 @@ fn run_offchain(
             )?;
             let signed_json = serde_json::to_string_pretty(&signed)
                 .map_err(|e| format!("serialization failed: {e}"))?;
-            match output_file {
+            match out_file {
                 Some(path) => {
                     io_safety::write_atomic_private(&path, &signed_json, false)?;
                     emit_ok(

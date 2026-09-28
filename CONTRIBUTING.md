@@ -4,9 +4,15 @@ First off, thank you for considering contributing to Soroban SAS!
 
 ## Development Setup
 1. Ensure you have Rust installed via rustup.
-2. Install the `wasm32-unknown-unknown` target.
-3. Install the Soroban CLI.
+2. Install the `wasm32-unknown-unknown` target and the Stellar CLI:
+   `./scripts/bootstrap.sh --install`.
+3. Enable the git hooks, which run CI's `cargo fmt` and `cargo clippy` gates
+   before you push: `./scripts/install_hooks.sh`.
 4. Run `make test` to ensure your environment is working.
+
+The full walkthrough, including a local Stellar node, local deployment and
+troubleshooting, is in
+[docs/local-development.md](docs/local-development.md).
 
 ## Pull Request Process
 1. Ensure any install or build dependencies are removed before the end of the layer when doing a build.
@@ -63,6 +69,38 @@ Repository administrators must enable **cargo-deny** and **cargo-audit** as
 required status checks in the `main` branch protection rule or ruleset after
 the workflow has run. Workflow YAML cannot enable branch protection. Replace
 the former **Cargo Audit** required check if it was enabled.
+
+## Mutation testing
+
+Line/branch coverage only proves a test *executed* a piece of code, not that
+the test would actually notice if that code were wrong. `cargo-mutants`
+injects small artificial bugs (flipping `<` to `<=`, negating a condition,
+dropping an authorization check, changing a return value, ...) and re-runs
+the test suite once per mutant; a mutant that still passes tests ("survives")
+marks a gap in coverage.
+
+Run it locally against the contract/library crates:
+
+```sh
+cargo install cargo-mutants --version 24.7.0 --locked
+cargo mutants --workspace \
+    --package schema-registry \
+    --package sas \
+    --package soroban-sas-indexer \
+    --package soroban-sas-common \
+    --package soroban-sas-sdk
+```
+
+Config lives in `.cargo/mutants.toml` (per-mutant timeout, excluded test
+paths). A full workspace run can take a while; scope it to one crate or one
+file while iterating, e.g. `cargo mutants -f contracts/sas/src/lib.rs`, or use
+`--jobs` to parallelize.
+
+CI runs the `Mutation Tests` workflow (`.github/workflows/mutation-tests.yml`)
+on every PR, on `main`, and nightly; it uploads a `mutants-report` artifact
+but does not block merges yet. The goal is >=80% mutant kill rate on contract
+crates before Mainnet deployment — treat surviving mutants reported there as
+a signal to add or strengthen a test, not as noise to ignore.
 
 ## Indexer fuzzing
 

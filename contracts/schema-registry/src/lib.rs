@@ -727,6 +727,33 @@ impl SchemaRegistry {
         record
     }
 
+    /// Returns the active [`SchemaRecord`] for a raw schema definition,
+    /// deriving the content-addressed UID with exactly the same canonical
+    /// derivation [`register`](Self::register) uses.
+    ///
+    /// Off-chain callers that cannot reproduce the host's XDR hashing rules
+    /// would otherwise have to hand-roll `schema_uid`, and a byte-encoding
+    /// mismatch makes a registered schema look missing — which leads callers
+    /// into duplicate registrations that revert. Passing the definition they
+    /// already hold removes that failure mode.
+    ///
+    /// A malformed `schema` string panics with [`SASError::InvalidSchema`], the
+    /// same error `register` raises, so a caller is told the definition is
+    /// invalid rather than receiving a misleading `None`. Unknown or deprecated
+    /// content returns `None`, matching [`get_schema`](Self::get_schema).
+    pub fn get_schema_by_content(
+        env: Env,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+    ) -> Option<SchemaRecord> {
+        if let Err(err) = validate_schema_syntax(&env, &schema) {
+            panic_with_error!(&env, err);
+        }
+        let uid = soroban_sas_common::schema_uid(&env, &schema, &resolver, revocable);
+        Self::get_schema(env, uid)
+    }
+
     /// Reports whether `uid` names an active (non-deprecated) schema. SAS
     /// calls this view during issuance, so a successful check renews the
     /// record's TTL to keep an actively used schema hot. A missing or

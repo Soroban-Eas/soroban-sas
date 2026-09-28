@@ -29,6 +29,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "eip712_encode_fuzz"
+path = "fuzz_targets/eip712_encode_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "xdr_decode_fuzz"
 path = "fuzz_targets/xdr_decode_fuzz.rs"
 test = false

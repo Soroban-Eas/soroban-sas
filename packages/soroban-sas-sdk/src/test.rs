@@ -207,6 +207,110 @@ fn test_attestation_builder_rejects_missing_required_fields() {
     }
 }
 
+// ---- #304: missing / malformed recipients never panic ----
+
+fn complete_builder(
+    env: &Env,
+    recipient: &str,
+    attester: &str,
+) -> crate::attestation_builder::AttestationRequestBuilder {
+    crate::attestation_builder::AttestationRequestBuilder::new()
+        .with_recipient(recipient)
+        .with_attester(attester)
+        .with_schema_uid([2u8; 32])
+        .with_data(Bytes::from_slice(env, b"payload"))
+}
+
+#[test]
+fn test_attestation_builder_missing_recipient_is_an_error_not_a_panic() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+
+    // Every other field set: the only gap is the recipient.
+    let result = crate::attestation_builder::AttestationRequestBuilder::new()
+        .with_attester(&attester)
+        .with_schema_uid([2u8; 32])
+        .with_data(Bytes::new(&env))
+        .build(&env);
+    match result {
+        Err(crate::errors::SdkError::RpcError(msg)) => assert!(msg.contains("recipient")),
+        other => panic!("expected a missing-recipient error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_attestation_builder_rejects_malformed_recipient_without_trapping_the_host() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+    let secret_seed_strkey = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF7U";
+
+    // Each of these used to reach `Address::from_string` unvalidated, which
+    // traps the host and panics the calling process.
+    for bad in ["", "   ", "not-a-strkey", "G", secret_seed_strkey] {
+        match complete_builder(&env, bad, &attester).build(&env) {
+            Err(crate::errors::SdkError::DecodingError(msg)) => {
+                assert!(msg.contains("recipient"), "{bad:?}: {msg}")
+            }
+            other => panic!("recipient {bad:?}: expected DecodingError, got {other:?}"),
+        }
+    }
+
+    // The attester goes through the same guard.
+    let recipient = strkey_account([3u8; 32]);
+    match complete_builder(&env, &recipient, "not-a-strkey").build(&env) {
+        Err(crate::errors::SdkError::DecodingError(msg)) => assert!(msg.contains("attester")),
+        other => panic!("expected DecodingError for the attester, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_attestation_builder_rejects_no_recipient_sentinels_and_self_attestation() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+    let zero_account = stellar_strkey::ed25519::PublicKey([0u8; 32]).to_string();
+    let zero_contract = stellar_strkey::Contract([0u8; 32]).to_string();
+
+    for missing in [zero_account.as_str(), zero_contract.as_str(), &attester] {
+        match complete_builder(&env, missing, &attester).build(&env) {
+            Err(crate::errors::SdkError::InvalidInput(msg)) => {
+                assert!(msg.contains("InvalidRecipient"), "{missing}: {msg}");
+                assert!(msg.contains("402"), "{missing}: {msg}");
+            }
+            other => panic!("recipient {missing}: expected InvalidInput, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_attestation_builder_valid_recipient_regression() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+
+    // Account and contract recipients both remain accepted, and the UID is
+    // still the canonical content address the contract validates (#215).
+    for recipient in [
+        strkey_account([3u8; 32]),
+        stellar_strkey::Contract([7u8; 32]).to_string(),
+    ] {
+        let attestation = complete_builder(&env, &recipient, &attester)
+            .build(&env)
+            .unwrap();
+        let expected_recipient =
+            soroban_sdk::Address::from_string(&soroban_sdk::String::from_str(&env, &recipient));
+        assert_eq!(attestation.recipient, expected_recipient);
+        assert_eq!(
+            attestation.uid,
+            soroban_sas_common::attestation_uid(
+                &env,
+                &attestation.schema_uid,
+                &attestation.recipient,
+                &attestation.attester,
+                &attestation.data,
+            )
+        );
+    }
+}
+
 /// Answers one JSON-RPC request on `stream` with a canned Soroban RPC
 /// response. `account_entry_xdr` and `transaction_data_xdr` are the base64
 /// XDR payloads the account-lookup and simulation steps need.
@@ -619,6 +723,168 @@ fn sas_set_fee_surfaces_unauthorized_simulation_as_contract_error_301() {
     let token = stellar_strkey::Contract([29u8; 32]).to_string();
     let error = client
         .set_fee(&env, &rpc, "network", &seed, &token, 1)
+        .unwrap_err();
+    server.join().unwrap();
+    assert!(matches!(error, crate::errors::SdkError::ContractError(301)));
+}
+
+#[test]
+fn schema_withdraw_fees_encodes_amount_and_settles() {
+    let env = Env::default();
+    let seed = [51u8; 32];
+    let registry_contract_id = stellar_strkey::Contract([52u8; 32]).to_string();
+    let (request_tx, request_rx) = std::sync::mpsc::channel();
+    let (url, server) = spawn_fee_pipeline_server(seed, request_tx);
+    let rpc = crate::rpc::RpcClient::new(url).with_timeout(Duration::from_secs(5));
+    let client = crate::client::SASClient::new(registry_contract_id.clone());
+
+    let first = client
+        .withdraw_schema_fees(
+            &env,
+            &rpc,
+            "Test SDF Network ; September 2015",
+            &seed,
+            &registry_contract_id,
+            500,
+        )
+        .unwrap();
+    let second = client
+        .withdraw_schema_fees(
+            &env,
+            &rpc,
+            "Test SDF Network ; September 2015",
+            &seed,
+            &registry_contract_id,
+            250,
+        )
+        .unwrap();
+    assert_eq!(first.status, "SUCCESS");
+    assert_eq!(second.status, "SUCCESS");
+    server.join().unwrap();
+
+    let requests: Vec<_> = request_rx.try_iter().collect();
+    let methods: Vec<_> = requests
+        .iter()
+        .map(|request| request["method"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "getLedgerEntries",
+            "simulateTransaction",
+            "sendTransaction",
+            "getTransaction",
+            "getLedgerEntries",
+            "simulateTransaction",
+            "sendTransaction",
+            "getTransaction"
+        ]
+    );
+
+    let invocations: Vec<_> = requests
+        .iter()
+        .filter(|request| request["method"] == "simulateTransaction")
+        .map(|request| {
+            let xdr = request["params"]["transaction"].as_str().unwrap();
+            let TransactionEnvelope::Tx(envelope) =
+                TransactionEnvelope::from_xdr_base64(xdr, Limits::none()).unwrap()
+            else {
+                panic!("expected V1 transaction envelope");
+            };
+            let OperationBody::InvokeHostFunction(operation) = &envelope.tx.operations[0].body
+            else {
+                panic!("expected InvokeHostFunction operation");
+            };
+            let HostFunction::InvokeContract(invocation) = &operation.host_function else {
+                panic!("expected InvokeContract host function");
+            };
+            invocation.clone()
+        })
+        .collect();
+    assert_eq!(
+        invocations[0].function_name.0.to_string(),
+        "withdraw_fees"
+    );
+    assert_eq!(invocations[0].args.len(), 1);
+    assert_eq!(
+        invocations[0].args[0],
+        crate::simulate::encode_arg(&env, &500i128).unwrap()
+    );
+    assert_eq!(
+        invocations[1].function_name.0.to_string(),
+        "withdraw_fees"
+    );
+    assert_eq!(
+        invocations[1].args[0],
+        crate::simulate::encode_arg(&env, &250i128).unwrap()
+    );
+}
+
+#[test]
+fn schema_withdraw_fees_rejects_non_positive_amount_before_rpc() {
+    let env = Env::default();
+    let client = crate::client::SASClient::new(stellar_strkey::Contract([53u8; 32]).to_string());
+    let rpc = crate::rpc::RpcClient::new("http://127.0.0.1:1".to_string());
+    let registry_contract_id = stellar_strkey::Contract([53u8; 32]).to_string();
+    for amount in [0, -1] {
+        let error = client
+            .withdraw_schema_fees(
+                &env,
+                &rpc,
+                "network",
+                &[54u8; 32],
+                &registry_contract_id,
+                amount,
+            )
+            .unwrap_err();
+        assert!(matches!(error, crate::errors::SdkError::InvalidInput(_)));
+    }
+}
+
+#[test]
+fn schema_withdraw_fees_surfaces_unauthorized_simulation_as_contract_error_301() {
+    let env = Env::default();
+    let seed = [55u8; 32];
+    let (account_xdr, _) = write_pipeline_fixture(seed);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for expected_method in ["getLedgerEntries", "simulateTransaction"] {
+            let (stream, _) = listener.accept().unwrap();
+            let request = read_rpc_request(&stream);
+            assert_eq!(request["method"], expected_method);
+            let id = request["id"].clone();
+            let response = if expected_method == "getLedgerEntries" {
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "result": {
+                        "entries": [{"key": "AAAAAA==", "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
+                        "latestLedger": 1
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "result": {
+                        "latestLedger": 1,
+                        "error": "HostError: Error(301, Unauthorized)"
+                    }
+                })
+            };
+            write_rpc_response(stream, &response);
+        }
+    });
+
+    let rpc = crate::rpc::RpcClient::new(url).with_timeout(Duration::from_secs(5));
+    let client = crate::client::SASClient::new(stellar_strkey::Contract([56u8; 32]).to_string());
+    let registry_contract_id = stellar_strkey::Contract([56u8; 32]).to_string();
+    let error = client
+        .withdraw_schema_fees(
+            &env,
+            &rpc,
+            "network",
+            &seed,
+            &registry_contract_id,
+            500,
+        )
         .unwrap_err();
     server.join().unwrap();
     assert!(matches!(error, crate::errors::SdkError::ContractError(301)));

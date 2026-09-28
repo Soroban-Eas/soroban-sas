@@ -9,6 +9,7 @@ pub mod account;
 pub mod attestation_builder;
 pub mod batch;
 pub mod client;
+pub mod delegation;
 pub mod limits;
 pub mod rpc;
 pub mod schema_builder;

@@ -14,6 +14,20 @@ The Schema Registry stores schema definitions and maintains their metadata. Each
 - Context data (metadata about the schema)
 - Creation and update timestamps
 
+Two read paths exist for a schema:
+
+| Call | Keyed by | Use when |
+| --- | --- | --- |
+| `get_schema(uid)` | 32-byte content-addressed `schema_uid` | You already hold the UID (for example, from an attestation). |
+| `get_schema_by_content(schema, resolver, revocable)` | The raw definition | You hold the definition and want to avoid re-deriving the UID off-chain. |
+
+`get_schema_by_content` re-derives the UID inside the contract with the same
+canonical rules `register` uses — see
+[Schema Definitions and Payloads](schemas.md#looking-up-a-schema-by-content) —
+so an off-chain byte-encoding mismatch cannot make a registered schema look
+missing. It returns `None` for unregistered or deprecated content, and reverts
+with `SASError::InvalidSchema` for a malformed schema string.
+
 ## Indexer Contract Integration
 
 The Indexer contract maintains indices of attestations organized by:
@@ -32,11 +46,11 @@ let attestations = indexer_client.get_schema_filtered(
     false  // false = active only, true = include revoked
 );
 
-// Get paginated results for a schema
-let attestations = indexer_client.get_schema_paginated(
+// Get one page of a schema's complete history (oldest first)
+let attestations = indexer_client.get_atts_by_schema_paginated(
     schema_uid,
-    cursor,   // starting position
-    limit     // number of results
+    cursor,   // zero-based position to start at
+    limit     // maximum number of results
 );
 ```
 
@@ -115,7 +129,20 @@ if !is_valid {
 
 ## Pagination
 
-For large result sets, use pagination to control memory and performance:
+For large result sets, use pagination to control memory and performance.
+Every lookup dimension has a paginated read with the same contract:
+`get_atts_by_recipient_paginated`, `get_atts_by_schema_paginated`, and
+`get_atts_by_attester_paginated`, each taking `(key, cursor, limit)`.
+
+- Pages walk the complete, append-only history in insertion order (oldest
+  first), including revoked and replaced UIDs. New attestations are only
+  appended at the end, so earlier pages never shift while you are paging.
+- A page holds exactly `min(limit, count - cursor)` UIDs. Resume at
+  `cursor + page.len()`; an empty page means the end was reached.
+- `limit == 0` and any `cursor` at or past the end return an empty page,
+  never an error.
+- `get_count_by_recipient` / `get_count_by_schema` / `get_count_by_attester`
+  return `count` for computing page totals.
 
 ```rust
 let page_size = 50;
@@ -123,20 +150,24 @@ let mut cursor = 0;
 let mut all_attestations = Vec::new();
 
 loop {
-    let page = indexer_client.get_schema_paginated(
-        schema_uid,
-        cursor,
-        page_size
+    let page = indexer_client.get_atts_by_schema_paginated(
+        &schema_uid,
+        &cursor,
+        &page_size,
     );
-    
+
     if page.is_empty() {
         break;
     }
-    
+
+    cursor += page.len();
     all_attestations.extend(page.iter());
-    cursor += page_size;  // Simple pagination
 }
 ```
+
+Off-chain, the SDK exposes the same reads as
+`IndexerClient::get_attestations_by_{recipient,schema,attester}_paginated`,
+and the CLI as `query by-* --cursor N --limit M` (see the README).
 
 ## Query Limits
 

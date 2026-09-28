@@ -6,7 +6,7 @@ mod tests {
     use crate::{
         decode_hex_or_base64, fee_to_human, fee_to_json, parse_uid, sas_fee_admin_output,
         validate_fee_amount, validate_schema_syntax, AttestCommands, Cli, Commands, OutputFormat,
-        SasCommands,
+        SasCommands, SchemaCommands,
     };
 
     #[test]
@@ -519,6 +519,78 @@ mod tests {
     }
 
     #[test]
+    fn parses_schema_withdraw_fees_flags() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--identity",
+            "admin",
+            "--network",
+            "testnet",
+            "--output",
+            "json",
+            "schema",
+            "withdraw-fees",
+            "--amount",
+            "500000",
+            "--registry-contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.identity.as_deref(), Some("admin"));
+        assert_eq!(cli.output, OutputFormat::Json);
+        let Some(Commands::Schema {
+            action:
+                SchemaCommands::WithdrawFees {
+                    amount,
+                    secret_key,
+                    network_passphrase,
+                    registry_contract_id,
+                    rpc_url,
+                },
+        }) = cli.command
+        else {
+            panic!("expected schema withdraw-fees command");
+        };
+        assert_eq!(amount, 500_000);
+        assert!(secret_key.is_none());
+        assert_eq!(
+            registry_contract_id,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+        );
+        assert_eq!(rpc_url, None);
+        assert_eq!(
+            crate::resolve_network_passphrase(network_passphrase, cli.network.as_deref()).unwrap(),
+            "Test SDF Network ; September 2015"
+        );
+        assert_eq!(
+            crate::resolve_rpc_url(rpc_url, cli.network.as_deref()).unwrap(),
+            "https://soroban-testnet.stellar.org"
+        );
+    }
+
+    #[test]
+    fn schema_withdraw_fees_rejects_non_positive_amounts_before_rpc_setup() {
+        let contract_id = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+        for amount in [0, -1] {
+            let error = crate::run_schema(
+                SchemaCommands::WithdrawFees {
+                    amount,
+                    secret_key: None,
+                    network_passphrase: None,
+                    registry_contract_id: contract_id.to_string(),
+                    rpc_url: Some("http://127.0.0.1:1".to_string()),
+                },
+                OutputFormat::Human,
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error, "--amount must be greater than 0");
+        }
+    }
+
+    #[test]
     fn sas_fee_admin_success_formatters_match_required_output() {
         let result = soroban_sas_sdk::rpc::GetTransactionResult {
             status: "SUCCESS".to_string(),
@@ -774,6 +846,81 @@ mod offchain_tests {
         let uid3 = generate_uid(&env, &schema_uid, &recipient, &attester, b"cafebabe").unwrap();
         assert_ne!(uid1, uid3);
     }
+
+    // --- Issue #304: a missing recipient is a local input error on every
+    // on-chain issuance path, reported with the contract's own error. ---
+
+    #[test]
+    fn onchain_parties_accept_a_concrete_recipient() {
+        let env = soroban_sdk::Env::default();
+        let input = sample_input([41u8; 32]);
+        let attestation = crate::offchain::parse_attestation(&env, &input).unwrap();
+        assert_eq!(
+            crate::offchain::validate_onchain_parties(&env, &attestation),
+            Ok(())
+        );
+        let contract_recipient = stellar_strkey::Contract([8u8; 32]).to_string();
+        assert_eq!(
+            crate::offchain::validate_onchain_recipient(&env, &contract_recipient, &input.attester),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn onchain_parties_reject_no_recipient_sentinels_with_invalid_recipient() {
+        let env = soroban_sdk::Env::default();
+        let mut input = sample_input([41u8; 32]);
+        for sentinel in [
+            stellar_strkey::ed25519::PublicKey([0u8; 32]).to_string(),
+            stellar_strkey::Contract([0u8; 32]).to_string(),
+        ] {
+            input.recipient = sentinel.clone();
+            let attestation = crate::offchain::parse_attestation(&env, &input).unwrap();
+            let err = crate::offchain::validate_onchain_parties(&env, &attestation)
+                .expect_err("sentinel recipient must be rejected");
+            assert!(err.contains("recipient is missing"), "{sentinel}: {err}");
+            assert!(err.contains("InvalidRecipient"), "{err}");
+            assert!(err.contains("402"), "{err}");
+            assert_eq!(
+                crate::offchain::validate_onchain_recipient(&env, &sentinel, &input.attester),
+                Err(err)
+            );
+        }
+    }
+
+    #[test]
+    fn onchain_parties_reject_self_attestation_distinctly() {
+        let env = soroban_sdk::Env::default();
+        let input = sample_input([41u8; 32]);
+        let err =
+            crate::offchain::validate_onchain_recipient(&env, &input.attester, &input.attester)
+                .expect_err("self-attestation must be rejected");
+        assert!(err.contains("must differ from the attester"), "{err}");
+        assert!(err.contains("InvalidRecipient"), "{err}");
+    }
+
+    #[test]
+    fn onchain_recipient_check_reports_malformed_input_as_a_parse_error() {
+        let env = soroban_sdk::Env::default();
+        let input = sample_input([41u8; 32]);
+        // A malformed strkey is a parse error, not a "missing recipient":
+        // the two must stay distinguishable to the operator.
+        let err = crate::offchain::validate_onchain_recipient(&env, "", &input.attester)
+            .expect_err("empty recipient must be rejected");
+        assert!(err.contains("recipient"), "{err}");
+        assert!(!err.contains("InvalidRecipient"), "{err}");
+    }
+
+    #[test]
+    fn offchain_signing_still_accepts_a_recipientless_attestation() {
+        // Regression guard: off-chain verification places no constraint on
+        // the recipient, so the #304 check must not leak into signing.
+        let seed = [41u8; 32];
+        let mut input = sample_input(seed);
+        input.recipient = stellar_strkey::ed25519::PublicKey([0u8; 32]).to_string();
+        let signed = sign_offchain_attestation(input, 7, NETWORK, &contract_id(), &seed).unwrap();
+        assert!(verify_offchain_attestation(&signed).is_ok());
+    }
 }
 
 /// Issue #175: `--online` must query only the caller-supplied trusted
@@ -1018,11 +1165,14 @@ mod by_attester_query_tests {
                     address,
                     contract_id,
                     rpc_url,
+                    page,
                 },
         }) = cli.command
         else {
             panic!("expected query by-attester command");
         };
+        // No pagination flags: the unpaginated complete-history query.
+        assert_eq!(page.resolve(), Ok(None));
         assert_eq!(address, ATTESTER);
         assert_eq!(contract_id, CONTRACT);
         assert_eq!(
@@ -1166,6 +1316,7 @@ mod by_attester_query_tests {
                 address: ATTESTER.to_string(),
                 contract_id: CONTRACT.to_string(),
                 rpc_url: Some(rpc_url),
+                page: Default::default(),
             },
             OutputFormat::Json,
             None,
@@ -1175,5 +1326,325 @@ mod by_attester_query_tests {
         let request: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
         assert_eq!(request["method"], "simulateTransaction");
         assert!(request["params"]["transaction"].as_str().is_some());
+    }
+}
+
+#[cfg(test)]
+mod schema_withdraw_fees_tests {
+    use soroban_sdk::xdr::{
+        AccountEntry, AccountEntryExt, AccountId, ExtensionPoint, LedgerEntryData, LedgerFootprint,
+        Limits, PublicKey, SequenceNumber, SorobanResources, SorobanTransactionData, String32,
+        Thresholds, Uint256, VecM, WriteXdr,
+    };
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    use crate::{OutputFormat, SchemaCommands};
+
+    /// Answers the four calls one signed write pipeline makes —
+    /// `getLedgerEntries`, `simulateTransaction`, `sendTransaction`,
+    /// `getTransaction` — and settles the write with `SUCCESS`. The
+    /// `getTransaction` reply deliberately omits `envelopeXdr`, which the
+    /// SDK treats as "envelope not checked" rather than a decode failure.
+    fn spawn_write_pipeline_mock(seed: [u8; 32]) -> String {
+        let public_key = soroban_sas_sdk::signature::derive_public_key(&seed);
+        let account_entry_xdr = LedgerEntryData::Account(AccountEntry {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(public_key))),
+            balance: 100_000_000,
+            seq_num: SequenceNumber(7),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: String32::default(),
+            thresholds: Thresholds([1, 0, 0, 0]),
+            signers: Default::default(),
+            ext: AccountEntryExt::V0,
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+        let transaction_data_xdr = SorobanTransactionData {
+            ext: ExtensionPoint::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint {
+                    read_only: VecM::default(),
+                    read_write: VecM::default(),
+                },
+                instructions: 0,
+                read_bytes: 0,
+                write_bytes: 0,
+            },
+            resource_fee: 0,
+        }
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for expected_method in [
+                "getLedgerEntries",
+                "simulateTransaction",
+                "sendTransaction",
+                "getTransaction",
+            ] {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                let request = read_request(&stream);
+                assert_eq!(request["method"], expected_method);
+                let id = request["id"].clone();
+                let response = match expected_method {
+                    "getLedgerEntries" => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "entries": [{
+                                "key": "AAAAAA==",
+                                "xdr": account_entry_xdr,
+                                "lastModifiedLedgerSeq": 1
+                            }],
+                            "latestLedger": 1
+                        }
+                    }),
+                    "simulateTransaction" => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "latestLedger": 1,
+                            "results": [{"xdr": "AAAAAA=="}],
+                            "transactionData": transaction_data_xdr,
+                            "minResourceFee": "0"
+                        }
+                    }),
+                    "sendTransaction" => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "status": "PENDING", "hash": "withdraw-hash", "latestLedger": 1
+                        }
+                    }),
+                    _ => serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "status": "SUCCESS", "latestLedger": 1, "resultXdr": "AAAAAQAAAAA="
+                        }
+                    }),
+                };
+                write_response(stream, &response);
+            }
+        });
+        url
+    }
+
+    fn read_request(stream: &TcpStream) -> serde_json::Value {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            let read = reader.read_line(&mut line).unwrap_or(0);
+            if read == 0 || line == "\r\n" || line == "\n" {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0u8; content_length];
+        let _ = reader.read_exact(&mut body);
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    fn write_response(mut stream: TcpStream, response: &serde_json::Value) {
+        let body = response.to_string();
+        let http = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(http.as_bytes());
+        let _ = stream.flush();
+    }
+
+    #[test]
+    fn schema_withdraw_fees_runs_end_to_end_with_json_output() {
+        let seed = [61u8; 32];
+        let url = spawn_write_pipeline_mock(seed);
+        let res = crate::run_schema(
+            SchemaCommands::WithdrawFees {
+                amount: 500,
+                secret_key: Some(hex::encode(seed)),
+                network_passphrase: Some("Test SDF Network ; September 2015".to_string()),
+                registry_contract_id: stellar_strkey::Contract([62u8; 32]).to_string(),
+                rpc_url: Some(url),
+            },
+            OutputFormat::Json,
+            None,
+            None,
+        );
+        assert!(res.is_ok(), "withdraw-fees should settle: {res:?}");
+    }
+}
+/// Issue #306: `query by-* --cursor/--limit` pagination flags.
+#[cfg(test)]
+mod pagination_query_tests {
+    use clap::{CommandFactory, Parser};
+    use soroban_sas_common::UID;
+    use soroban_sdk::BytesN;
+
+    use crate::{
+        format_page, run_query, Cli, Commands, OutputFormat, PageArgs, QueryCommands,
+        MAX_QUERY_PAGE_SIZE,
+    };
+
+    const CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+
+    fn account() -> String {
+        stellar_strkey::ed25519::PublicKey([5u8; 32]).to_string()
+    }
+
+    fn parse_page(extra: &[&str]) -> Result<PageArgs, clap::Error> {
+        let address = account();
+        let mut args = vec![
+            "soroban-sas",
+            "query",
+            "by-recipient",
+            "--address",
+            address.as_str(),
+            "--contract-id",
+            CONTRACT,
+        ];
+        args.extend_from_slice(extra);
+        let cli = Cli::try_parse_from(args)?;
+        let Some(Commands::Query {
+            action: QueryCommands::ByRecipient { page, .. },
+        }) = cli.command
+        else {
+            panic!("expected query by-recipient command");
+        };
+        Ok(page)
+    }
+
+    #[test]
+    fn page_flags_are_optional_and_select_pagination_only_when_present() {
+        assert_eq!(parse_page(&[]).unwrap().resolve(), Ok(None));
+        assert_eq!(
+            parse_page(&["--limit", "5"]).unwrap().resolve(),
+            Ok(Some((0, 5)))
+        );
+        assert_eq!(
+            parse_page(&["--cursor", "7"]).unwrap().resolve(),
+            Ok(Some((7, MAX_QUERY_PAGE_SIZE)))
+        );
+        assert_eq!(
+            parse_page(&["--cursor", "7", "--limit", "3"])
+                .unwrap()
+                .resolve(),
+            Ok(Some((7, 3)))
+        );
+    }
+
+    #[test]
+    fn page_limit_is_bounded_before_any_rpc_call() {
+        for bad in ["0", "101"] {
+            let err = parse_page(&["--limit", bad])
+                .unwrap()
+                .resolve()
+                .unwrap_err();
+            assert!(err.contains("--limit must be between 1 and 100"), "{err}");
+        }
+        assert_eq!(
+            parse_page(&["--limit", "100"]).unwrap().resolve(),
+            Ok(Some((0, 100)))
+        );
+        // Non-numeric / negative values are rejected by clap itself.
+        assert!(parse_page(&["--limit", "-1"]).is_err());
+        assert!(parse_page(&["--cursor", "abc"]).is_err());
+    }
+
+    #[test]
+    fn invalid_limit_fails_without_touching_the_network() {
+        // An unreachable RPC URL proves the limit is validated first.
+        let err = run_query(
+            QueryCommands::BySchema {
+                uid: hex::encode([2u8; 32]),
+                contract_id: CONTRACT.to_string(),
+                rpc_url: Some("http://127.0.0.1:1/".to_string()),
+                page: PageArgs {
+                    cursor: Some(0),
+                    limit: Some(0),
+                },
+            },
+            OutputFormat::Json,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("--limit"), "{err}");
+    }
+
+    #[test]
+    fn every_query_command_documents_the_page_flags() {
+        let mut root = Cli::command();
+        let query = root.find_subcommand_mut("query").unwrap();
+        for name in ["by-recipient", "by-attester", "by-schema"] {
+            let help = query
+                .find_subcommand_mut(name)
+                .unwrap()
+                .render_long_help()
+                .to_string();
+            assert!(help.contains("--cursor"), "{name}");
+            assert!(help.contains("--limit"), "{name}");
+            assert!(help.contains("complete history"), "{name}");
+        }
+    }
+
+    fn uids(env: &soroban_sdk::Env, seeds: &[u8]) -> soroban_sdk::Vec<UID> {
+        let mut out = soroban_sdk::Vec::new(env);
+        for seed in seeds {
+            out.push_back(UID(BytesN::from_array(env, &[*seed; 32])));
+        }
+        out
+    }
+
+    #[test]
+    fn format_page_reports_first_middle_and_final_pages() {
+        let env = soroban_sdk::Env::default();
+
+        let (human, data) = format_page(None, &uids(&env, &[1, 2]), 0, 2, 5);
+        assert_eq!(data["uids"].as_array().unwrap().len(), 2);
+        assert_eq!(data["cursor"], 0);
+        assert_eq!(data["limit"], 2);
+        assert_eq!(data["total"], 5);
+        assert_eq!(data["next_cursor"], 2);
+        assert!(
+            human.ends_with("Page: 1-2 of 5 (next: --cursor 2)"),
+            "{human}"
+        );
+
+        let (_, data) = format_page(None, &uids(&env, &[3, 4]), 2, 2, 5);
+        assert_eq!(data["next_cursor"], 4);
+
+        let (human, data) = format_page(None, &uids(&env, &[5]), 4, 2, 5);
+        assert_eq!(data["next_cursor"], serde_json::Value::Null);
+        assert!(human.ends_with("Page: 5-5 of 5"), "{human}");
+        assert!(data.get("attester").is_none());
+    }
+
+    #[test]
+    fn format_page_handles_empty_and_past_the_end_requests() {
+        let env = soroban_sdk::Env::default();
+        let empty = uids(&env, &[]);
+
+        let (human, data) = format_page(None, &empty, 0, 10, 0);
+        assert_eq!(data["uids"], serde_json::json!([]));
+        assert_eq!(data["next_cursor"], serde_json::Value::Null);
+        assert!(human.starts_with("No attestations found"), "{human}");
+
+        let (human, data) = format_page(None, &empty, 50, 10, 3);
+        assert_eq!(data["next_cursor"], serde_json::Value::Null);
+        assert!(
+            human.contains("cursor 50 is past the end (3 total)"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn format_page_echoes_the_attester_like_the_unpaginated_command() {
+        let env = soroban_sdk::Env::default();
+        let attester = account();
+        let (_, data) = format_page(Some(("attester", &attester)), &uids(&env, &[1]), 0, 1, 1);
+        assert_eq!(data["attester"], attester.as_str());
     }
 }

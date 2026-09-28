@@ -19,7 +19,7 @@ here.
 
 | Tool | Version | Check | Install |
 | --- | --- | --- | --- |
-| Rust toolchain | `1.79.0` (pinned by [`rust-toolchain.toml`](../rust-toolchain.toml)) | `rustc --version` | [rustup.rs](https://rustup.rs) |
+| Rust toolchain | `1.83.0` (pinned by [`rust-toolchain.toml`](../rust-toolchain.toml)) | `rustc --version` | [rustup.rs](https://rustup.rs) |
 | WASM target | matches toolchain | `rustup target list --installed \| grep wasm32` | `rustup target add wasm32-unknown-unknown` |
 | Stellar CLI | v23+ (`stellar`); pre-v23 installs use the old `soroban` binary name | `stellar --version` | `cargo install --locked stellar-cli` |
 
@@ -106,7 +106,7 @@ For local development and integration testing, a standalone Stellar node with So
 | Stellar Quickstart Image | `stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784` |
 | Soroban SDK | `20.0.0` (workspace dependency) |
 | Stellar Protocol | Protocol 20 / 21 |
-| Rust Toolchain | `1.79.0` (`rust-toolchain.toml`) |
+| Rust Toolchain | `1.83.0` (`rust-toolchain.toml`) |
 | Stellar CLI | v23+ (`stellar`) |
 
 ### Starting LocalNet and Verifying RPC Readiness

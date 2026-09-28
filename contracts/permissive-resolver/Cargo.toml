@@ -1,0 +1,19 @@
+[package]
+# Publishing requires maintainers to declare the project license first.
+publish = false
+name = "permissive-resolver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = { workspace = true }
+soroban-sas-common = { path = "../../packages/soroban-sas-common" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

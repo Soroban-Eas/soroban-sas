@@ -76,4 +76,9 @@ pub enum SASError {
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).
     ContractPaused = 501,
+
+    /// Reentrancy errors
+    /// A callback (resolver or indexer) re-entered `multi_attest` while the
+    /// outer batch was still executing (#296).
+    Reentrancy = 502,
 }

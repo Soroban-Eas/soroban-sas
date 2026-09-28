@@ -290,3 +290,51 @@ fn test_get_schemas_pagination_skips_deprecated_and_returns_cursor() {
     assert_eq!(p2.len(), 0);
     assert_eq!(c2, 30);
 }
+
+/// Issue #259: `get_schema_by_content` resolves the same record as
+/// `get_schema`, returns `None` for unregistered content, and reverts on a
+/// malformed schema string instead of silently reporting "not registered".
+#[test]
+fn test_get_schema_by_content_matches_uid_lookup_and_rejects_invalid_syntax() {
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let schema = String::from_str(&env, "bool certified");
+    let resolver = Address::generate(&env);
+    let uid = client.register(&owner, &schema, &resolver, &true);
+
+    // Registered content resolves to the same record as the UID lookup.
+    let by_content = client
+        .get_schema_by_content(&schema, &resolver, &true)
+        .expect("registered content resolves");
+    let by_uid = client.get_schema(&uid).expect("registered uid resolves");
+    assert_eq!(by_content.uid, by_uid.uid);
+    assert_eq!(by_content.schema, schema);
+    assert_eq!(by_content.revocable, true);
+
+    // Policy fields participate in the UID, so flipping either one addresses
+    // different, unregistered content.
+    assert!(client.get_schema_by_content(&schema, &resolver, &false).is_none());
+    let other_resolver = Address::generate(&env);
+    assert!(client.get_schema_by_content(&schema, &other_resolver, &true).is_none());
+
+    // Unregistered-but-valid content returns None rather than reverting.
+    let unknown = String::from_str(&env, "uint32 score");
+    assert!(client.get_schema_by_content(&unknown, &resolver, &true).is_none());
+
+    // Malformed syntax reverts with the same typed error register raises.
+    let malformed = String::from_str(&env, "!!!");
+    assert_eq!(
+        client.try_get_schema_by_content(&malformed, &resolver, &true),
+        Err(Ok(SASError::InvalidSchema.into()))
+    );
+
+    // Deprecated content resolves to None, matching get_schema.
+    client.deprecate(&uid, &admin);
+    assert!(client.get_schema_by_content(&schema, &resolver, &true).is_none());
+}
