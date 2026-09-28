@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
+pub mod eip712;
 pub mod errors;
 pub mod events;
 pub mod macros;
@@ -14,6 +15,15 @@ pub use merkle::*;
 pub use signature::*;
 pub use typed_data::*;
 pub use validation::*;
+
+// Re-exported by name rather than with a glob: `eip712` also exports a `v1`
+// submodule, and a glob would lift `v1` (and its items) into the crate root,
+// where it can collide with names from other modules.
+pub use eip712::{
+    encode_data, encode_type, find_struct, hash_struct, hash_typed_data,
+    hash_typed_data_with_prefix, tag_matches_defs, type_hash, FieldDef, FieldType, FieldValue,
+    SchemaError, StructDef, DOMAIN_STRUCT_NAME, EIP712_PREFIX,
+};
 
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String};
 

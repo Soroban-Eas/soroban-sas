@@ -41,12 +41,16 @@ pub const SCHEMA_OWNERSHIP_TRANSFERRED: Symbol = symbol_short!("SCHOWN");
 pub const BATCH_ATTESTED: Symbol = symbol_short!("BATCHATT");
 /// First topic of every `BatchRevoked` event.
 pub const BATCH_REVOKED: Symbol = symbol_short!("BATCHREV");
+/// First topic of every `IndexerStrictUpdated` event.
+pub const INDEXER_STRICT_UPDATED: Symbol = symbol_short!("IDXSTRUP");
 /// First topic of every `SchemaDeprecated` event.
 pub const SCHEMA_DEPRECATED: Symbol = symbol_short!("SCHDEP");
 /// First topic of every `ContractPaused` event.
 pub const CONTRACT_PAUSED: Symbol = symbol_short!("PAUSED");
 /// First topic of every `ContractUnpaused` event.
 pub const CONTRACT_UNPAUSED: Symbol = symbol_short!("UNPAUSED");
+/// First topic of every `AttestationRenewed` event.
+pub const ATTESTATION_RENEWED: Symbol = symbol_short!("ATSTRENEW");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -340,6 +344,19 @@ pub struct ContractUnpausedEvent {
     pub authorizer: Address,
 }
 
+/// Payload of the `AttestationRenewed` event.
+///
+/// Published with topics `(ATTESTATION_RENEWED, uid, attester)` when
+/// `SAS::renew_attestation` extends an attestation's expiration time.
+/// `new_expiration_time` is the new expiration time (0 = perpetual).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttestationRenewedEvent {
+    pub uid: UID,
+    pub attester: Address,
+    pub new_expiration_time: u64,
+}
+
 /// First topic of a SAS `FeeConfigUpdated` event.
 pub const FEECFG_UPDATED: Symbol = symbol_short!("FEECFGUPD");
 
@@ -355,6 +372,21 @@ pub struct FeeConfigUpdatedEvent {
     pub new_token: PreviousAddress,
     pub new_amount: Option<i128>,
     pub authorizer: Address,
+}
+
+/// Payload of the `IndexerStrictUpdated` event.
+///
+/// Published with topics `(INDEXER_STRICT_UPDATED, admin)` on a successful
+/// `SAS::set_indexer_strict` (#251). `old_strict`/`new_strict` are `false`
+/// for fail-open (the default) and `true` for fail-closed, so an off-chain
+/// monitor can detect a toggle of the Indexer availability policy without
+/// polling `get_indexer_strict`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndexerStrictUpdatedEvent {
+    pub old_strict: bool,
+    pub new_strict: bool,
+    pub admin: Address,
 }
 
 pub const REINDEXED: Symbol = symbol_short!("REINDEXED");

@@ -364,6 +364,51 @@ fn collect_filtered(
     out
 }
 
+/// Reads the window `[cursor, min(cursor + limit, total))` of one lookup
+/// key's history, touching only the chunks that overlap it. Backs every
+/// `get_atts_by_*_paginated` read so the three lookup dimensions share one
+/// pagination model (#306); see `Indexer::get_atts_by_recipient_paginated`
+/// for the contract. A missing chunk ends the page early rather than
+/// trapping, matching `collect_filtered`.
+fn collect_page(
+    env: &Env,
+    total: u32,
+    cursor: u32,
+    limit: u32,
+    mut get_chunk: impl FnMut(u32) -> Option<soroban_sdk::Vec<UID>>,
+) -> soroban_sdk::Vec<UID> {
+    let mut uids = soroban_sdk::Vec::new(env);
+    if limit == 0 || cursor >= total {
+        return uids;
+    }
+
+    let end = core::cmp::min(total, cursor.saturating_add(limit));
+    let mut index = cursor;
+    while index < end {
+        let chunk_index = index / MAX_CHUNK_SIZE;
+        let chunk_offset = index % MAX_CHUNK_SIZE;
+        let Some(chunk) = get_chunk(chunk_index) else {
+            break;
+        };
+
+        if chunk_offset >= chunk.len() {
+            index = (chunk_index + 1) * MAX_CHUNK_SIZE;
+            continue;
+        }
+
+        let available = chunk.len() - chunk_offset;
+        let remaining = end - index;
+        let take = core::cmp::min(available, remaining);
+        for offset in 0..take {
+            if let Some(uid) = chunk.get(chunk_offset + offset) {
+                uids.push_back(uid);
+            }
+        }
+        index += take;
+    }
+    uids
+}
+
 #[contractimpl]
 impl Indexer {
     /// Compatibility probe used by Indexer::init to prove the supplied
@@ -601,6 +646,29 @@ impl Indexer {
         )
     }
 
+    /// One page of the complete recipient history (#306).
+    ///
+    /// Pagination contract shared by every `get_atts_by_*_paginated` read:
+    ///
+    /// - Ordering is the append-only insertion order of the index (oldest
+    ///   first) — the same order `get_attestations_by_recipient` returns —
+    ///   so it is deterministic and stable across pages. New attestations
+    ///   are only ever appended after the last position, which keeps
+    ///   earlier pages byte-for-byte unchanged while a caller is paging.
+    /// - `cursor` is a zero-based position into that history and `limit`
+    ///   the maximum number of UIDs returned. A page holds exactly
+    ///   `min(limit, count - cursor)` UIDs, so the next page starts at
+    ///   `cursor + page.len()` and consecutive pages never skip or repeat
+    ///   an entry.
+    /// - `limit == 0`, `cursor >= count` (including an empty index), and any
+    ///   request past the end return an empty vector rather than an error.
+    ///   `get_count_by_recipient` gives `count` for computing page totals.
+    /// - Revoked and replaced UIDs are included (historical view); use
+    ///   `get_recipient_page_filtered` for an active-only walk.
+    /// - Only the chunks overlapping the requested window are read (and
+    ///   TTL-renewed), so a page costs `O(limit)` rather than `O(count)`.
+    ///
+    /// Counts toward the per-ledger query limit (`SASError::LimitExceeded`).
     pub fn get_atts_by_recipient_paginated(
         env: Env,
         recipient: Address,
@@ -611,48 +679,48 @@ impl Indexer {
         if let Err(err) = check_query_limit(&env) {
             panic_with_error!(&env, err);
         }
-        if limit == 0 {
-            return soroban_sdk::Vec::new(&env);
-        }
-
         let total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
-        if cursor >= total {
-            return soroban_sdk::Vec::new(&env);
+        collect_page(&env, total, cursor, limit, |chunk_index| {
+            read_chunk(&env, &(recipient.clone(), chunk_index))
+        })
+    }
+
+    /// One page of the complete schema history. Same pagination contract
+    /// as [`Indexer::get_atts_by_recipient_paginated`]; pair with
+    /// `get_count_by_schema` (#306).
+    pub fn get_atts_by_schema_paginated(
+        env: Env,
+        schema_uid: UID,
+        cursor: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
         }
+        let total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
+        collect_page(&env, total, cursor, limit, |chunk_index| {
+            read_chunk(&env, &(schema_uid.clone(), chunk_index))
+        })
+    }
 
-        let end = core::cmp::min(total, cursor.saturating_add(limit));
-        let mut index = cursor;
-        let mut uids = soroban_sdk::Vec::new(&env);
-
-        while index < end {
-            let chunk_index = index / MAX_CHUNK_SIZE;
-            let chunk_offset = index % MAX_CHUNK_SIZE;
-            let Some(chunk) = read_chunk(&env, &(recipient.clone(), chunk_index)) else {
-                break;
-            };
-
-            if chunk_offset >= chunk.len() {
-                index = (chunk_index + 1) * MAX_CHUNK_SIZE;
-                continue;
-            }
-
-            let available = chunk.len() - chunk_offset;
-            let remaining = end - index;
-            let take = if remaining < available {
-                remaining
-            } else {
-                available
-            };
-
-            for offset in 0..take {
-                if let Some(uid) = chunk.get(chunk_offset + offset) {
-                    uids.push_back(uid);
-                }
-            }
-            index += take;
+    /// One page of the complete attester history. Same pagination contract
+    /// as [`Indexer::get_atts_by_recipient_paginated`]; pair with
+    /// `get_count_by_attester` (#306).
+    pub fn get_atts_by_attester_paginated(
+        env: Env,
+        attester: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
         }
-
-        uids
+        let total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
+        collect_page(&env, total, cursor, limit, |chunk_index| {
+            read_chunk(&env, &(attester.clone(), chunk_index))
+        })
     }
 
     /// Filtered variants: `include_revoked == true` returns the full

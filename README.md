@@ -86,6 +86,14 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
 - `scripts/`
   A collection of shell scripts to assist with local environment setup, contract deployment, and invocation.
 
+- `tools/schema-explorer`
+  A prototype read-only web dashboard for browsing a Schema Registry and validating draft schemas.
+  See the [Schema Explorer README](tools/schema-explorer/README.md).
+
+- `.githooks/`
+  Opt-in `pre-commit` and `pre-push` hooks that run CI's formatting and lint checks locally.
+  Enable them with `./scripts/install_hooks.sh`.
+
 ## Command-Line Interface
 
 All commands support `--output human` (default) or `--output json` for machine-readable output.
@@ -94,6 +102,9 @@ Usage examples:
 
 ```bash
 cargo run -p soroban-sas-cli -- --output json schema get --uid UID... --registry-contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json schema withdraw-fees --amount 1000000 \
+  --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
+  --registry-contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json attest verify --uid UID... --contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json attest attest \
   --schema-uid UID... --recipient G... --data 0xdeadbeef \
@@ -102,7 +113,22 @@ cargo run -p soroban-sas-cli -- --output json attest attest \
 cargo run -p soroban-sas-cli -- --output json query by-recipient --address G... --contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json query by-attester \
   --address G... --contract-id C... --rpc-url URL
+# One page (1-100 UIDs) of a large history; follow `next_cursor` until it is null
+cargo run -p soroban-sas-cli -- --output json query by-schema \
+  --uid UID... --contract-id C... --rpc-url URL --cursor 0 --limit 50
 ```
+
+Without `--cursor`/`--limit`, `query by-*` returns the complete history as
+`{"uids": [...]}`, exactly as before. With either flag it returns one page:
+`{"uids", "cursor", "limit", "total", "next_cursor"}`, where `next_cursor` is
+`null` once the history is exhausted.
+
+`attest attest`, `attest create`, `attest replace`, and `delegate
+submit-attest` reject an attestation with no usable recipient (the zero-address
+"no recipient" sentinel, or the attester itself) before any RPC call, with the
+same `InvalidRecipient` (402) error the SAS contract would return. SAS has no
+recipient-less on-chain attestations; `offchain sign`/`verify` do not
+constrain the recipient.
 
 Detailed usage and flags for every subcommand are available via:
 
@@ -188,11 +214,42 @@ The shared validation libraries enforce several key constraints:
 - Expiration timestamps must be explicitly provided for temporary claims.
 - Both the issuer and the recipient fields must contain valid identifiers.
 
+## SDK Usage Examples
+
+Runnable examples under `examples/` demonstrate the Rust SDK (`soroban-sas-sdk`)
+end to end. Each accepts `--dry-run` to build and print its payload without any
+network call or funded key, and prints usage with `--help`.
+
+- `examples/basic_attestation.rs` — build a single attestation, compute its
+  content-addressed UID and typed-data hash, and optionally submit it via
+  `SASClient::attest`.
+  ```bash
+  cargo run --example basic_attestation
+  ```
+- `examples/multi_attest.rs` — build a batch of attestations and submit them
+  atomically via `SASClient::multi_attest`; prints every UID in the batch and
+  reports that none were issued if the batch submission fails.
+  ```bash
+  cargo run --example multi_attest -- --dry-run
+  ```
+- `examples/delegated_attest.rs` — sign a delegated attestation's typed-data
+  hash with the attester's ed25519 key, then relay it via
+  `SASClient::attest_by_delegation` from a separate, funded relayer account
+  that never holds the attester's key.
+  ```bash
+  cargo run --example delegated_attest -- --dry-run
+  ```
+
 ## Getting Started
+
+- **Building an app on soroban-sas?** Follow [Getting Started for DApp Developers](docs/getting-started.md):
+  register a schema, issue, verify, query and revoke an attestation.
+- **Contributing to this repository?** [Local Development Environment](docs/local-development.md)
+  covers the toolchain, tests, git hooks, a local Stellar node and local deployment.
 
 ### System Requirements
 
-- A recent stable version of the Rust toolchain (pinned to `1.79.0` via `rust-toolchain.toml`).
+- A recent stable version of the Rust toolchain (pinned to `1.83.0` via `rust-toolchain.toml`).
 - WebAssembly compilation target: `rustup target add wasm32-unknown-unknown`
 - The Stellar CLI suite: `cargo install --locked stellar-cli`
 
@@ -224,6 +281,12 @@ TMPDIR=/tmp cargo test --workspace
 
 ## Documentation
 
+- [Getting Started for DApp Developers](docs/getting-started.md): schema
+  design, resolvers, issuance rules, off-chain and on-chain verification,
+  indexer queries, and a security checklist.
+- [Local Development Environment](docs/local-development.md): toolchain,
+  build and test, git hooks, local network, local deployment, and
+  troubleshooting.
 - Documentation on Schema Syntax and Payloads: `docs/schemas.md`
 - [Attestation Lifecycle](docs/attestations.md): issuance, expiration,
   revocation, and replacement semantics, including `replace_attestation`'s

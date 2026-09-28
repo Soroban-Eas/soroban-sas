@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# .githooks/pre-push — run CI's formatting and lint gates before code leaves
+# the machine:
+#
+#   cargo fmt --all -- --check
+#   cargo clippy --workspace --all-targets -- -D warnings
+#
+# These are the exact commands of the "Formatting" and "Clippy" jobs in
+# .github/workflows/ci.yml, so a push that passes here will not fail those
+# jobs. Set SAS_HOOK_TEST=1 to also run `cargo test --workspace`.
+#
+# Bypass once with `git push --no-verify`, or with SAS_SKIP_HOOKS=1.
+set -euo pipefail
+
+HOOK_NAME="pre-push"
+# shellcheck source=.githooks/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+if hooks_disabled; then
+    hook_info "SAS_SKIP_HOOKS=1 — skipping checks"
+    exit 0
+fi
+
+# Git feeds "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+# A push that only deletes remote branches sends no new code, so skip it.
+zero_sha="0000000000000000000000000000000000000000"
+pushes_code=false
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    if [[ -n "${local_sha:-}" && "$local_sha" != "$zero_sha" ]]; then
+        pushes_code=true
+    fi
+done
+if [[ "$pushes_code" != true ]]; then
+    exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+ensure_cargo || exit 1
+
+run_check "Fix with: cargo fmt --all" \
+    cargo fmt --all -- --check
+run_check "Fix the clippy warnings above (CI denies all warnings)." \
+    cargo clippy --workspace --all-targets -- -D warnings
+
+if [[ "${SAS_HOOK_TEST:-0}" == "1" ]]; then
+    run_check "Fix the failing tests above." \
+        cargo test --workspace
+fi

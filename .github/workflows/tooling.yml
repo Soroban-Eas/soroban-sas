@@ -1,0 +1,41 @@
+name: Developer Tooling
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  git-hooks:
+    name: Git hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test pre-commit / pre-push hooks and installer
+        run: ./scripts/test_git_hooks.sh
+
+  schema-explorer:
+    name: Schema explorer
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/schema-explorer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/schema-explorer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Type-check and build
+        run: npm run build

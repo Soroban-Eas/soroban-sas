@@ -1,0 +1,8 @@
+# Shell scripts and git hooks must keep LF endings: bash rejects CRLF, and
+# Git for Windows checks files out with CRLF by default (core.autocrlf).
+*.sh        text eol=lf
+.githooks/* text eol=lf
+
+# rustfmt.toml sets newline_style = "Unix", so a CRLF checkout of Rust
+# sources fails `cargo fmt --check` (and the pre-commit hook) on Windows.
+*.rs        text eol=lf

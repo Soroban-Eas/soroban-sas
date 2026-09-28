@@ -42,6 +42,10 @@ attestation/schema data it governs:
   where their independent expiry from the chunk data they count could reset
   a counter to zero while its chunks survived, corrupting the index with
   duplicate UIDs on the next write (#219).
+  Timestamp anchors (#298) — the ledger sequence and close time recorded
+  for each issuance and revocation — are written on the same per-entry
+  schedule, with the TTL of the attestation they describe, so a record's
+  verifiable timestamps never outlive the record itself.
 
 ## Contract Upgrades
 
@@ -90,12 +94,61 @@ compatibility probe (`sasreg`/`sasv1`) before trusting a configured
 dependency address — the indexer's SAS binding is a similar one-way trust
 relationship, just enforced per-call instead of once at initialization.
 
+### Indexer Pagination
+
+Each lookup key's history is stored as fixed-size persistent chunks of
+`MAX_CHUNK_SIZE` (100) UIDs plus a per-key counter. The complete reads
+(`get_attestations_by_*`) walk every chunk and so grow with the history.
+Callers with large histories use the paginated reads instead:
+`get_atts_by_recipient_paginated`, `get_atts_by_schema_paginated`, and
+`get_atts_by_attester_paginated`, each `(key, cursor, limit)`. All three share
+one reader (`collect_page`), which loads only the chunks that overlap the
+requested window. A page therefore costs `O(limit)` storage reads and TTL
+renewals, not `O(count)`.
+
+Pagination semantics follow from the append-only index. Ordering is
+insertion order (oldest first), and new UIDs are only ever appended, so pages
+stay stable while issuance continues. A page holds exactly
+`min(limit, count - cursor)` UIDs, so resuming at `cursor + page.len()` never
+skips or repeats an entry. `limit == 0` and any request at or beyond the end
+return an empty page. `get_count_by_*` provides `count` for totals. Paginated
+reads count toward the per-ledger query limit (`LimitExceeded`). The SDK
+(`IndexerClient::get_attestations_by_*_paginated`) and the CLI
+(`query by-* --cursor/--limit`, 1–100 UIDs per page) expose the same model.
+
+### Recipients
+
+Every on-chain attestation has a concrete recipient. SAS rejects the zero
+account/contract sentinels that other attestation systems use for "no
+recipient", and it rejects an attester naming itself, with `InvalidRecipient`
+(`soroban_sas_common::validate_attestation_parties`). The Indexer therefore
+never receives a recipient-less record. The SDK's `AttestationRequestBuilder`
+and the CLI's on-chain issuance commands apply the same shared check before
+building a transaction.
+
 ### Indexer Reconciliation
 
 When running under default fail-open mode, any downstream indexing failures emit `IndexFailed(uid)` (`IDXFAIL`) events rather than rolling back core attestation writes. Operators recover missed entries using `SAS::reindex_attestation(uid)`.
 
 For operational instructions covering event detection, unreconciled UID enumeration, CLI/SDK invocation, health checks, and retry strategies, see the [Indexer Reconciliation Runbook](reconciliation.md) and [Indexer Availability Policy](indexer-availability-and-fees.md).
 
+### Delegated signature authorization
+
+`attest_by_delegation`, `revoke_by_delegation`, and their batch variants
+(`multi_attest_by_delegation`, `multi_revoke_by_delegation`) authorize a write
+from an off-chain ed25519 signature instead of `require_auth()` on the
+attester. The relayer that submits the transaction consequently needs no
+special privilege: it only funds and signs the envelope, and the contract
+derives authority from the issuer's signature.
+
+A signature commits to the network id, the SAS contract address, and a
+per-attester nonce, then to the action's own fields (the full attestation, or
+the UID plus recorded attester for a revocation). That binding is what makes a
+signature meaningful for exactly one network, one contract deployment, and one
+nonce, and it is what prevents a relayer from substituting a different payload.
+The nonce high-watermark is per attester and shared by issuance and revocation;
+see [Delegated Issuance and Revocation](delegation.md) for the full model,
+limitations, and the SDK signing helpers.
 
 ## Attestation Lifecycle and State Machine
 

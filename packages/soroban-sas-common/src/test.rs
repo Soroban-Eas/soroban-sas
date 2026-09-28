@@ -49,6 +49,24 @@ fn test_attestation_uid_is_deterministic_and_content_addressed() {
     );
 }
 
+/// `schema_uid` is documented (docs/schemas.md, "Schema ID Collision
+/// Resistance") as hashing the revocability flag together with the schema
+/// string and resolver, so a revocable and a non-revocable schema that are
+/// otherwise identical must never share a UID.
+#[test]
+fn test_schema_uid_is_sensitive_to_the_revocable_flag() {
+    let env = Env::default();
+    let resolver = Address::generate(&env);
+    let schema = SorobanString::from_str(&env, "score U32");
+
+    let revocable = crate::schema_uid(&env, &schema, &resolver, true);
+    let irrevocable = crate::schema_uid(&env, &schema, &resolver, false);
+
+    assert_ne!(revocable, irrevocable);
+    assert_eq!(revocable, crate::schema_uid(&env, &schema, &resolver, true));
+}
+
+use crate::validation::check_revocable;
 use crate::validation::validate_recipient;
 use crate::validation::validate_schema_syntax;
 use crate::validation::validate_ttl;
@@ -67,6 +85,22 @@ fn test_validate_ttl() {
     assert!(validate_ttl(&env, 100, 100).is_err()); // expired exactly at current time
 }
 
+/// `check_revocable` is the single place the schema-level revocability
+/// ceiling is enforced, shared by every issuance path. Pin its full truth
+/// table: only `(non-revocable schema, revocable attestation)` is rejected.
+#[test]
+fn test_check_revocable_truth_table() {
+    let env = Env::default();
+
+    assert!(check_revocable(&env, false, false).is_ok());
+    assert!(check_revocable(&env, true, true).is_ok());
+    assert!(check_revocable(&env, true, false).is_ok());
+    assert_eq!(
+        check_revocable(&env, false, true),
+        Err(crate::errors::SASError::NotRevocable)
+    );
+}
+
 #[test]
 fn test_validate_schema_syntax_rejects_malformed_strings() {
     let env = Env::default();
@@ -81,6 +115,51 @@ fn test_validate_schema_syntax_rejects_malformed_strings() {
 
     let schema = soroban_sdk::String::from_str(&env, "first_name String, last_name String");
     assert!(validate_schema_syntax(&env, &schema).is_ok());
+}
+
+/// Replays the shared golden vectors in `test_vectors/schema_syntax.tsv`.
+/// The schema explorer's TypeScript validator replays the same file, so a
+/// rule change here that is not mirrored there (or vice versa) fails CI.
+#[test]
+fn test_validate_schema_syntax_matches_shared_vectors() {
+    extern crate std;
+    use std::string::String as StdString;
+
+    fn decode_hex(hex: &str) -> std::vec::Vec<u8> {
+        assert!(hex.len() % 2 == 0, "odd-length hex in schema vector");
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("invalid hex in schema vector"))
+            .collect()
+    }
+
+    let env = Env::default();
+    let vectors = include_str!("../test_vectors/schema_syntax.tsv");
+    let mut checked = 0;
+    for line in vectors.lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut columns = line.split('\t');
+        let expected = columns.next().expect("missing expected column");
+        let bytes = decode_hex(columns.next().expect("missing schema column"));
+        let text = StdString::from_utf8(bytes).expect("schema vector is not UTF-8");
+        let schema = soroban_sdk::String::from_str(&env, &text);
+
+        let expected = match expected {
+            "ok" => Ok(()),
+            "InvalidSchema" => Err(crate::errors::SASError::InvalidSchema),
+            "EmptySchema" => Err(crate::errors::SASError::EmptySchema),
+            other => panic!("unknown expected result {other:?} in schema vector"),
+        };
+        assert_eq!(
+            validate_schema_syntax(&env, &schema),
+            expected,
+            "schema vector {text:?}"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no schema vectors were checked");
 }
 
 #[test]
@@ -136,6 +215,55 @@ fn test_validate_recipient_rejects_zero_addresses() {
     );
 }
 
+#[test]
+fn test_validate_attestation_parties_accepts_a_distinct_concrete_recipient() {
+    let env = Env::default();
+    let recipient = account_address(&env, &[3u8; 32]);
+    let attester = account_address(&env, &[4u8; 32]);
+    let contract_recipient = Address::from_string(&SorobanString::from_str(
+        &env,
+        &stellar_strkey::Contract([9u8; 32]).to_string(),
+    ));
+
+    assert_eq!(
+        crate::validation::validate_attestation_parties(&env, &recipient, &attester),
+        Ok(())
+    );
+    assert_eq!(
+        crate::validation::validate_attestation_parties(&env, &contract_recipient, &attester),
+        Ok(())
+    );
+}
+
+#[test]
+fn test_validate_attestation_parties_rejects_missing_and_self_recipients() {
+    let env = Env::default();
+    let attester = account_address(&env, &[4u8; 32]);
+    let zero_account = account_address(&env, &[0u8; 32]);
+    let zero_contract = Address::from_string(&SorobanString::from_str(
+        &env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    ));
+
+    // "No recipient" sentinels in either address space.
+    for missing in [&zero_account, &zero_contract] {
+        assert_eq!(
+            crate::validation::validate_attestation_parties(&env, missing, &attester),
+            Err(crate::errors::SASError::InvalidRecipient)
+        );
+    }
+    // A zero-sentinel attester is equally malformed.
+    assert_eq!(
+        crate::validation::validate_attestation_parties(&env, &attester, &zero_account),
+        Err(crate::errors::SASError::InvalidRecipient)
+    );
+    // Self-attestation is not a way to express "no recipient" either.
+    assert_eq!(
+        crate::validation::validate_attestation_parties(&env, &attester, &attester),
+        Err(crate::errors::SASError::InvalidRecipient)
+    );
+}
+
 use crate::merkle::MerkleRoot;
 use soroban_sdk::BytesN;
 
@@ -172,6 +300,56 @@ fn sample_domain(env: &Env, nonce: u64) -> AttestationDomain {
         network_id: BytesN::from_array(env, &[7u8; 32]),
         contract: Address::generate(env),
         nonce,
+    }
+}
+
+/// Golden vectors for `schema_uid`/`attestation_uid` (#248), pinning the
+/// exact digest produced by these functions for a fixed set of inputs so a
+/// cross-language implementation (the TypeScript SDK) can assert
+/// byte-identical output against the same inputs.
+mod uid_golden_vectors {
+    use super::account_address;
+    use crate::{attestation_uid, schema_uid, UID};
+    use soroban_sdk::{Bytes, BytesN, Env, String as SorobanString};
+
+    #[test]
+    fn golden_vector_schema_uid() {
+        let env = Env::default();
+        let schema = SorobanString::from_str(&env, "bool verified");
+        let resolver = account_address(&env, &[0x11u8; 32]);
+
+        let uid = schema_uid(&env, &schema, &resolver, true);
+
+        let expected: [u8; 32] = [
+            146, 100, 182, 216, 54, 242, 50, 235, 155, 202, 243, 176, 169, 46, 166, 119, 188, 40,
+            43, 56, 107, 202, 5, 219, 141, 246, 102, 45, 245, 237, 57, 121,
+        ];
+        assert_eq!(
+            uid.0.to_array(),
+            expected,
+            "golden schema_uid digest mismatch - cross-check TS hashing.ts before changing"
+        );
+    }
+
+    #[test]
+    fn golden_vector_attestation_uid() {
+        let env = Env::default();
+        let schema_uid_val = UID(BytesN::from_array(&env, &[0x02u8; 32]));
+        let recipient = account_address(&env, &[0x22u8; 32]);
+        let attester = account_address(&env, &[0x11u8; 32]);
+        let data = Bytes::from_slice(&env, b"golden vector data");
+
+        let uid = attestation_uid(&env, &schema_uid_val, &recipient, &attester, &data);
+
+        let expected: [u8; 32] = [
+            69, 223, 100, 152, 78, 106, 147, 32, 181, 3, 111, 219, 137, 53, 251, 12, 219, 222, 253,
+            33, 88, 253, 190, 86, 203, 201, 116, 113, 228, 193, 16, 142,
+        ];
+        assert_eq!(
+            uid.0.to_array(),
+            expected,
+            "golden attestation_uid digest mismatch - cross-check TS hashing.ts before changing"
+        );
     }
 }
 
