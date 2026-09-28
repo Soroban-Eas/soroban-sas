@@ -63,6 +63,8 @@ pub struct BatchRevoked {
 
 /// First topic of a SAS fee configuration change.
 pub const TOPIC_FEE_CONFIG_UPDATED: &[u8] = b"FEECFGUPD";
+/// First topic of an `IndexerStrictUpdated` event.
+pub const TOPIC_INDEXER_STRICT_UPDATED: &[u8] = b"IDXSTRUP";
 
 /// Decoded SAS fee policy change. `None` denotes no configured fee.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,6 +76,14 @@ pub struct FeeConfigUpdated {
     pub authorizer: ScAddress,
 }
 
+/// Decoded `IndexerStrictUpdated` event (#251).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexerStrictUpdated {
+    pub old_strict: bool,
+    pub new_strict: bool,
+    pub admin: ScAddress,
+}
+
 /// Any standardized event emitted by the SAS contracts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SasEvent {
@@ -83,6 +93,7 @@ pub enum SasEvent {
     BatchAttested(BatchAttested),
     BatchRevoked(BatchRevoked),
     FeeConfigUpdated(FeeConfigUpdated),
+    IndexerStrictUpdated(IndexerStrictUpdated),
 }
 
 /// Why an event could not be decoded as a SAS event.
@@ -125,6 +136,21 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
                 new_token: decode_optional_address(map_get(map, b"new_token")?)?,
                 new_amount: decode_optional_amount(map_get(map, b"new_amount")?)?,
                 authorizer,
+            }))
+        }
+        n if n == TOPIC_INDEXER_STRICT_UPDATED => {
+            // Topics: `(INDEXER_STRICT_UPDATED, admin)`.
+            let map = expect_map(data)?;
+            let admin = decode_address(map_get(map, b"admin")?)?;
+            if topics.len() != 2 || decode_address(&topics[1]) != Ok(admin.clone()) {
+                return Err(EventParseError::MalformedPayload(
+                    "admin topic does not match payload",
+                ));
+            }
+            Ok(SasEvent::IndexerStrictUpdated(IndexerStrictUpdated {
+                old_strict: decode_bool(map_get(map, b"old_strict")?)?,
+                new_strict: decode_bool(map_get(map, b"new_strict")?)?,
+                admin,
             }))
         }
         n if n == TOPIC_SCHEMA_REGISTERED => {
@@ -283,6 +309,7 @@ impl TrustedContracts {
             | SasEvent::AttestationRevoked(_)
             | SasEvent::BatchAttested(_)
             | SasEvent::FeeConfigUpdated(_)
+            | SasEvent::IndexerStrictUpdated(_)
             | SasEvent::BatchRevoked(_) => ("sas", self.sas),
         }
     }
@@ -433,6 +460,13 @@ fn decode_u32(val: &ScVal) -> Result<u32, EventParseError> {
     }
 }
 
+fn decode_bool(val: &ScVal) -> Result<bool, EventParseError> {
+    match val {
+        ScVal::Bool(b) => Ok(*b),
+        _ => Err(EventParseError::MalformedPayload("field is not a bool")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +614,37 @@ mod tests {
             SasEvent::BatchRevoked(BatchRevoked {
                 count: 4,
                 attester_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_indexer_strict_updated() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+
+        let expected_admin = to_scaddress(&env, &admin);
+        let payload = soroban_sas_common::IndexerStrictUpdatedEvent {
+            old_strict: false,
+            new_strict: true,
+            admin: admin.clone(),
+        };
+        let topics = [
+            to_scval(
+                &env,
+                soroban_sas_common::events::INDEXER_STRICT_UPDATED.into_val(&env),
+            ),
+            to_scval(&env, admin.into_val(&env)),
+        ];
+        let data = to_scval(&env, payload.into_val(&env));
+
+        let parsed = parse_event(&topics, &data).unwrap();
+        assert_eq!(
+            parsed,
+            SasEvent::IndexerStrictUpdated(IndexerStrictUpdated {
+                old_strict: false,
+                new_strict: true,
+                admin: expected_admin,
             })
         );
     }

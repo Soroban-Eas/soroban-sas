@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# .githooks/pre-commit — fast formatting checks on what is being committed.
+#
+#   * Staged Rust sources or Cargo/rustfmt config -> `cargo fmt --all -- --check`
+#     (the same command as CI's "Formatting" job).
+#   * Staged shell scripts                        -> `bash -n` syntax check.
+#
+# Clippy is left to the pre-push hook so commits stay fast. Opt in here with
+# SAS_HOOK_CLIPPY=1. Bypass everything once with `git commit --no-verify`, or
+# with SAS_SKIP_HOOKS=1.
+#
+# Note: `cargo fmt --check` inspects the working tree, not the index, so an
+# unstaged fix to a staged file lets the commit through. CI checks the pushed
+# tree, so this cannot let a mis-formatted file reach `main`.
+set -euo pipefail
+
+HOOK_NAME="pre-commit"
+# shellcheck source=.githooks/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+if hooks_disabled; then
+    hook_info "SAS_SKIP_HOOKS=1 — skipping checks"
+    exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+
+staged=()
+while IFS= read -r -d '' path; do
+    staged+=("$path")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if [[ ${#staged[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+rust_changed=false
+shell_scripts=()
+for path in "${staged[@]}"; do
+    case "$path" in
+        *.rs | Cargo.toml | */Cargo.toml | Cargo.lock | rustfmt.toml | clippy.toml | rust-toolchain.toml)
+            rust_changed=true
+            ;;
+        *.sh | .githooks/*)
+            shell_scripts+=("$path")
+            ;;
+    esac
+done
+
+status=0
+
+if [[ ${#shell_scripts[@]} -gt 0 ]]; then
+    hook_info "checking shell syntax of ${#shell_scripts[@]} staged script(s)"
+    check_shell_syntax "${shell_scripts[@]}" || status=1
+fi
+
+if [[ "$rust_changed" == true ]]; then
+    ensure_cargo || exit 1
+    run_check "Fix with: cargo fmt --all   (then re-stage the changes)" \
+        cargo fmt --all -- --check || status=1
+
+    if [[ "${SAS_HOOK_CLIPPY:-0}" == "1" && $status -eq 0 ]]; then
+        run_check "Fix the warnings above, or commit with --no-verify and fix before pushing." \
+            cargo clippy --workspace --all-targets -- -D warnings || status=1
+    fi
+fi
+
+if [[ $status -ne 0 ]]; then
+    hook_fail "commit aborted. Bypass once with: git commit --no-verify"
+fi
+exit "$status"

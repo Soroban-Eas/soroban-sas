@@ -730,6 +730,8 @@ pub struct RestorePreamble {
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SimulateHostFunctionResult {
     pub xdr: String,
+    #[serde(default)]
+    pub auth: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

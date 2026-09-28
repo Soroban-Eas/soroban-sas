@@ -19,3 +19,7 @@ stellar-strkey = "0.0.8"
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# Real contracts hosted in-process by the CLI end-to-end tests (#332).
+sas = { path = "../../contracts/sas" }
+schema-registry = { path = "../../contracts/schema-registry", features = ["testutils"] }
+soroban-sas-indexer = { path = "../../contracts/indexer", features = ["testutils"] }

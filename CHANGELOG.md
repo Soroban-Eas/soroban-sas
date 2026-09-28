@@ -15,6 +15,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Indexer pagination for every lookup dimension:
+  `get_atts_by_schema_paginated` and `get_atts_by_attester_paginated` join
+  `get_atts_by_recipient_paginated`, all backed by one chunk-window reader
+  with a documented contract (insertion order, exact page lengths, empty page
+  past the end). The SDK adds `IndexerClient::get_attestations_by_*_paginated`,
+  and the CLI's `query by-*` commands accept `--cursor`/`--limit`, reporting
+  `total` and `next_cursor`. Unpaginated output is unchanged. (#306)
+- SAS -> Indexer integration tests that deploy the real schema-registry, SAS,
+  and Indexer contracts together and cross-check indexed data against SAS
+  state and events. They cover ordering, authorization, rejected issuance,
+  revocation, replacement, fail-open/fail-closed outages, reindexing, rebinding,
+  and pagination. (#309)
+- CLI end-to-end tests that run the compiled binary against a local JSON-RPC
+  host executing the real contracts. They cover indexed queries, pagination,
+  on-chain verification, and missing-recipient handling. (#332)
+- Batched off-chain delegation signatures: `SAS::multi_attest_by_delegation`
+  and `SAS::multi_revoke_by_delegation` accept parallel `attestations`/`uids`,
+  `nonces`, `signatures`, and `public_keys` vectors and validate each item
+  independently, so one relayed transaction can carry signatures from several
+  attesters. Length mismatches fail with `InvalidValue`, oversized batches
+  with `BatchTooLarge`, and a failure on any item reverts the whole batch
+  (no partial issuance and no consumed nonce). The SAS contract reuses the
+  same per-attester nonce high-watermark as the single-item paths. (#293)
+- `soroban-sas-sdk` gains `delegation`, with `sign_offchain_attestation`,
+  `sign_delegated_revocation`, `delegation_domain`,
+  `attestation_digest`/`revocation_digest`, and local
+  `verify_offchain_attestation`/`verify_delegated_revocation` helpers. These
+  let wallets and dApps produce (and self-check) the typed-data signature the
+  delegated entry points verify, instead of relying on the CLI's private
+  signing code. The SDK client also exposes
+  `multi_attest_by_delegation`/`multi_revoke_by_delegation` submission
+  wrappers. (#293)
+- `docs/local-development.md`: end-to-end local environment guide covering
+  toolchain bootstrap, build/test, git hooks, the Docker Quickstart node,
+  local deployment, integration tests, JS packages and troubleshooting.
+  `scripts/deploy.sh` gains `--network local` (alias `standalone`) targeting
+  the docker-compose node, with local Friendbot funding, and the Makefile
+  gains `fmt`, `lint`, `install-hooks`, `localnet`, `localnet-down` and
+  `deploy-local` targets. (#349)
+- `docs/getting-started.md`: guide for DApp developers covering schema
+  design, resolvers, registration, issuance rules and their error codes,
+  off-chain and on-chain (cross-contract) verification, indexer queries,
+  revocation, and a security checklist. (#366)
+- Opt-in git hooks in `.githooks/`: `pre-commit` runs
+  `cargo fmt --all -- --check` on staged Rust changes and `bash -n` on
+  staged scripts; `pre-push` runs CI's fmt and
+  `clippy --workspace --all-targets -- -D warnings` gates. Install with
+  `./scripts/install_hooks.sh`; covered by `scripts/test_git_hooks.sh` in the
+  new *Developer Tooling* workflow. `.gitattributes` pins LF endings for
+  shell scripts, hooks and Rust sources. (#355)
+- `tools/schema-explorer`: prototype read-only web dashboard that pages
+  through a Schema Registry, looks schemas up by UID, shows parsed fields,
+  owner and flags, and validates draft schema strings. Its TypeScript
+  validator and `validate_schema_syntax` both replay the shared golden
+  vectors in `packages/soroban-sas-common/test_vectors/schema_syntax.tsv`.
+  Built and tested in the *Developer Tooling* workflow. (#346)
+
+### Fixed
+- Missing recipients are handled gracefully. `AttestationRequestBuilder` no
+  longer traps the host (panicking the caller) on a malformed or empty
+  recipient/attester strkey. It and the CLI's on-chain issuance commands now
+  reject the zero-address "no recipient" sentinel and self-attestation
+  locally, with the contract's own `InvalidRecipient` rule
+  (`soroban_sas_common::validate_attestation_parties`, now also used by
+  `SAS::attest_internal`). (#304)
+- `SAS::bulk_reindex` passed the whole attestation as a single argument to
+  `Indexer::index_attestation`, so every replay failed against a real Indexer.
+  All three SAS -> Indexer push sites now share one call encoding. (#309)
+- Revocability semantics coverage: delegated, batch, and paid issuance now
+  each have an acceptance test for `revocable = true` under a revocable
+  schema (rejection was already covered on every issuance path),
+  `replace_attestation` is covered replacing a revocable attestation with an
+  irrevocable successor, and `soroban-sas-common` unit tests pin the
+  `check_revocable` truth table and `schema_uid`'s sensitivity to the flag.
+  (#303)
+- Generic EIP-712 structured-data hashing in `soroban-sas-common::eip712`:
+  `encode_type`/`type_hash`/`encode_data`/`hash_struct`/`hash_typed_data`
+  derived from `StructDef`/`FieldDef` declarations, covering nested structs,
+  dynamic arrays, sign-extended `intN` and right-aligned `address` words, with
+  strict `SchemaError` reporting instead of silent field dropping. Adds a `v1`
+  declaration set that checks each v1 literal type tag against the field list it
+  describes, an `eip712_encode_fuzz` fuzz target, and benchmarks for type-string
+  derivation, nested-struct, array, and full-digest hashing. (#299)
 - `SchemaRegistry::upgrade` now emits the standardized `ContractUpgraded` event
   (`("UPGRADED", authorizer)` with `old_wasm_hash`/`new_wasm_hash`) in addition
   to its versioned `UPGRADE` event, tracking the activated WASM hash in instance
@@ -152,4 +235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a stale cursor and duplicate a UID into it. (#219)
 
 ### Known Issues
-- Delegated attest/revoke signatures do not bind the full attestation payload or a nonce, permitting potential replay.
+- Off-chain delegated signatures are ed25519-only and must bind to a classic
+  Ed25519 account via the structural address check, or to a key registered
+  on-chain with `register_attester_key`. There is no off-chain key-registration
+  flow yet.

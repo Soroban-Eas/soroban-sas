@@ -216,6 +216,32 @@ pub fn validate_recipient(_env: &Env, recipient: &Address) -> Result<(), SASErro
     Ok(())
 }
 
+/// Validates the `(recipient, attester)` pair of an attestation submitted
+/// for on-chain issuance (see `specs/protocol-v1.md`).
+///
+/// SAS has no recipient-less ("public") on-chain attestation: the zero
+/// account/contract sentinels that other attestation systems use to mean
+/// "no recipient" are rejected, as is an attester attesting about itself.
+/// Every failure is `SASError::InvalidRecipient`, checked in this order:
+/// recipient sentinel, attester sentinel, self-attestation.
+///
+/// This is the single source of truth for the rule: `SAS::attest_internal`
+/// enforces it on-chain, and the SDK and CLI run the same check before
+/// building a transaction so a missing recipient fails fast and locally
+/// with the same error the contract would return.
+pub fn validate_attestation_parties(
+    env: &Env,
+    recipient: &Address,
+    attester: &Address,
+) -> Result<(), SASError> {
+    validate_recipient(env, recipient)?;
+    validate_recipient(env, attester)?;
+    if recipient == attester {
+        return Err(SASError::InvalidRecipient);
+    }
+    Ok(())
+}
+
 pub fn check_revocable(
     _env: &Env,
     schema_revocable: bool,

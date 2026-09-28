@@ -52,6 +52,12 @@ README_PATHS=(
     "docs/schemas.md"
     "docs/DEPLOYMENT.md"
     "docs/UPGRADE_RUNBOOK.md"
+    "docs/getting-started.md"
+    "docs/local-development.md"
+    "scripts/install_hooks.sh"
+    ".githooks/pre-commit"
+    ".githooks/pre-push"
+    "tools/schema-explorer"
 )
 
 for p in "${README_PATHS[@]}"; do
@@ -80,8 +86,8 @@ fi
 # -----------------------------------------------------------------------------
 info "Checking clone URLs and tooling recommendations..."
 
-if grep -q "github.com/0xVida/soroban-sas" README.md; then
-    fail "Outdated clone URL '0xVida/soroban-sas' in README.md"
+if grep -q "github.com/ModeCodes/soroban-sas" README.md; then
+    fail "Outdated clone URL 'ModeCodes/soroban-sas' in README.md"
 else
     pass "Clone URL matches authoritative repository (Soroban-Eas/soroban-sas)"
 fi
@@ -173,7 +179,7 @@ fi
 info "Checking syntax of shell snippets in docs and scripts..."
 
 # Check shell scripts directly
-for script in scripts/*.sh tools/*.sh; do
+for script in scripts/*.sh tools/*.sh .githooks/*; do
     if [[ -f "$script" ]]; then
         if bash -n "$script"; then
             pass "Shell syntax valid: $script"

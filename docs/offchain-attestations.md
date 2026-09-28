@@ -75,6 +75,60 @@ canonical record.
 The issuer signs `payload_hash` with the ed25519 key backing its Stellar
 account (`ed25519(payload_hash)`), producing a 64-byte signature.
 
+## Generic EIP-712 hashing
+
+The v1 scheme above is one fixed layout with hand-written type tags.
+`soroban_sas_common::eip712` adds the general EIP-712 mechanism, so a caller
+declares a struct in Rust and gets the canonical type string and digest without
+hand-writing a byte layout:
+
+| EIP-712 step | Function |
+|---|---|
+| `encodeType(typeName)` | `encode_type` |
+| `typeHash = keccak256(encodeType(...))` | `type_hash` |
+| `encodeData(struct)` | `encode_data` |
+| `hashStruct(s) = keccak256(typeHash || encodeData(s))` | `hash_struct` |
+| `hashTypedData = keccak256(0x1901 || domainSeparator || hashStruct(m))` | `hash_typed_data` |
+
+Structs are declared as a slice of `StructDef`, each field a
+`FieldDef { name, ty }` whose `FieldType` comes from the EIP-712 grammar
+(`Uint`/`Int`, `Bool`, `Address`, `Bytes`, `FixedBytes`, `Str`,
+`Struct`, `Array`). Values are supplied as `FieldValue`: `Word` for
+atomics, `Dynamic` for the pre-image of a `bytes`/`string`,
+`Struct` for a nested struct, and `List` for a dynamic array.
+
+Encoding rules the module enforces:
+
+- `encodeType` writes the primary struct first and then every struct
+  reachable from it (transitively), in ascending alphabetical order and once
+  each. A cyclic set of definitions terminates instead of recursing forever.
+- Atomics encode as one 32-byte big-endian word; `intN` is sign-extended and
+  `address` is right-aligned into the low 20 bytes.
+- `bytes` and `string` encode as `keccak256(pre-image)`.
+- A nested struct encodes as its own `hashStruct`.
+- A dynamic array encodes as `keccak256` of its concatenated element
+  encodings.
+- Every entry point returns a `SchemaError` (`UnknownStruct`,
+  `ArityMismatch`, or `TypeMismatch`) rather than silently dropping or
+  coercing a field, so a mismatch between a declaration and the values supplied
+  for it can never produce a digest that looks valid but commits to something
+  else.
+
+Unlike v1 this hashes with **keccak256** and uses the standard `0x1901`
+prefix. That is what makes the digest reproducible by Ethereum tooling
+(`eth_signTypedData`, `viem`'s `hashTypedData`) from the same schema, while
+`hash_typed_data_with_prefix` keeps an application-specific prefix available
+for callers that already have their own signed-message namespace.
+
+### v1 type tags are checked against their declarations
+
+`eip712::v1` declares the three v1 action schemas in the same grammar, and
+`eip712::v1::tag_matches_defs` asserts that each literal type tag lists exactly
+the fields of its declaration, in order. Those tags live inside a hash
+pre-image, so nothing else would notice if a field were added to a struct but
+not to its tag. The v1 digests themselves are unchanged by this module, and the
+golden vectors that pin them continue to pass byte for byte.
+
 ## Replay protection
 
 A signature commits to:
