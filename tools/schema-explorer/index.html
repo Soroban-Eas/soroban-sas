@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Scripts only from this origin; network reads go to whichever RPC server
+      the user configures, so connect-src is open to http(s). ws: is for the
+      Vite dev server's hot reload.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http: https: ws: wss:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>SAS Schema Explorer</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>SAS Schema Explorer</h1>
+        <p class="muted">Browse and validate schemas in a soroban-sas Schema Registry. Read-only prototype: nothing is signed or submitted.</p>
+      </div>
+    </header>
+
+    <form id="connect" class="connect" autocomplete="off" novalidate>
+      <label>
+        Network
+        <select id="preset" name="preset"></select>
+      </label>
+      <label class="grow">
+        RPC URL
+        <input id="rpc-url" name="rpc-url" type="url" spellcheck="false" required />
+      </label>
+      <label class="grow">
+        Network passphrase
+        <input id="passphrase" name="passphrase" type="text" spellcheck="false" required />
+      </label>
+      <label class="grow-2">
+        Schema Registry contract id
+        <input id="registry" name="registry" type="text" spellcheck="false" placeholder="C…" required />
+      </label>
+      <div class="connect-actions">
+        <button id="connect-btn" type="submit" class="primary">Connect</button>
+        <button id="demo-btn" type="button">Use demo data</button>
+      </div>
+    </form>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-browse" aria-controls="browse" aria-selected="true">Browse</button>
+      <button type="button" role="tab" id="tab-validate" aria-controls="validate" aria-selected="false">Validate a schema</button>
+    </nav>
+
+    <main>
+      <section id="browse" role="tabpanel" aria-labelledby="tab-browse" class="browse">
+        <aside class="sidebar">
+          <form id="lookup" class="lookup" novalidate>
+            <label class="grow">
+              Look up by UID
+              <input id="lookup-uid" type="text" spellcheck="false" placeholder="64 hex characters" />
+            </label>
+            <button type="submit">Find</button>
+          </form>
+          <label>
+            Filter loaded schemas
+            <input id="filter" type="search" spellcheck="false" placeholder="field, type, UID… or revocable:no, valid:no" />
+          </label>
+          <p id="list-summary" class="muted"></p>
+          <div id="list"></div>
+          <button id="load-more" type="button" hidden>Load more</button>
+        </aside>
+        <section id="detail" class="detail-pane" aria-live="polite">
+          <p class="muted">Connect to a registry, or use demo data, then select a schema.</p>
+        </section>
+      </section>
+
+      <section id="validate" role="tabpanel" aria-labelledby="tab-validate" class="playground" hidden>
+        <label>
+          Draft schema
+          <textarea id="draft" rows="4" spellcheck="false">first_name String, last_name String, verified bool</textarea>
+        </label>
+        <p class="muted">
+          Checked with the same rules as <code>SchemaRegistry::register</code>. A schema that passes here will not be
+          rejected for syntax on-chain.
+        </p>
+        <div id="draft-result"></div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

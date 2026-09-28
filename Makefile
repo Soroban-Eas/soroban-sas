@@ -1,4 +1,5 @@
-.PHONY: all build build-contracts build-native test bench clean print-contract-artifacts
+.PHONY: all build build-contracts build-native test bench clean print-contract-artifacts \
+	fmt lint install-hooks localnet localnet-down deploy-local
 
 CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer
 WASM_TARGET := wasm32-unknown-unknown
@@ -32,6 +33,28 @@ print-contract-artifacts:
 
 test:
 	cargo test --workspace
+
+fmt:
+	cargo fmt --all
+
+# Same gates as CI's Formatting and Clippy jobs (and the pre-push hook).
+lint:
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets -- -D warnings
+
+install-hooks:
+	./scripts/install_hooks.sh
+
+# Standalone node from docker-compose.yml; see docs/local-development.md.
+localnet:
+	docker compose up -d stellar-quickstart
+	./scripts/wait_for_localnet.sh
+
+localnet-down:
+	docker compose down
+
+deploy-local:
+	./scripts/deploy.sh --network local
 
 bench:
 	cargo bench

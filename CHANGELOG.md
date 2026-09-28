@@ -32,6 +32,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signing code. The SDK client also exposes
   `multi_attest_by_delegation`/`multi_revoke_by_delegation` submission
   wrappers. (#293)
+- `docs/local-development.md`: end-to-end local environment guide covering
+  toolchain bootstrap, build/test, git hooks, the Docker Quickstart node,
+  local deployment, integration tests, JS packages and troubleshooting.
+  `scripts/deploy.sh` gains `--network local` (alias `standalone`) targeting
+  the docker-compose node, with local Friendbot funding, and the Makefile
+  gains `fmt`, `lint`, `install-hooks`, `localnet`, `localnet-down` and
+  `deploy-local` targets. (#349)
+- `docs/getting-started.md`: guide for DApp developers covering schema
+  design, resolvers, registration, issuance rules and their error codes,
+  off-chain and on-chain (cross-contract) verification, indexer queries,
+  revocation, and a security checklist. (#366)
+- Opt-in git hooks in `.githooks/`: `pre-commit` runs
+  `cargo fmt --all -- --check` on staged Rust changes and `bash -n` on
+  staged scripts; `pre-push` runs CI's fmt and
+  `clippy --workspace --all-targets -- -D warnings` gates. Install with
+  `./scripts/install_hooks.sh`; covered by `scripts/test_git_hooks.sh` in the
+  new *Developer Tooling* workflow. `.gitattributes` pins LF endings for
+  shell scripts, hooks and Rust sources. (#355)
+- `tools/schema-explorer`: prototype read-only web dashboard that pages
+  through a Schema Registry, looks schemas up by UID, shows parsed fields,
+  owner and flags, and validates draft schema strings. Its TypeScript
+  validator and `validate_schema_syntax` both replay the shared golden
+  vectors in `packages/soroban-sas-common/test_vectors/schema_syntax.tsv`.
+  Built and tested in the *Developer Tooling* workflow. (#346)
 - Revocability semantics coverage: delegated, batch, and paid issuance now
   each have an acceptance test for `revocable = true` under a revocable
   schema (rejection was already covered on every issuance path),

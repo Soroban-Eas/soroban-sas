@@ -49,6 +49,7 @@ pub fn build_invoke_transaction(
     contract_id: &str,
     function_name: &str,
     args: Vec<ScVal>,
+    auth: soroban_sdk::xdr::VecM<soroban_sdk::xdr::SorobanAuthorizationEntry>,
 ) -> Result<Transaction, SdkError> {
     let contract = stellar_strkey::Contract::from_string(contract_id).map_err(|e| {
         SdkError::DecodingError(format!("invalid contract id {contract_id}: {e:?}"))
@@ -72,7 +73,7 @@ pub fn build_invoke_transaction(
         source_account: None,
         body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
             host_function,
-            auth: VecM::default(),
+            auth,
         }),
     };
 
@@ -113,6 +114,7 @@ pub fn build_simulate_transaction_xdr(
         contract_id,
         function_name,
         args,
+        soroban_sdk::xdr::VecM::default(),
     )?;
     unsigned_envelope_xdr(tx)
 }
@@ -355,6 +357,7 @@ mod tests {
             &contract,
             "attest",
             vec![],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -407,6 +410,7 @@ mod tests {
             &contract,
             "attest",
             vec![],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -478,6 +482,7 @@ mod tests {
             &contract1,
             "test_func",
             vec![ScVal::Void],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -498,6 +503,7 @@ mod tests {
             &contract,
             "func_a",
             vec![ScVal::Void],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -518,6 +524,7 @@ mod tests {
             &contract,
             "test_func",
             vec![ScVal::Void, ScVal::Bool(true)],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -538,6 +545,7 @@ mod tests {
             &contract,
             "test_func",
             vec![ScVal::Bool(true)],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -560,6 +568,7 @@ mod tests {
             &contract,
             "test_func",
             args.clone(),
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -632,6 +641,7 @@ mod tests {
             &contract,
             "attest",
             vec![],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -692,6 +702,7 @@ mod tests {
             &contract,
             "attest",
             vec![],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 
@@ -753,6 +764,7 @@ mod tests {
             &contract,
             "register_schema",
             vec![ScVal::Bool(true), ScVal::U32(42)],
+            soroban_sdk::xdr::VecM::default(),
         )
         .unwrap();
 

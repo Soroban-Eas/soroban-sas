@@ -117,6 +117,51 @@ fn test_validate_schema_syntax_rejects_malformed_strings() {
     assert!(validate_schema_syntax(&env, &schema).is_ok());
 }
 
+/// Replays the shared golden vectors in `test_vectors/schema_syntax.tsv`.
+/// The schema explorer's TypeScript validator replays the same file, so a
+/// rule change here that is not mirrored there (or vice versa) fails CI.
+#[test]
+fn test_validate_schema_syntax_matches_shared_vectors() {
+    extern crate std;
+    use std::string::String as StdString;
+
+    fn decode_hex(hex: &str) -> std::vec::Vec<u8> {
+        assert!(hex.len() % 2 == 0, "odd-length hex in schema vector");
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("invalid hex in schema vector"))
+            .collect()
+    }
+
+    let env = Env::default();
+    let vectors = include_str!("../test_vectors/schema_syntax.tsv");
+    let mut checked = 0;
+    for line in vectors.lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut columns = line.split('\t');
+        let expected = columns.next().expect("missing expected column");
+        let bytes = decode_hex(columns.next().expect("missing schema column"));
+        let text = StdString::from_utf8(bytes).expect("schema vector is not UTF-8");
+        let schema = soroban_sdk::String::from_str(&env, &text);
+
+        let expected = match expected {
+            "ok" => Ok(()),
+            "InvalidSchema" => Err(crate::errors::SASError::InvalidSchema),
+            "EmptySchema" => Err(crate::errors::SASError::EmptySchema),
+            other => panic!("unknown expected result {other:?} in schema vector"),
+        };
+        assert_eq!(
+            validate_schema_syntax(&env, &schema),
+            expected,
+            "schema vector {text:?}"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no schema vectors were checked");
+}
+
 #[test]
 fn test_validate_schema_syntax_enforces_max_field_count() {
     extern crate std;
@@ -206,6 +251,56 @@ fn sample_domain(env: &Env, nonce: u64) -> AttestationDomain {
         network_id: BytesN::from_array(env, &[7u8; 32]),
         contract: Address::generate(env),
         nonce,
+    }
+}
+
+/// Golden vectors for `schema_uid`/`attestation_uid` (#248), pinning the
+/// exact digest produced by these functions for a fixed set of inputs so a
+/// cross-language implementation (the TypeScript SDK) can assert
+/// byte-identical output against the same inputs.
+mod uid_golden_vectors {
+    use super::account_address;
+    use crate::{attestation_uid, schema_uid, UID};
+    use soroban_sdk::{Bytes, BytesN, Env, String as SorobanString};
+
+    #[test]
+    fn golden_vector_schema_uid() {
+        let env = Env::default();
+        let schema = SorobanString::from_str(&env, "bool verified");
+        let resolver = account_address(&env, &[0x11u8; 32]);
+
+        let uid = schema_uid(&env, &schema, &resolver, true);
+
+        let expected: [u8; 32] = [
+            146, 100, 182, 216, 54, 242, 50, 235, 155, 202, 243, 176, 169, 46, 166, 119, 188, 40,
+            43, 56, 107, 202, 5, 219, 141, 246, 102, 45, 245, 237, 57, 121,
+        ];
+        assert_eq!(
+            uid.0.to_array(),
+            expected,
+            "golden schema_uid digest mismatch - cross-check TS hashing.ts before changing"
+        );
+    }
+
+    #[test]
+    fn golden_vector_attestation_uid() {
+        let env = Env::default();
+        let schema_uid_val = UID(BytesN::from_array(&env, &[0x02u8; 32]));
+        let recipient = account_address(&env, &[0x22u8; 32]);
+        let attester = account_address(&env, &[0x11u8; 32]);
+        let data = Bytes::from_slice(&env, b"golden vector data");
+
+        let uid = attestation_uid(&env, &schema_uid_val, &recipient, &attester, &data);
+
+        let expected: [u8; 32] = [
+            69, 223, 100, 152, 78, 106, 147, 32, 181, 3, 111, 219, 137, 53, 251, 12, 219, 222, 253,
+            33, 88, 253, 190, 86, 203, 201, 116, 113, 228, 193, 16, 142,
+        ];
+        assert_eq!(
+            uid.0.to_array(),
+            expected,
+            "golden attestation_uid digest mismatch - cross-check TS hashing.ts before changing"
+        );
     }
 }
 

@@ -4,9 +4,15 @@ First off, thank you for considering contributing to Soroban SAS!
 
 ## Development Setup
 1. Ensure you have Rust installed via rustup.
-2. Install the `wasm32-unknown-unknown` target.
-3. Install the Soroban CLI.
+2. Install the `wasm32-unknown-unknown` target and the Stellar CLI:
+   `./scripts/bootstrap.sh --install`.
+3. Enable the git hooks, which run CI's `cargo fmt` and `cargo clippy` gates
+   before you push: `./scripts/install_hooks.sh`.
 4. Run `make test` to ensure your environment is working.
+
+The full walkthrough, including a local Stellar node, local deployment and
+troubleshooting, is in
+[docs/local-development.md](docs/local-development.md).
 
 ## Pull Request Process
 1. Ensure any install or build dependencies are removed before the end of the layer when doing a build.

@@ -19,13 +19,14 @@
 #   ADMIN_PUBLIC_ADDRESS
 #
 # Usage:
-#   ./scripts/deploy.sh [--network testnet|mainnet] [--secret-key S...] \
-#                       [--rpc-url URL] [--env-file FILE] [--skip-build] [--json]
+#   ./scripts/deploy.sh [--network testnet|local|mainnet] [--secret-key S...] \
 #                       [--rpc-url URL] [--env-file FILE] [--skip-build] \
-#                       [--export-secret]
+#                       [--json] [--export-secret] [--resume]
 #
 # Flags:
-#   --network <testnet|mainnet>  Target network (default: testnet).
+#   --network <NAME>             testnet (default), mainnet, or local (alias
+#                                standalone): the docker-compose Quickstart
+#                                node at http://localhost:8000/soroban/rpc.
 #   --secret-key <S...>          Funded source account secret key. Falls back
 #                                to $SOROBAN_SECRET_KEY, then $ADMIN_SECRET_KEY,
 #                                so the key can stay out of shell history.
@@ -73,7 +74,7 @@ die()  {
     exit 1
 }
 
-usage() { sed -n '2,55p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,56p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -92,6 +93,10 @@ TESTNET_RPC_URL="https://soroban-testnet.stellar.org:443"
 TESTNET_PASSPHRASE="Test SDF Network ; September 2015"
 MAINNET_RPC_URL="https://soroban-rpc.stellar.org:443"
 MAINNET_PASSPHRASE="Public Global Stellar Network ; September 2015"
+# docker-compose.yml's standalone Quickstart node (see docs/local-development.md).
+LOCAL_RPC_URL="http://localhost:8000/soroban/rpc"
+LOCAL_PASSPHRASE="Standalone Network ; February 2017"
+LOCAL_FRIENDBOT_URL="http://localhost:8000/friendbot"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -114,7 +119,9 @@ done
 case "$NETWORK" in
     testnet) RPC_URL="$TESTNET_RPC_URL"; PASSPHRASE="$TESTNET_PASSPHRASE" ;;
     mainnet) RPC_URL="$MAINNET_RPC_URL"; PASSPHRASE="$MAINNET_PASSPHRASE" ;;
-    *) die "unsupported network '$NETWORK' (expected testnet or mainnet)" ;;
+    local|standalone)
+        NETWORK="local"; RPC_URL="$LOCAL_RPC_URL"; PASSPHRASE="$LOCAL_PASSPHRASE" ;;
+    *) die "unsupported network '$NETWORK' (expected testnet, local or mainnet)" ;;
 esac
 if [[ -n "$RPC_URL_OVERRIDE" ]]; then
     RPC_URL="$RPC_URL_OVERRIDE"
@@ -189,13 +196,18 @@ ADMIN_ADDRESS="$("$CLI_BIN" keys address "$IDENTITY_NAME")"
 info "admin address: $ADMIN_ADDRESS"
 
 # ---------------------------------------------------------------------------
-# Testnet convenience: top up via Friendbot if needed (best-effort — ignored
-# when the account is already funded). Mainnet accounts must be funded by the
-# operator beforehand.
+# Testnet/local convenience: top up via Friendbot if needed (best-effort —
+# ignored when the account is already funded). Mainnet accounts must be funded
+# by the operator beforehand.
 # ---------------------------------------------------------------------------
-if [[ "$NETWORK" == "testnet" ]]; then
-    step "Ensuring testnet account is funded (Friendbot, best-effort)"
-    if curl -fsS -o /dev/null "https://friendbot.stellar.org?addr=$ADMIN_ADDRESS"; then
+FRIENDBOT_URL=""
+case "$NETWORK" in
+    testnet) FRIENDBOT_URL="https://friendbot.stellar.org" ;;
+    local)   FRIENDBOT_URL="$LOCAL_FRIENDBOT_URL" ;;
+esac
+if [[ -n "$FRIENDBOT_URL" ]]; then
+    step "Ensuring $NETWORK account is funded (Friendbot, best-effort)"
+    if curl -fsS -o /dev/null "$FRIENDBOT_URL?addr=$ADMIN_ADDRESS"; then
         info "account funded via Friendbot"
     else
         warn "Friendbot did not fund the account (probably already funded) — continuing"
