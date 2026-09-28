@@ -62,11 +62,11 @@ fn setup() -> Fixture {
     sas_client.init(&admin, &registry_id);
 
     Fixture {
-        env,
-        sas_client,
         schema_uid: UID(BytesN::from_array(&env, &[2u8; 32])),
         attester: Address::generate(&env),
         recipient: Address::generate(&env),
+        env,
+        sas_client,
     }
 }
 
