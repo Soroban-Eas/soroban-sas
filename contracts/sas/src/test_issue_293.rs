@@ -363,6 +363,7 @@ fn multi_revoke_by_delegation_revokes_a_batch_and_consumes_nonces() {
     ];
     let public_keys = [public_key(&env, &key_a), public_key(&env, &key_a)];
 
+    env.ledger().with_mut(|li| li.timestamp = 5000);
     client.multi_revoke_by_delegation(
         &vec_uid(&env, &[att_a.uid.clone(), att_b.uid.clone()]),
         &vec_u64(&env, &nonces),
