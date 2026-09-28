@@ -846,6 +846,81 @@ mod offchain_tests {
         let uid3 = generate_uid(&env, &schema_uid, &recipient, &attester, b"cafebabe").unwrap();
         assert_ne!(uid1, uid3);
     }
+
+    // --- Issue #304: a missing recipient is a local input error on every
+    // on-chain issuance path, reported with the contract's own error. ---
+
+    #[test]
+    fn onchain_parties_accept_a_concrete_recipient() {
+        let env = soroban_sdk::Env::default();
+        let input = sample_input([41u8; 32]);
+        let attestation = crate::offchain::parse_attestation(&env, &input).unwrap();
+        assert_eq!(
+            crate::offchain::validate_onchain_parties(&env, &attestation),
+            Ok(())
+        );
+        let contract_recipient = stellar_strkey::Contract([8u8; 32]).to_string();
+        assert_eq!(
+            crate::offchain::validate_onchain_recipient(&env, &contract_recipient, &input.attester),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn onchain_parties_reject_no_recipient_sentinels_with_invalid_recipient() {
+        let env = soroban_sdk::Env::default();
+        let mut input = sample_input([41u8; 32]);
+        for sentinel in [
+            stellar_strkey::ed25519::PublicKey([0u8; 32]).to_string(),
+            stellar_strkey::Contract([0u8; 32]).to_string(),
+        ] {
+            input.recipient = sentinel.clone();
+            let attestation = crate::offchain::parse_attestation(&env, &input).unwrap();
+            let err = crate::offchain::validate_onchain_parties(&env, &attestation)
+                .expect_err("sentinel recipient must be rejected");
+            assert!(err.contains("recipient is missing"), "{sentinel}: {err}");
+            assert!(err.contains("InvalidRecipient"), "{err}");
+            assert!(err.contains("402"), "{err}");
+            assert_eq!(
+                crate::offchain::validate_onchain_recipient(&env, &sentinel, &input.attester),
+                Err(err)
+            );
+        }
+    }
+
+    #[test]
+    fn onchain_parties_reject_self_attestation_distinctly() {
+        let env = soroban_sdk::Env::default();
+        let input = sample_input([41u8; 32]);
+        let err =
+            crate::offchain::validate_onchain_recipient(&env, &input.attester, &input.attester)
+                .expect_err("self-attestation must be rejected");
+        assert!(err.contains("must differ from the attester"), "{err}");
+        assert!(err.contains("InvalidRecipient"), "{err}");
+    }
+
+    #[test]
+    fn onchain_recipient_check_reports_malformed_input_as_a_parse_error() {
+        let env = soroban_sdk::Env::default();
+        let input = sample_input([41u8; 32]);
+        // A malformed strkey is a parse error, not a "missing recipient":
+        // the two must stay distinguishable to the operator.
+        let err = crate::offchain::validate_onchain_recipient(&env, "", &input.attester)
+            .expect_err("empty recipient must be rejected");
+        assert!(err.contains("recipient"), "{err}");
+        assert!(!err.contains("InvalidRecipient"), "{err}");
+    }
+
+    #[test]
+    fn offchain_signing_still_accepts_a_recipientless_attestation() {
+        // Regression guard: off-chain verification places no constraint on
+        // the recipient, so the #304 check must not leak into signing.
+        let seed = [41u8; 32];
+        let mut input = sample_input(seed);
+        input.recipient = stellar_strkey::ed25519::PublicKey([0u8; 32]).to_string();
+        let signed = sign_offchain_attestation(input, 7, NETWORK, &contract_id(), &seed).unwrap();
+        assert!(verify_offchain_attestation(&signed).is_ok());
+    }
 }
 
 /// Issue #175: `--online` must query only the caller-supplied trusted
@@ -1090,11 +1165,14 @@ mod by_attester_query_tests {
                     address,
                     contract_id,
                     rpc_url,
+                    page,
                 },
         }) = cli.command
         else {
             panic!("expected query by-attester command");
         };
+        // No pagination flags: the unpaginated complete-history query.
+        assert_eq!(page.resolve(), Ok(None));
         assert_eq!(address, ATTESTER);
         assert_eq!(contract_id, CONTRACT);
         assert_eq!(
@@ -1238,6 +1316,7 @@ mod by_attester_query_tests {
                 address: ATTESTER.to_string(),
                 contract_id: CONTRACT.to_string(),
                 rpc_url: Some(rpc_url),
+                page: Default::default(),
             },
             OutputFormat::Json,
             None,
@@ -1396,5 +1475,174 @@ mod schema_withdraw_fees_tests {
             None,
         );
         assert!(res.is_ok(), "withdraw-fees should settle: {res:?}");
+/// Issue #306: `query by-* --cursor/--limit` pagination flags.
+#[cfg(test)]
+mod pagination_query_tests {
+    use clap::{CommandFactory, Parser};
+    use soroban_sas_common::UID;
+    use soroban_sdk::BytesN;
+
+    use crate::{
+        format_page, run_query, Cli, Commands, OutputFormat, PageArgs, QueryCommands,
+        MAX_QUERY_PAGE_SIZE,
+    };
+
+    const CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+
+    fn account() -> String {
+        stellar_strkey::ed25519::PublicKey([5u8; 32]).to_string()
+    }
+
+    fn parse_page(extra: &[&str]) -> Result<PageArgs, clap::Error> {
+        let address = account();
+        let mut args = vec![
+            "soroban-sas",
+            "query",
+            "by-recipient",
+            "--address",
+            address.as_str(),
+            "--contract-id",
+            CONTRACT,
+        ];
+        args.extend_from_slice(extra);
+        let cli = Cli::try_parse_from(args)?;
+        let Some(Commands::Query {
+            action: QueryCommands::ByRecipient { page, .. },
+        }) = cli.command
+        else {
+            panic!("expected query by-recipient command");
+        };
+        Ok(page)
+    }
+
+    #[test]
+    fn page_flags_are_optional_and_select_pagination_only_when_present() {
+        assert_eq!(parse_page(&[]).unwrap().resolve(), Ok(None));
+        assert_eq!(
+            parse_page(&["--limit", "5"]).unwrap().resolve(),
+            Ok(Some((0, 5)))
+        );
+        assert_eq!(
+            parse_page(&["--cursor", "7"]).unwrap().resolve(),
+            Ok(Some((7, MAX_QUERY_PAGE_SIZE)))
+        );
+        assert_eq!(
+            parse_page(&["--cursor", "7", "--limit", "3"])
+                .unwrap()
+                .resolve(),
+            Ok(Some((7, 3)))
+        );
+    }
+
+    #[test]
+    fn page_limit_is_bounded_before_any_rpc_call() {
+        for bad in ["0", "101"] {
+            let err = parse_page(&["--limit", bad])
+                .unwrap()
+                .resolve()
+                .unwrap_err();
+            assert!(err.contains("--limit must be between 1 and 100"), "{err}");
+        }
+        assert_eq!(
+            parse_page(&["--limit", "100"]).unwrap().resolve(),
+            Ok(Some((0, 100)))
+        );
+        // Non-numeric / negative values are rejected by clap itself.
+        assert!(parse_page(&["--limit", "-1"]).is_err());
+        assert!(parse_page(&["--cursor", "abc"]).is_err());
+    }
+
+    #[test]
+    fn invalid_limit_fails_without_touching_the_network() {
+        // An unreachable RPC URL proves the limit is validated first.
+        let err = run_query(
+            QueryCommands::BySchema {
+                uid: hex::encode([2u8; 32]),
+                contract_id: CONTRACT.to_string(),
+                rpc_url: Some("http://127.0.0.1:1/".to_string()),
+                page: PageArgs {
+                    cursor: Some(0),
+                    limit: Some(0),
+                },
+            },
+            OutputFormat::Json,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("--limit"), "{err}");
+    }
+
+    #[test]
+    fn every_query_command_documents_the_page_flags() {
+        let mut root = Cli::command();
+        let query = root.find_subcommand_mut("query").unwrap();
+        for name in ["by-recipient", "by-attester", "by-schema"] {
+            let help = query
+                .find_subcommand_mut(name)
+                .unwrap()
+                .render_long_help()
+                .to_string();
+            assert!(help.contains("--cursor"), "{name}");
+            assert!(help.contains("--limit"), "{name}");
+            assert!(help.contains("complete history"), "{name}");
+        }
+    }
+
+    fn uids(env: &soroban_sdk::Env, seeds: &[u8]) -> soroban_sdk::Vec<UID> {
+        let mut out = soroban_sdk::Vec::new(env);
+        for seed in seeds {
+            out.push_back(UID(BytesN::from_array(env, &[*seed; 32])));
+        }
+        out
+    }
+
+    #[test]
+    fn format_page_reports_first_middle_and_final_pages() {
+        let env = soroban_sdk::Env::default();
+
+        let (human, data) = format_page(None, &uids(&env, &[1, 2]), 0, 2, 5);
+        assert_eq!(data["uids"].as_array().unwrap().len(), 2);
+        assert_eq!(data["cursor"], 0);
+        assert_eq!(data["limit"], 2);
+        assert_eq!(data["total"], 5);
+        assert_eq!(data["next_cursor"], 2);
+        assert!(
+            human.ends_with("Page: 1-2 of 5 (next: --cursor 2)"),
+            "{human}"
+        );
+
+        let (_, data) = format_page(None, &uids(&env, &[3, 4]), 2, 2, 5);
+        assert_eq!(data["next_cursor"], 4);
+
+        let (human, data) = format_page(None, &uids(&env, &[5]), 4, 2, 5);
+        assert_eq!(data["next_cursor"], serde_json::Value::Null);
+        assert!(human.ends_with("Page: 5-5 of 5"), "{human}");
+        assert!(data.get("attester").is_none());
+    }
+
+    #[test]
+    fn format_page_handles_empty_and_past_the_end_requests() {
+        let env = soroban_sdk::Env::default();
+        let empty = uids(&env, &[]);
+
+        let (human, data) = format_page(None, &empty, 0, 10, 0);
+        assert_eq!(data["uids"], serde_json::json!([]));
+        assert_eq!(data["next_cursor"], serde_json::Value::Null);
+        assert!(human.starts_with("No attestations found"), "{human}");
+
+        let (human, data) = format_page(None, &empty, 50, 10, 3);
+        assert_eq!(data["next_cursor"], serde_json::Value::Null);
+        assert!(
+            human.contains("cursor 50 is past the end (3 total)"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn format_page_echoes_the_attester_like_the_unpaginated_command() {
+        let env = soroban_sdk::Env::default();
+        let attester = account();
+        let (_, data) = format_page(Some(("attester", &attester)), &uids(&env, &[1]), 0, 1, 1);
+        assert_eq!(data["attester"], attester.as_str());
     }
 }

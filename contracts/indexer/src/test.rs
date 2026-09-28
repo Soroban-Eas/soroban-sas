@@ -1,3 +1,4 @@
+extern crate alloc;
 use super::*;
 use soroban_sas_common::{ContractUpgradedEvent, SASError, INSTANCE_EXTEND_TO_LEDGERS, UID};
 use soroban_sdk::{
@@ -650,6 +651,178 @@ fn test_cursor_pagination_large_datasets() {
 
     let paginated = client.get_atts_by_recipient_paginated(&recipient, &0, &10);
     assert_eq!(paginated.len(), 10);
+}
+
+/// Indexes `total` UIDs (big-endian position in the first four bytes) under
+/// one recipient/schema/attester triple through the bound mock SAS, and
+/// returns them in insertion order.
+fn index_sequential(
+    env: &Env,
+    indexer_id: &Address,
+    sas: &Address,
+    recipient: &Address,
+    schema_uid: &UID,
+    attester: &Address,
+    total: u32,
+) -> alloc::vec::Vec<UID> {
+    let sas_client = mock::MockSasClient::new(env, sas);
+    let mut uids = alloc::vec::Vec::new();
+    for i in 0..total {
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&i.to_be_bytes());
+        let uid = UID(soroban_sdk::BytesN::from_array(env, &bytes));
+        sas_client.relay_index(indexer_id, &uid, recipient, schema_uid, attester);
+        uids.push(uid);
+    }
+    uids
+}
+
+/// #306: all three dimensions page through the same history with the same
+/// semantics — first, middle, and final pages; pages straddling the chunk
+/// boundary; and empty results at/after the end, for `limit == 0`, and for
+/// saturating cursor/limit values.
+#[test]
+fn test_paginated_reads_cover_every_dimension_and_boundary() {
+    extern crate std;
+    let env = Env::default();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    env.budget().reset_unlimited();
+
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[8u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let total = MAX_CHUNK_SIZE + 5;
+    let expected = index_sequential(
+        &env,
+        &indexer_id,
+        &sas,
+        &recipient,
+        &schema_uid,
+        &attester,
+        total,
+    );
+
+    let pages: [(&str, &dyn Fn(u32, u32) -> soroban_sdk::Vec<UID>); 3] = [
+        ("recipient", &|c, l| {
+            client.get_atts_by_recipient_paginated(&recipient, &c, &l)
+        }),
+        ("schema", &|c, l| {
+            client.get_atts_by_schema_paginated(&schema_uid, &c, &l)
+        }),
+        ("attester", &|c, l| {
+            client.get_atts_by_attester_paginated(&attester, &c, &l)
+        }),
+    ];
+    for (dimension, page) in pages {
+        let to_std = |v: soroban_sdk::Vec<UID>| v.iter().collect::<std::vec::Vec<_>>();
+
+        // First page, a middle page straddling chunk 0 -> chunk 1, and the
+        // final (short) page.
+        assert_eq!(to_std(page(0, 10)), expected[0..10], "{dimension}");
+        assert_eq!(to_std(page(95, 10)), expected[95..105], "{dimension}");
+        assert_eq!(to_std(page(100, 10)), expected[100..105], "{dimension}");
+        // Exactly at, and beyond, the end.
+        assert!(page(total, 10).is_empty(), "{dimension}");
+        assert!(page(total + 1, 10).is_empty(), "{dimension}");
+        assert!(page(u32::MAX, u32::MAX).is_empty(), "{dimension}");
+        // A zero limit never returns data.
+        assert!(page(0, 0).is_empty(), "{dimension}");
+        // An oversized limit is clamped to what exists without overflowing.
+        assert_eq!(to_std(page(3, u32::MAX)), expected[3..], "{dimension}");
+
+        // Walking with a page size that doesn't divide `total` reassembles
+        // the complete read exactly: no duplicates, no gaps.
+        let mut cursor = 0u32;
+        let mut walked = std::vec::Vec::new();
+        loop {
+            let current = page(cursor, 7);
+            if current.is_empty() {
+                break;
+            }
+            cursor += current.len();
+            walked.extend(current.iter());
+        }
+        assert_eq!(walked, expected, "{dimension}");
+    }
+
+    // Counts pair with pages for computing totals.
+    assert_eq!(client.get_count_by_schema(&schema_uid), total);
+    assert_eq!(client.get_count_by_attester(&attester), total);
+}
+
+/// #306: pages are stable while the index grows — appending new UIDs never
+/// shifts an earlier page, so a caller resuming at `cursor + page.len()`
+/// sees each UID exactly once.
+#[test]
+fn test_paginated_reads_are_stable_under_concurrent_appends() {
+    extern crate std;
+    let env = Env::default();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    env.budget().reset_unlimited();
+
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[9u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let first = index_sequential(
+        &env,
+        &indexer_id,
+        &sas,
+        &recipient,
+        &schema_uid,
+        &attester,
+        4,
+    );
+
+    let page_one = client.get_atts_by_schema_paginated(&schema_uid, &0, &3);
+    assert_eq!(page_one.iter().collect::<std::vec::Vec<_>>(), first[0..3]);
+
+    // A new attestation lands between the caller's page requests.
+    let late = UID(soroban_sdk::BytesN::from_array(&env, &[0xEEu8; 32]));
+    mock::MockSasClient::new(&env, &sas).relay_index(
+        &indexer_id,
+        &late,
+        &recipient,
+        &schema_uid,
+        &attester,
+    );
+
+    // The earlier page is unchanged and the next page picks up where it
+    // left off, then the appended UID.
+    assert_eq!(
+        client.get_atts_by_schema_paginated(&schema_uid, &0, &3),
+        page_one
+    );
+    let page_two = client.get_atts_by_schema_paginated(&schema_uid, &page_one.len(), &3);
+    assert_eq!(
+        page_two.iter().collect::<std::vec::Vec<_>>(),
+        std::vec![first[3].clone(), late]
+    );
+}
+
+/// #306: an unknown key pages as empty without creating storage, and the
+/// new reads count toward the per-ledger query cap like the recipient read.
+#[test]
+fn test_paginated_reads_of_unknown_keys_are_empty_and_rate_limited() {
+    let env = Env::default();
+    let (_indexer_id, client, _sas) = setup_indexed(&env);
+    env.budget().reset_unlimited();
+    let unknown_schema = UID(soroban_sdk::BytesN::from_array(&env, &[0x55u8; 32]));
+    let unknown_attester = Address::generate(&env);
+
+    assert!(client
+        .get_atts_by_schema_paginated(&unknown_schema, &0, &10)
+        .is_empty());
+    assert!(client
+        .get_atts_by_attester_paginated(&unknown_attester, &0, &10)
+        .is_empty());
+
+    for _ in 2..MAX_QUERIES_PER_BLOCK {
+        client.get_atts_by_attester_paginated(&unknown_attester, &0, &1);
+    }
+    assert_eq!(
+        client.try_get_atts_by_schema_paginated(&unknown_schema, &0, &1),
+        Err(Ok(SASError::LimitExceeded.into()))
+    );
 }
 
 /// Once the instance TTL (holding INDEXER_ADMIN and SAS_CONTRACT) has

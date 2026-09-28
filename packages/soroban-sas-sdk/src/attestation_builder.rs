@@ -2,8 +2,9 @@
 //! `SASClient::attest`.
 
 use crate::errors::SdkError;
+use crate::strkey::{parse_address, AddressKind};
 use soroban_sas_common::{Attestation, UID};
-use soroban_sdk::{Address, Bytes, BytesN, Env, String as SorobanString};
+use soroban_sdk::{Bytes, BytesN, Env};
 
 /// Fluent builder for SDK callers that need to construct an `Attestation`
 /// value before handing it to `SASClient::attest`.
@@ -112,8 +113,24 @@ impl AttestationRequestBuilder {
             .data
             .ok_or_else(|| SdkError::RpcError("attestation data is required".to_string()))?;
 
-        let recipient = Address::from_string(&SorobanString::from_str(env, &recipient));
-        let attester = Address::from_string(&SorobanString::from_str(env, &attester));
+        // Validate off-host before conversion: a raw `Address::from_string`
+        // on a malformed or empty strkey traps the host and panics the
+        // caller instead of returning an error (#171, #304).
+        let recipient = parse_address(env, &recipient, AddressKind::Either, "recipient")?;
+        let attester = parse_address(env, &attester, AddressKind::Either, "attester")?;
+        // Same rule `SAS::attest_internal` enforces, checked before any
+        // RPC round-trip: the zero-address "no recipient" sentinel and
+        // self-attestation are rejected on-chain with `InvalidRecipient`.
+        soroban_sas_common::validate_attestation_parties(env, &recipient, &attester).map_err(
+            |err| {
+                SdkError::InvalidInput(format!(
+                    "attestation recipient must be a concrete address distinct from the \
+                     attester; the zero-address \"no recipient\" sentinel is not accepted \
+                     by SAS ({err:?}, code {})",
+                    err as u32
+                ))
+            },
+        )?;
         let schema_uid = UID(BytesN::from_array(env, &schema_uid));
 
         let uid =

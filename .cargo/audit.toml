@@ -4,7 +4,7 @@
 # dependency tree (soroban-env-host / soroban-env-common pin exact or
 # narrow ranges for curve25519-dalek and serde) and cannot be bumped without
 # a major soroban-sdk upgrade, which is out of scope while the workspace is
-# pinned to Rust 1.79.0 (see rust-toolchain.toml). Re-evaluate this list
+# pinned to Rust 1.83.0 (see rust-toolchain.toml). Re-evaluate this list
 # whenever soroban-sdk is upgraded.
 [advisories]
 ignore = [

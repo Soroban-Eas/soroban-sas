@@ -1115,6 +1115,41 @@ impl SASClient {
         )
     }
 
+    /// Calls `SAS::attest_with_value(attestation, token, value)`: like
+    /// [`attest`](Self::attest), but pays the configured attestation fee
+    /// (a Stellar Asset Contract transfer of `value` units of `token`) as
+    /// part of the same invocation. `token` is a strkey contract address
+    /// (`C...`); the contract itself validates that `token`/`value` match
+    /// its configured fee policy (`SASError::FeeMismatch` otherwise).
+    #[allow(clippy::too_many_arguments)]
+    pub fn attest_with_value(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        attestation: Attestation,
+        token: &str,
+        value: i128,
+    ) -> Result<GetTransactionResult, SdkError> {
+        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        let token_address = parse_address(env, token, AddressKind::Contract, "token")?;
+        let args = vec![
+            simulate::encode_arg(env, &attestation)?,
+            simulate::encode_arg(env, &token_address)?,
+            simulate::encode_arg(env, &value)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "attest_with_value",
+            args,
+        )
+    }
+
     /// Calls `SAS::multi_attest(attestations)`: encodes each attestation into
     /// one Soroban vector argument, signs the batch invoke with `secret_seed`,
     /// submits it, and polls until it settles.
@@ -1395,6 +1430,78 @@ impl SASClient {
         )
     }
 
+    /// Calls `SAS::multi_attest_by_delegation(attestations, nonces,
+    /// signatures, public_keys)`: submits a batch of already off-chain-signed
+    /// attestations in one relayed transaction. Companion to
+    /// [`attest_by_delegation`](Self::attest_by_delegation), mirroring
+    /// [`multi_attest`](Self::multi_attest).
+    ///
+    /// The four slices must have the same length; each signature is verified
+    /// on-chain against its own item's payload and nonce. `relayer_secret_seed`
+    /// does not need to be any of the attesters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn multi_attest_by_delegation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        relayer_secret_seed: &[u8; 32],
+        attestations: &[Attestation],
+        nonces: &[u64],
+        signatures: &[[u8; 64]],
+        public_keys: &[[u8; 32]],
+    ) -> Result<GetTransactionResult, SdkError> {
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            relayer_secret_seed,
+            &self.contract_id,
+            "multi_attest_by_delegation",
+            vec![
+                encode_multi_attest_arg(env, attestations)?,
+                encode_u64_vec_arg(env, nonces)?,
+                encode_signature_vec_arg(env, signatures)?,
+                encode_public_key_vec_arg(env, public_keys)?,
+            ],
+        )
+    }
+
+    /// Calls `SAS::multi_revoke_by_delegation(uids, nonces, signatures,
+    /// public_keys)`: submits a batch of off-chain-signed revocations in one
+    /// relayed transaction. Companion to
+    /// [`revoke_by_delegation`](Self::revoke_by_delegation).
+    ///
+    /// The four slices must have the same length. Each item's signature is
+    /// checked on-chain against the *recorded* attester of its attestation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn multi_revoke_by_delegation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        relayer_secret_seed: &[u8; 32],
+        uids: &[&[u8; 32]],
+        nonces: &[u64],
+        signatures: &[[u8; 64]],
+        public_keys: &[[u8; 32]],
+    ) -> Result<GetTransactionResult, SdkError> {
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            relayer_secret_seed,
+            &self.contract_id,
+            "multi_revoke_by_delegation",
+            vec![
+                encode_multi_revoke_arg(env, uids)?,
+                encode_u64_vec_arg(env, nonces)?,
+                encode_signature_vec_arg(env, signatures)?,
+                encode_public_key_vec_arg(env, public_keys)?,
+            ],
+        )
+    }
+
     /// Calls `SAS::replace_attestation(old_uid, new_data)`, same
     /// signing/submission flow as `attest`. Requires `secret_seed`'s
     /// account to be both `old_uid`'s attester and `new_data.attester`
@@ -1455,6 +1562,77 @@ impl SASClient {
             fee_policy,
         )
     }
+
+    /// Calls `SAS::renew_attestation(uid, new_expiration_time)`: extends the
+    /// expiration time of an existing attestation without revoking and re-issuing.
+    /// Requires `secret_seed`'s account to be the attestation's attester.
+    pub fn renew_attestation(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        uid: &[u8; 32],
+        new_expiration_time: u64,
+    ) -> Result<GetTransactionResult, SdkError> {
+        // Verify the secret seed matches the attester by fetching the attestation first
+        let attestation = self.get_attestation(env, rpc, uid)?;
+        if let Some(att) = attestation {
+            ensure_attester_matches_secret(env, secret_seed, &att)?;
+        } else {
+            return Err(SdkError::InvalidInput("attestation not found".to_string()));
+        }
+        let uid_val = UID(BytesN::from_array(env, uid));
+        let args = vec![
+            simulate::encode_arg(env, &uid_val)?,
+            simulate::encode_arg(env, &new_expiration_time)?,
+        ];
+        self.submit_write(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "renew_attestation",
+            args,
+        )
+    }
+
+    /// Like [`renew_attestation`](Self::renew_attestation) but allows a
+    /// [`FeePolicy`].
+    pub fn renew_attestation_with_fee_policy(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        secret_seed: &[u8; 32],
+        uid: &[u8; 32],
+        new_expiration_time: u64,
+        fee_policy: &FeePolicy,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let attestation = self.get_attestation(env, rpc, uid)?;
+        if let Some(att) = attestation {
+            ensure_attester_matches_secret(env, secret_seed, &att)?;
+        } else {
+            return Err(SdkError::InvalidInput("attestation not found".to_string()));
+        }
+        let uid_val = UID(BytesN::from_array(env, uid));
+        let args = vec![
+            simulate::encode_arg(env, &uid_val)?,
+            simulate::encode_arg(env, &new_expiration_time)?,
+        ];
+        invoke_write_with_fee_policy(
+            env,
+            rpc,
+            network_passphrase,
+            secret_seed,
+            &self.contract_id,
+            "renew_attestation",
+            args,
+            fee_policy,
+        )
+    }
+
 }
 
 fn encode_multi_attest_arg(env: &Env, attestations: &[Attestation]) -> Result<ScVal, SdkError> {
@@ -1479,6 +1657,45 @@ fn encode_multi_revoke_arg(env: &Env, uids: &[&[u8; 32]]) -> Result<ScVal, SdkEr
     let encoded: VecM<ScVal> = encoded
         .try_into()
         .map_err(|e| SdkError::RpcError(format!("too many uids: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn encode_u64_vec_arg(env: &Env, values: &[u64]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = values
+        .iter()
+        .map(|value| simulate::encode_arg(env, value))
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many nonces: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn encode_signature_vec_arg(env: &Env, signatures: &[[u8; 64]]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = signatures
+        .iter()
+        .map(|raw_signature| {
+            let signature = BytesN::<64>::from_array(env, raw_signature);
+            simulate::encode_arg(env, &signature)
+        })
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many signatures: {e:?}")))?;
+    Ok(ScVal::Vec(Some(encoded.into())))
+}
+
+fn encode_public_key_vec_arg(env: &Env, public_keys: &[[u8; 32]]) -> Result<ScVal, SdkError> {
+    let encoded: Vec<ScVal> = public_keys
+        .iter()
+        .map(|raw_public_key| {
+            let public_key = BytesN::<32>::from_array(env, raw_public_key);
+            simulate::encode_arg(env, &public_key)
+        })
+        .collect::<Result<_, _>>()?;
+    let encoded: VecM<ScVal> = encoded
+        .try_into()
+        .map_err(|e| SdkError::RpcError(format!("too many public keys: {e:?}")))?;
     Ok(ScVal::Vec(Some(encoded.into())))
 }
 
@@ -1549,6 +1766,89 @@ impl IndexerClient {
             &self.contract_id,
             "get_attestations_by_attester",
             vec![arg],
+        )
+    }
+
+    /// Calls `Indexer::get_atts_by_recipient_paginated(recipient, cursor,
+    /// limit)` via `simulateTransaction` (#306).
+    ///
+    /// Returns at most `limit` UIDs of `recipient`'s complete history
+    /// (oldest first) starting at position `cursor`. A page holds exactly
+    /// `min(limit, count - cursor)` UIDs, so the next page starts at
+    /// `cursor + page.len()`; an empty page means the end was reached. Pair
+    /// with [`IndexerClient::get_count_by_recipient`] for totals.
+    pub fn get_attestations_by_recipient_paginated(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        recipient: &str,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let recipient = parse_address(env, recipient, AddressKind::Either, "recipient")?;
+        let args = vec![
+            simulate::encode_arg(env, &recipient)?,
+            simulate::encode_arg(env, &cursor)?,
+            simulate::encode_arg(env, &limit)?,
+        ];
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_atts_by_recipient_paginated",
+            args,
+        )
+    }
+
+    /// Calls `Indexer::get_atts_by_schema_paginated(schema_uid, cursor,
+    /// limit)`. Same semantics as
+    /// [`IndexerClient::get_attestations_by_recipient_paginated`] (#306).
+    pub fn get_attestations_by_schema_paginated(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        schema_uid: &[u8; 32],
+        cursor: u32,
+        limit: u32,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let schema_uid = UID(BytesN::from_array(env, schema_uid));
+        let args = vec![
+            simulate::encode_arg(env, &schema_uid)?,
+            simulate::encode_arg(env, &cursor)?,
+            simulate::encode_arg(env, &limit)?,
+        ];
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_atts_by_schema_paginated",
+            args,
+        )
+    }
+
+    /// Calls `Indexer::get_atts_by_attester_paginated(attester, cursor,
+    /// limit)`. Same semantics as
+    /// [`IndexerClient::get_attestations_by_recipient_paginated`] (#306).
+    pub fn get_attestations_by_attester_paginated(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        attester: &str,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<soroban_sdk::Vec<UID>, SdkError> {
+        let attester = parse_address(env, attester, AddressKind::Either, "attester")?;
+        let args = vec![
+            simulate::encode_arg(env, &attester)?,
+            simulate::encode_arg(env, &cursor)?,
+            simulate::encode_arg(env, &limit)?,
+        ];
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_atts_by_attester_paginated",
+            args,
         )
     }
 
@@ -1857,6 +2157,7 @@ fn build_signed_write_at_sequence(
         contract_id,
         function_name,
         args.to_vec(),
+        soroban_sdk::xdr::VecM::default(),
     )?;
     let draft_xdr = simulate::unsigned_envelope_xdr(draft_tx)?;
     let sim = rpc.simulate_transaction(&draft_xdr)?;
@@ -1889,6 +2190,22 @@ fn build_signed_write_at_sequence(
         .map_err(|e| SdkError::RpcError(format!("invalid minResourceFee: {e:?}")))?;
     let fee = apply_fee_policy(BASE_FEE, resource_fee, fee_policy)?;
 
+    let mut auth_vec = Vec::new();
+    if let Some(res) = sim.results.first() {
+        for a in &res.auth {
+            use soroban_sdk::xdr::ReadXdr;
+            let auth_entry = soroban_sdk::xdr::SorobanAuthorizationEntry::from_xdr_base64(
+                a,
+                crate::limits::default_rpc_response_limits(),
+            )
+            .map_err(|e| SdkError::DecodingError(format!("failed to decode auth: {:?}", e)))?;
+            auth_vec.push(auth_entry);
+        }
+    }
+    let auth = auth_vec
+        .try_into()
+        .map_err(|e| SdkError::DecodingError(format!("too many auth entries: {:?}", e)))?;
+
     // 2. Build the real transaction with that resource data and fee, validate
     //    it matches the original invocation, and sign it.
     let final_tx = simulate::build_invoke_transaction(
@@ -1899,6 +2216,7 @@ fn build_signed_write_at_sequence(
         contract_id,
         function_name,
         args.to_vec(),
+        auth,
     )?;
 
     simulate::validate_simulated_transaction(&final_tx, contract_id, function_name, args)?;
@@ -2221,6 +2539,33 @@ mod tests {
 
         let ScVal::Vec(Some(values)) = arg else {
             panic!("expected multi_revoke argument to be an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn delegation_args_encode_each_parallel_vector_as_one_arg() {
+        let env = Env::default();
+        let nonces = vec![1u64, 2u64];
+        let signatures = vec![[1u8; 64], [2u8; 64]];
+        let public_keys = vec![[3u8; 32], [4u8; 32]];
+
+        let nonce_arg = encode_u64_vec_arg(&env, &nonces).unwrap();
+        let signature_arg = encode_signature_vec_arg(&env, &signatures).unwrap();
+        let public_key_arg = encode_public_key_vec_arg(&env, &public_keys).unwrap();
+
+        let ScVal::Vec(Some(values)) = nonce_arg else {
+            panic!("expected nonces to encode as an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+
+        let ScVal::Vec(Some(values)) = signature_arg else {
+            panic!("expected signatures to encode as an ScVal vector");
+        };
+        assert_eq!(values.len(), 2);
+
+        let ScVal::Vec(Some(values)) = public_key_arg else {
+            panic!("expected public keys to encode as an ScVal vector");
         };
         assert_eq!(values.len(), 2);
     }
@@ -2601,7 +2946,56 @@ mod tests {
                 Err(SdkError::DecodingError(_)) => {}
                 other => panic!("get_count_by_attester({bad:?}) = {other:?}"),
             }
+            match client.get_attestations_by_recipient_paginated(&env, &rpc, bad, 0, 10) {
+                Err(SdkError::DecodingError(_)) => {}
+                other => panic!("get_attestations_by_recipient_paginated({bad:?}) = {other:?}"),
+            }
+            match client.get_attestations_by_attester_paginated(&env, &rpc, bad, 0, 10) {
+                Err(SdkError::DecodingError(_)) => {}
+                other => panic!("get_attestations_by_attester_paginated({bad:?}) = {other:?}"),
+            }
         }
+    }
+
+    #[test]
+    fn paginated_indexer_queries_decode_a_page_from_simulation() {
+        let env = Env::default();
+        let page = soroban_sdk::vec![
+            &env,
+            UID(BytesN::from_array(&env, &[3u8; 32])),
+            UID(BytesN::from_array(&env, &[4u8; 32])),
+        ];
+        let result_xdr = simulate::encode_arg(&env, &page)
+            .unwrap()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"results":[{{"xdr":"{result_xdr}"}}]}}}}"#
+        );
+        let client = IndexerClient::new(stellar_strkey::Contract([1u8; 32]).to_string());
+        let account = stellar_strkey::ed25519::PublicKey([5u8; 32]).to_string();
+
+        let rpc = RpcClient::new(spawn_mock_rpc_server(body.clone()));
+        assert_eq!(
+            client
+                .get_attestations_by_recipient_paginated(&env, &rpc, &account, 2, 2)
+                .unwrap(),
+            page
+        );
+        let rpc = RpcClient::new(spawn_mock_rpc_server(body.clone()));
+        assert_eq!(
+            client
+                .get_attestations_by_schema_paginated(&env, &rpc, &[2u8; 32], 2, 2)
+                .unwrap(),
+            page
+        );
+        let rpc = RpcClient::new(spawn_mock_rpc_server(body));
+        assert_eq!(
+            client
+                .get_attestations_by_attester_paginated(&env, &rpc, &account, 2, 2)
+                .unwrap(),
+            page
+        );
     }
 
     #[test]

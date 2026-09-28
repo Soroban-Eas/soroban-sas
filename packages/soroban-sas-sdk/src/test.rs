@@ -207,6 +207,110 @@ fn test_attestation_builder_rejects_missing_required_fields() {
     }
 }
 
+// ---- #304: missing / malformed recipients never panic ----
+
+fn complete_builder(
+    env: &Env,
+    recipient: &str,
+    attester: &str,
+) -> crate::attestation_builder::AttestationRequestBuilder {
+    crate::attestation_builder::AttestationRequestBuilder::new()
+        .with_recipient(recipient)
+        .with_attester(attester)
+        .with_schema_uid([2u8; 32])
+        .with_data(Bytes::from_slice(env, b"payload"))
+}
+
+#[test]
+fn test_attestation_builder_missing_recipient_is_an_error_not_a_panic() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+
+    // Every other field set: the only gap is the recipient.
+    let result = crate::attestation_builder::AttestationRequestBuilder::new()
+        .with_attester(&attester)
+        .with_schema_uid([2u8; 32])
+        .with_data(Bytes::new(&env))
+        .build(&env);
+    match result {
+        Err(crate::errors::SdkError::RpcError(msg)) => assert!(msg.contains("recipient")),
+        other => panic!("expected a missing-recipient error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_attestation_builder_rejects_malformed_recipient_without_trapping_the_host() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+    let secret_seed_strkey = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF7U";
+
+    // Each of these used to reach `Address::from_string` unvalidated, which
+    // traps the host and panics the calling process.
+    for bad in ["", "   ", "not-a-strkey", "G", secret_seed_strkey] {
+        match complete_builder(&env, bad, &attester).build(&env) {
+            Err(crate::errors::SdkError::DecodingError(msg)) => {
+                assert!(msg.contains("recipient"), "{bad:?}: {msg}")
+            }
+            other => panic!("recipient {bad:?}: expected DecodingError, got {other:?}"),
+        }
+    }
+
+    // The attester goes through the same guard.
+    let recipient = strkey_account([3u8; 32]);
+    match complete_builder(&env, &recipient, "not-a-strkey").build(&env) {
+        Err(crate::errors::SdkError::DecodingError(msg)) => assert!(msg.contains("attester")),
+        other => panic!("expected DecodingError for the attester, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_attestation_builder_rejects_no_recipient_sentinels_and_self_attestation() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+    let zero_account = stellar_strkey::ed25519::PublicKey([0u8; 32]).to_string();
+    let zero_contract = stellar_strkey::Contract([0u8; 32]).to_string();
+
+    for missing in [zero_account.as_str(), zero_contract.as_str(), &attester] {
+        match complete_builder(&env, missing, &attester).build(&env) {
+            Err(crate::errors::SdkError::InvalidInput(msg)) => {
+                assert!(msg.contains("InvalidRecipient"), "{missing}: {msg}");
+                assert!(msg.contains("402"), "{missing}: {msg}");
+            }
+            other => panic!("recipient {missing}: expected InvalidInput, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_attestation_builder_valid_recipient_regression() {
+    let env = Env::default();
+    let attester = strkey_account([4u8; 32]);
+
+    // Account and contract recipients both remain accepted, and the UID is
+    // still the canonical content address the contract validates (#215).
+    for recipient in [
+        strkey_account([3u8; 32]),
+        stellar_strkey::Contract([7u8; 32]).to_string(),
+    ] {
+        let attestation = complete_builder(&env, &recipient, &attester)
+            .build(&env)
+            .unwrap();
+        let expected_recipient =
+            soroban_sdk::Address::from_string(&soroban_sdk::String::from_str(&env, &recipient));
+        assert_eq!(attestation.recipient, expected_recipient);
+        assert_eq!(
+            attestation.uid,
+            soroban_sas_common::attestation_uid(
+                &env,
+                &attestation.schema_uid,
+                &attestation.recipient,
+                &attestation.attester,
+                &attestation.data,
+            )
+        );
+    }
+}
+
 /// Answers one JSON-RPC request on `stream` with a canned Soroban RPC
 /// response. `account_entry_xdr` and `transaction_data_xdr` are the base64
 /// XDR payloads the account-lookup and simulation steps need.

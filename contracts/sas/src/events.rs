@@ -1,11 +1,13 @@
 use soroban_sas_common::{
     events::{
-        ADMIN_TRANSFER_COMPLETED, ADMIN_TRANSFER_PROPOSED, ATTESTED, BATCH_ATTESTED, BATCH_REVOKED,
-        CONTRACT_PAUSED, CONTRACT_UNPAUSED, CONTRACT_UPGRADED, INDEXER_UPDATED, REVOKED,
+        ADMIN_TRANSFER_COMPLETED, ADMIN_TRANSFER_PROPOSED, ATTESTATION_RENEWED, ATTESTED, BATCH_ATTESTED, BATCH_REVOKED,
+        CONTRACT_PAUSED, CONTRACT_UNPAUSED, CONTRACT_UPGRADED, INDEXER_STRICT_UPDATED,
+        INDEXER_UPDATED, REVOKED,
     },
     AdminTransferCompletedEvent, AdminTransferProposedEvent, Attestation, AttestationIssuedEvent,
-    AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, ContractPausedEvent,
-    ContractUnpausedEvent, ContractUpgradedEvent, IndexerUpdatedEvent, UID,
+    AttestationRenewedEvent, AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent, ContractPausedEvent,
+    ContractUnpausedEvent, ContractUpgradedEvent, IndexerStrictUpdatedEvent, IndexerUpdatedEvent,
+    UID,
 };
 use soroban_sdk::{symbol_short, Address, Env};
 
@@ -60,6 +62,27 @@ pub fn publish_indexer_updated(
             old_indexer: old_indexer.into(),
             new_indexer,
             authorizer,
+        },
+    );
+}
+
+/// Publishes the `IndexerStrictUpdated` event.
+///
+/// Topics: `(INDEXER_STRICT_UPDATED, admin)`. Called only after
+/// `set_indexer_strict` has already written the new policy to instance
+/// storage, so a failed or unauthorized call never emits this event.
+pub fn publish_indexer_strict_updated(
+    env: &Env,
+    old_strict: bool,
+    new_strict: bool,
+    admin: Address,
+) {
+    env.events().publish(
+        (INDEXER_STRICT_UPDATED, admin.clone()),
+        IndexerStrictUpdatedEvent {
+            old_strict,
+            new_strict,
+            admin,
         },
     );
 }
@@ -207,5 +230,30 @@ pub fn publish_contract_unpaused(env: &Env, authorizer: Address) {
     env.events().publish(
         (CONTRACT_UNPAUSED, authorizer.clone()),
         ContractUnpausedEvent { authorizer },
+    );
+}
+
+/// Publishes the `AttestationRenewed` event when an attestation's expiration
+/// time is extended via `SAS::renew_attestation`.
+///
+/// Topics: `(ATTESTATION_RENEWED, uid, attester)`.
+pub fn publish_attestation_renewed(
+    env: &Env,
+    uid: &UID,
+    attester: &Address,
+    new_expiration_time: u64,
+) {
+    let event = AttestationRenewedEvent {
+        uid: uid.clone(),
+        attester: attester.clone(),
+        new_expiration_time,
+    };
+    env.events().publish(
+        (
+            ATTESTATION_RENEWED,
+            uid.clone(),
+            attester.clone(),
+        ),
+        event,
     );
 }

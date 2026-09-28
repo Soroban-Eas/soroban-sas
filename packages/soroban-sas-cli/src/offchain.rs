@@ -10,7 +10,7 @@ use soroban_sas_common::{
     hash_delegated_revocation, hash_offchain_attestation, Attestation, AttestationDomain, UID,
 };
 use soroban_sas_sdk::strkey::{parse_address, AddressKind};
-use soroban_sdk::{Bytes, BytesN, Env};
+use soroban_sdk::{Address, Bytes, BytesN, Env};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationInput {
@@ -81,6 +81,51 @@ pub fn parse_attestation(env: &Env, input: &AttestationInput) -> Result<Attestat
         revocable: input.revocable,
         data: Bytes::from_slice(env, &data),
     })
+}
+
+/// Rejects, before any RPC call, an attestation SAS would refuse to issue
+/// because it has no usable recipient (#304): the zero-address "no
+/// recipient" sentinel, or the attester naming itself. Delegates to
+/// [`soroban_sas_common::validate_attestation_parties`], the same rule
+/// `SAS::attest_internal` enforces, so the CLI can never disagree with the
+/// contract about what counts as a missing recipient.
+///
+/// Only on-chain issuance paths call this. Off-chain signing/verification
+/// does not, because `SAS::verify_offchain_attestation` places no
+/// constraint on the recipient.
+pub fn validate_onchain_parties(env: &Env, attestation: &Attestation) -> Result<(), String> {
+    check_onchain_parties(env, &attestation.recipient, &attestation.attester)
+}
+
+/// Parses `recipient`/`attester` strkeys and applies
+/// [`validate_onchain_parties`]'s rule, for callers that have not built an
+/// `Attestation` yet.
+pub fn validate_onchain_recipient(
+    env: &Env,
+    recipient: &str,
+    attester: &str,
+) -> Result<(), String> {
+    let recipient = parse_address(env, recipient, AddressKind::Either, "recipient")
+        .map_err(|e| e.to_string())?;
+    let attester =
+        parse_address(env, attester, AddressKind::Either, "attester").map_err(|e| e.to_string())?;
+    check_onchain_parties(env, &recipient, &attester)
+}
+
+fn check_onchain_parties(env: &Env, recipient: &Address, attester: &Address) -> Result<(), String> {
+    let Err(err) = soroban_sas_common::validate_attestation_parties(env, recipient, attester)
+    else {
+        return Ok(());
+    };
+    let reason = if soroban_sas_common::validate_recipient(env, recipient).is_err() {
+        "recipient is missing: the zero-address \"no recipient\" sentinel cannot be \
+         attested on-chain; pass a concrete G... or C... recipient"
+    } else if recipient == attester {
+        "recipient must differ from the attester"
+    } else {
+        "attester is the zero-address sentinel"
+    };
+    Err(format!("{reason} (SASError::{err:?}, code {})", err as u32))
 }
 
 /// Derives the content-addressed UID for a new attestation, so the CLI's
