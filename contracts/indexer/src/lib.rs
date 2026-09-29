@@ -8,14 +8,14 @@ use soroban_sdk::{
     IntoVal, Symbol, TryFromVal, Val,
 };
 
-// NOTE: This contract targets Soroban SDK 21.7.7. All storage access uses the
-// modern `env.storage()` API (instance/persistent/temporary) and TTL extension
-// via `extend_ttl`. Deprecated host functions such as `env.storage().get()`,
-// `env.storage().set()`, `env.storage().has()`, `env.storage().remove()`,
-// `env.ledger().timestamp()`-style legacy accessors, and the old
-// `env.storage().instance().extend_ttl()`-free patterns have been migrated to
-// the current host function surface. No deprecated host functions remain in
-// this module.
+// NOTE: This contract targets Soroban SDK 21.x. All host interactions below
+// use the current (non-deprecated) storage, ledger, and event APIs:
+//   * `env.storage().instance()/persistent()` with `extend_ttl`
+//   * `env.ledger().sequence()`
+//   * `env.events().publish(...)`
+// Deprecated host functions (e.g. `env.storage().get/set`, `env.ledger().sequence()`
+// legacy shims, and `env.events().publish` legacy signatures) are intentionally
+// avoided so the contract compiles cleanly against the modern host interface.
 
 // v1.0.0 Indexer logic frozen
 //
@@ -100,6 +100,18 @@ fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
         .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
+/// Renews the TTL of a persistent entry when it exists, using the modern
+/// `extend_ttl` host function. Centralizing this avoids deprecated
+/// `bump`/`extend` shims and keeps retention policy consistent.
+fn extend_persistent_ttl<K>(env: &Env, key: &K)
+where
+    K: IntoVal<Env, Val>,
+{
+    env.storage()
+        .persistent()
+        .extend_ttl(key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
 }
 
 /// Increments and enforces the maximum queries per ledger sequence limit.
@@ -219,9 +231,7 @@ where
 {
     let count: Option<u32> = env.storage().persistent().get(count_key);
     if count.is_some() {
-        env.storage()
-            .persistent()
-            .extend_ttl(count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        extend_persistent_ttl(env, count_key);
     }
     count.unwrap_or(0)
 }
@@ -245,9 +255,7 @@ where
 {
     let chunk: Option<soroban_sdk::Vec<UID>> = env.storage().persistent().get(chunk_key);
     if chunk.is_some() {
-        env.storage()
-            .persistent()
-            .extend_ttl(chunk_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        extend_persistent_ttl(env, chunk_key);
     }
     chunk
 }
@@ -272,15 +280,11 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
     chunk.push_back(uid.clone());
     let storage_key = (key.clone(), chunk_index);
     env.storage().persistent().set(&storage_key, &chunk);
-    env.storage()
-        .persistent()
-        .extend_ttl(&storage_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    extend_persistent_ttl(env, &storage_key);
 
     total += 1;
     env.storage().persistent().set(&count_key, &total);
-    env.storage()
-        .persistent()
-        .extend_ttl(&count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    extend_persistent_ttl(env, &count_key);
     extend_instance_ttl(env);
 }
 
@@ -304,9 +308,7 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
     chunk.push_back(uid.clone());
     let storage_key = (key.clone(), chunk_index);
     env.storage().persistent().set(&storage_key, &chunk);
-    env.storage()
-        .persistent()
-        .extend_ttl(&storage_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    extend_persistent_ttl(env, &storage_key);
 
     total += 1;
     env.storage().persistent().set(&count_key, &total);

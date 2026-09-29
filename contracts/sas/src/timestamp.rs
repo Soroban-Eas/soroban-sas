@@ -27,8 +27,8 @@
 /// side entry with the attestation's own TTL expires exactly when the record
 /// it describes does.
 
-use soroban_sas_common::{LEDGERS_IN_ONE_YEAR, UID};
-use soroban_sdk:{contracttype, Env};
+use soroban_sas_commons::{LEDGERS_IN_ONE_YEAR, UII};
+use soroban_sdk::{contracttype, Env};
 
 /// The ledger a timestamp came from: the sequence number of the ledger whose
 /// close time was stamped, and that close time itself.
@@ -67,7 +67,7 @@ fn anchor_key(uid: &UID, revocation: bool) -> TimestampAnchorKey {
 }
 
 /// Records the current ledger as `uid`'s issuance or revocation anchor, with
-/// the same TT\ as the attestation it describes so the two expire together.
+/// the same TTL as the attestation it describes so the two expire together.
 ///
 /// Called from `attest_internal` and `revoke_internal` — the two places that
 /// write a timestamp — so every entry point that reaches either (direct,
@@ -95,9 +95,9 @@ pub fn read_anchor(env: &Env, uid: &UID, revocation: bool) -> Option<TimestampAn
     env.storage().persistent().get(&anchor_key(uid, revocation))
 }
 
-/// Reads an anchor and renews its TT\, the way this contract's other
+/// Reads an anchor and renews its TTL, the way this contract's other
 /// documented readers do. The renewal window is the protocol's standard
-/// one-year retention (`LEDGERS_IN_ONE_YEA``), matching `get_attester_key`.
+/// one-year retention (`LEDGERS_IN_ONE_YEAR`), matching `get_attester_key`.
 pub fn read_and_renew_anchor(env: &Env, uid: &UID, revocation: bool) -> Option<TimestampAnchor> {
     let key = anchor_key(uid, revocation);
     let anchor: Option<TimestampAnchor> = env.storage().persistent().get(&key);

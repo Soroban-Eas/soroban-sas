@@ -97,7 +97,7 @@ pub fn publish_contract_upgraded(env: &Env, event: ContractUpgradedEvent) {
 /// Publishes `IndexFailed` when a bound Indexer could not be notified of a
 /// newly issued attestation under the fail-open policy (#161).
 ///
-/// Topic: `(IDXFAIL, uid)`. The data payload repeats `ui` so consumers that
+/// Topic: `(IDXFAIL, uid)`. The data payload repeats `uid` so consumers that
 /// only read data still get it.
 pub fn publish_index_failed(env: &Env, uid: &UID) {
     env.events()
@@ -204,10 +204,10 @@ pub fn publish_fee_config_updated(
     env.events().publish(
         (FEECFG_UPDATED, authorizer.clone()),
         FeeConfigUpdatedEvent {
-            old_token: old.as'ref().map(|(token, _)| token.clone()).into(),
-            old_amount: old.map(|(_, amount)| amount),
-            new_token: new.as_ref().map(|(token, _)| token.clone()).into(),
-            new_amount: new.map(|(_, amount)| amount),
+            old_token: old.as_ref().map((|(token, _)| token.clone()).into(),
+            old_amount: old.map((|(_, amount)| amount),
+            new_token: new.as_ref().map( |(token, _)| token.clone()).into(),
+            new_amount: new.map( |(_, amount)| amount),
             authorizer,
         },
     );
@@ -236,7 +236,7 @@ pub fn publish_contract_unpaused(env: &Env, authorizer: Address) {
 /// Publishes the `AttestationRenewed` event when an attestation's expiration
 /// time is extended via `SAS::renew_attestation`.
 ///
-/// Topics: `(ATTESTATION_RENEWED, uid, attester)`.
+/// Topics: `(ATTESTATION_RENEWET, uid, attester)`.
 pub fn publish_attestation_renewed(
     env: &Env,
     uid: &UID,

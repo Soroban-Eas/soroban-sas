@@ -1,1 +1,774 @@
-IyBTb3JvYmFuIFNBUyBBcmNoaXRlY3R1cmUKCiMjIE92ZXJ2aWV3ClRoZSBTb3JvYmFuIEF0dGVzdGF0aW9uIFNlcnZpY2UgKFNBUykgaXMgY29tcG9zZWQgb2YgdGhyZWUgcHJpbWFyeSBjb21wb25lbnRzOgoxLiAqKlNjaGVtYSBSZWdpc3RyeSoqOiBTdG9yZXMgcmV1c2FibGUgZGF0YSBsYXlvdXRzIChzY2hlbWFzKSBpZGVudGlmaWVkIGJ5IGRldGVybWluaXN0aWMgVUlEcy4KMi4gKipTQVMgQ29yZSBDb250cmFjdCoqOiBJc3N1ZXMsIHJldm9rZXMgYW5kIHZlcmlmaWVzIGF0dGVzdGF0aW9ucyBiYXNlZCBvbiByZWdpc3RlcmVkIHNjaGVtYXMuCjMuICoqSW5kZXhlciBDb250cmFjdCoqOiBQcm92aWRlcyBlZmZpY2llbnQgb2ZmLWNoYWluIGFuZCBvbi1jaGFpbiByZXZlcnNlIGxvb2t1cHMgZm9yIHJlY2lwaWVudHMsIHNjaGVtYXMgYW5kIGF0dGVzdGVycy4KCiMjIERlc2lnbiBHb2FscwotIEhpZ2ggdGhyb3VnaHB1dCB2aWEgcGFyYWxsZWxpemVkIHN0YXRlIGFjY2Vzcy4KLSBNaW5pbWFsIGdhcyBvdmVyaGVhZC4KLSBTdHJpY3QgcGF5bG9hZCBib3VuZGFyaWVzIHRvIHByZXZlbnQgZ2FzIGV4aGF1c3Rpb24gYXR0YWNrcy4KCi0tLQoKIyMgU3lzdGVtIE92ZXJ2aWV3CgpUaGUgZm9sbG93aW5nIGRpYWdyYW0gc2hvd3MgdGhlIGhpZ2gtbGV2ZWwgc3RhdGljIHJlbGF0aW9uc2hpcHMgYmV0d2VlbiBhbGwgY29udHJhY3RzIGFuZCBleHRlcm5hbCBhY3RvcnMuCgpgYGBtZXJtYWlkCmdyYXBoIFRECiAgICBVc2VyKFtBdHRlc3RlciAvIFJlbGF5ZXJdKQogICAgQWRtaW4oW0FkbWluXSkKICAgIFRva2VuQ29udHJhY3QoW1Rva2VuIENvbnRyYWN0XSkKCiAgICBzdWJncmFwaCAiU29yb2JhbiBTQVMgU3lzdGVtIgogICAgICAgIFNBU1siU0FTIENvbnRyYWN0XG4oYXR0ZXN0LCByZXZva2UsIHZlcmlmeSkiXQogICAgICAgIFNSWyJTY2hlbWEgUmVnaXN0cnlcbihyZWdpc3RlciwgZ2V0X3NjaGVtYSwgaXNfYXV0aG9yaXplZCkiXQogICAgICAgIElEWFsiSW5kZXhlciBDb250cmFjdFxuKGluZGV4X2F0dGVzdGF0aW9uLCBoYW5kbGVfcmV2b2tlKSJdCiAgICAgICAgUmVzb2x2ZXJbIlJlc29sdmVyIENvbnRyYWN0XG4ob25fYXR0ZXN0LCBvbl9yZXZva2UpIl0KICAgIGVuZAoKICAgIFVzZXIgLS0+fGF0dGVzdCAvIHJldm9rZXwgU0FTCiAgICBBZG1pbiAtLT58aW5pdCwgdXBncmFkZSwgcGF1c2V8IFNBUwogICAgQWRtaW4gLS0+fGluaXQsIHVwZ3JhZGV8IFNSCiAgICBBZG1pbiAtLT58aW5pdCwgdXBncmFkZXwgSURYCiAgICBTQVMgLS0+fGdldF9zY2hlbWEsIGlzX2F1dGhvcml6ZWR8IFNSCiAgICBTQVMgLS0+fG9uX2F0dGVzdCwgb25fcmV2b2tlfCBSZXNvbHZlcgogICAgU0FTIC0tPnxpbmRleF9hdHRlc3RhdGlvbiwgaGFuZGxlX3Jldm9rZXwgSURYCiAgICBTQVMgLS0+fHRyYW5zZmVyIGZlZXwgVG9rZW5Db250cmFjdAogICAgU1IgLS0+fHRyYW5zZmVyIGZlZXwgVG9rZW5Db250cmFjdAogICAgUmVzb2x2ZXIgLS4tPnx8ZW5mb3JjZXMgcG9saWN5fCBTQVMKYGBgCgotLS0KCiMjIEluaXRpYWxpemF0aW9uIGFuZCBDb21wYXRpYmlsaXR5IFByb2JlcwoKQmVmb3JlIHRydXN0aW5nIGEgZGVwZW5kZW5jeSBhZGRyZXNzLCBlYWNoIGNvbnRyYWN0IGlzc3VlcyBhICoqY29tcGF0aWJpbGl0eSBwcm9iZSoqIOKAlCBhIGNyb3NzLWNvbnRyYWN0IGNhbGwgdG8gYSB3ZWxsLWtub3duIG1hcmtlciBmdW5jdGlvbi4gSWYgdGhlIGNhbGwgZmFpbHMgb3IgcmV0dXJucyBmYWxzZSwgaW5pdGlhbGl6YXRpb24gaXMgcmVqZWN0ZWQgd2l0aCBgSW5jb21wYXRpYmxlRGVwZW5kZW5jeWAuCgpgYGBtZXJtYWlkCnNlcXVlbmNlRGlhZ3JhbQogICAgYXV0b251bWJlcgogICAgYWN0b3IgQWRtaW4KICAgIHBhcnRpY2lwYW50IFNBUwogICAgcGFydGljaXBhbnQgU1IgYXMgU2NoZW1hIFJlZ2lzdHJ5CiAgICBwYXJ0aWNpcGFudCBJRFggYXMgSW5kZXhlcgoKICAgIE5vdGUgb3ZlciBBZG1pbixTUjogUGhhc2UgMSDigJQgRGVwbG95IGFuZCBpbml0IFNjaGVtYSBSZWdpc3RyeQogICAgQWRtaW4tPj5TUjogaW5pdChhZG1pbiwgZmVlX2NvbmZpZz8pCiAgICBTUi0tPj5BZG1pbjogT0sKCiAgICBOb3RlIG92ZXIgQWRtaW4sU0FTOiBQaGFzZSAyIOKAlCBJbml0IFNBUyBhZ2FpbnN0IHRoZSByZWdpc3RyeQogICAgQWRtaW4tPj5TQVM6IGluaXQoYWRtaW4sIHJlZ2lzdHJ5PVNSKQogICAgU0FTLT4+U1I6IHRyeV9pbnZva2Ugc2FzcmVnKCkgW2NvbXBhdGliaWxpdHkgcHJvYmVdCiAgICBhbHQgcmVnaXN0cnkgcmVzcG9uZHMgdHJ1ZQogICAgICAgIFNSLS0+PlNBUzogdHJ1ZQogICAgICAgIFNBUy0+PlNBUzogc3RvcmUgUkVHSVNUUlkgPSBTUgogICAgICAgIFNBUy0tPj5BZG1pbjogT0sKICAgIGVsc2UgcHJvYmUgZmFpbHMKICAgICAgICBTQVMtLT4+QWRtaW46IEluY29tcGF0aWJsZURlcGVuZGVuY3kg4pyXCiAgICBlbmQKCiAgICBOb3RlIG92ZXIgQWRtaW4sSURYOiBQaGFzZSAzIOKAlCBJbml0IEluZGV4ZXIsIHRoZW4gYmluZCB0byBTQVMKICAgIEFkbWluLT4+SURYOiBpbml0KGFkbWluLCBzYXM9U0FTKQogICAgSURYLT4+U0FTOiB0cnlfaW52b2tlIHNhc3YxKCkgW2NvbXBhdGliaWxpdHkgcHJvYmVdCiAgICBhbHQgU0FTIHJlc3BvbmRzIHRydWUKICAgICAgICBTQVMtLT4+SURYOiB0cnVlCiAgICAgICAgSURYLT4+SURYOiBzdG9yZSBTQVNfQ09OVFJBQ1QgPSBTQVMKICAgICAgICBJRFgtLT4+QWRtaW46IE9LCiAgICBlbHNlIHByb2JlIGZhaWxzCiAgICAgICAgSURYLS0+PkFkbWluOiBJbmNvbXBhdGlibGVEZXBlbmRlbmN5IOKclwogICAgZW5kCgogICAgTm90ZSBvdmVyIEFkbWluLFNBUzogUGhhc2UgNCDigJQgQmluZCBJbmRleGVyIHRvIFNBUwogICAgQWRtaW4tPj5TQVM6IHNldF9pbmRleGVyKGluZGV4ZXI9SURYKQogICAgU0FTLT4+U0FTOiBzdG9yZSBJTkRFWEVSID0gSURYCiAgICBTQVMtLT4+QWRtaW46IEluZGV4ZXJVcGRhdGVkIGV2ZW50CmBgYAoKLS0tCgojIyBBdHRlc3RhdGlvbiBJc3N1YW5jZSBGbG93CgpUaGlzIGlzIHRoZSBtb3N0IGNvbXBsZXggY3Jvc3MtY29udHJhY3QgZmxvdy4gRXZlcnkgYGF0dGVzdGAsIGBhdHRlc3RfYnlfZGVsZWdhdGlvbmAsIGBtdWx0aV9hdHRlc3RgLCBhbmQgYGF0dGVzdF93aXRoX3ZhbHVlYCBjYWxsIGNvbnZlcmdlcyBvbiBgYXR0ZXN0X2ludGVybmFsYC4KCiMjIyBEaXJlY3QgSXNzdWFuY2UgKGBhdHRlc3RgKQoKYGBgbWVybWFpZApzZXF1ZW5jZURpYWdyYW0KICAgIGF1dG9udW1iZXIKICAgIGFjdG9yIEF0dGVzdGVyCiAgICBwYXJ0aWNpcGFudCBTQVMKICAgIHBhcnRpY2lwYW50IFNSIGFzIFNjaGVtYSBSZWdpc3RyeQogICAgcGFydGljaXBhbnQgUmVzb2x2ZXIKICAgIHBhcnRpY2lwYW50IElEWCBhcyBJbmRleGVyCgogICAgQXR0ZXN0ZXItPj5TQVM6IGF0dGVzdChhdHRlc3RhdGlvbikKICAgIFNBUy0+PlNBUzogcmVxdWlyZV9hdXRoKGF0dGVzdGVyKQogICAgU0FTLT4+U0FTOiBjaGVjayBwYXVzZWQgZmxhZwoKICAgIE5vdGUgb3ZlciBTQVM6IGF0dGVzdF9pbnRlcm5hbCBiZWdpbnMKICAgIFNBUy0+PlNBUzogdmFsaWRhdGUgcGF5bG9hZCBzaXplIOKJpCBNQVhfQVRURVNUQVRJT05fREFUQV9CWVRFUwogICAgU0FTLT4+U0FTOiBjaGVjayBVSUQgbm90IGFscmVhZHkgaW4gcGVyc2lzdGVudCBzdG9yYWdlCiAgICBTQVMtPj5TQVM6IHZlcmlmeSBVSUQgPT0gY29udGVudC1hZGRyZXNzZWQgaGFzaChzY2hlbWFfdWlkLCByZWNpcGllbnQsIGF0dGVzdGVyLCBkYXRhKQogICAgU0FTLT4+U0FTOiB2YWxpZGF0ZSBleHBpcmF0aW9uX3RpbWUgbm90IGluIHRoZSBwYXN0CiAgICBTQVMtPj5TQVM6IHZhbGlkYXRlX2F0dGVzdGF0aW9uX3BhcnRpZXMgKG5vIHplcm8vc2VsZiByZWNpcGllbnQpCiAgICBTQVMtPj5TQVM6IHZhbGlkYXRlIHJlZl91aWQgaW50ZWdyaXR5CgogICAgU0FTLT4+U1I6IGdldF9zY2hlbWEoc2NoZW1hX3VpZCkKICAgIGFsdCBzY2hlbWEgZXhpc3RzIGFuZCBub3QgZGVwcmVjYXRlZAogICAgICAgIFNSLS0+PlNBUzogU2NoZW1hUmVjb3JkIHsgcmVzb2x2ZXIsIHJldm9jYWJsZSwgLi4uIH0KICAgIGVsc2UgdW5rbm93biBvciBkZXByZWNhdGVkCiAgICAgICAgU1ItLT4+U0FTOiBOb25lCiAgICAgICAgU0FTLS0+PkF0dGVzdGVyOiBJbnZhbGlkU2NoZW1hIOKclwogICAgZW5kCgogICAgU0FTLT4+U1I6IGlzX2F1dGhvcml6ZWQoc2NoZW1hX3VpZCwgYXR0ZXN0ZXIpCiAgICBhbHQgYXR0ZXN0ZXIgaXMgb3duZXIgb3IgZGVsZWdhdGUKICAgICAgICBTUi0tPj5TQVM6IHRydWUKICAgIGVsc2UgdW5hdXRob3JpemVkCiAgICAgICAgU1ItLT4+U0FTOiBmYWxzZQogICAgICAgIFNBUy0tPj5BdHRlc3RlcjogVW5hdXRob3JpemVkIOKclwogICAgZW5kCgogICAgU0FTLT4+U0FTOiBjaGVja19yZXZvY2FibGUoc2NoZW1hLnJldm9jYWJsZSwgYXR0ZXN0YXRpb24ucmV2b2NhYmxlKQoKICAgIFNBUy0+PlJlc29sdmVyOiB0cnlfaW52b2tlIG9uX2F0dGVzdChhdHRlc3RhdGlvbikKICAgIGFsdCByZXNvbHZlciBhY2NlcHRzCiAgICAgICAgUmVzb2x2ZXItLT4+U0FTOiBPaygoKSkKICAgIGVsc2UgcmVzb2x2ZXIgcmVqZWN0cyAvIHRyYXBzIC8gbWlzc2luZyBtZXRob2QKICAgICAgICBSZXNvbHZlci0tPj5TQVM6IEVycgogICAgICAgIFNBUy0tPj5BdHRlc3RlcjogUmVzb2x2ZXJSZWplY3RlZCDinJcKICAgIGVuZAoKICAgIFNBUy0+PlNBUzogbm9ybWFsaXplIHRpbWUgPSBsZWRnZXIudGltZXN0YW1wKCkKICAgIFNBUy0+PlNBUzogc3RvcmUgYXR0ZXN0YXRpb24gaW4gcGVyc2lzdGVudCBzdG9yYWdlICgrIFRUTCkKICAgIFNBUy0+PlNBUzogd3JpdGUgdGltZXN0YW1wIGFuY2hvciAoaXNzdWFuY2UgbGVkZ2VyKQogICAgU0FTLT4+U0FTOiBlbWl0IEFUVEVTVEVEIChBdHRlc3RhdGlvbklzc3VlZCkgZXZlbnQKCiAgICBvcHQgSW5kZXhlciBpcyBib3VuZAogICAgICAgIFNBUy0+PklEWDogdHJ5X2ludm9rZSBpbmRleF9hdHRlc3RhdGlvbih1aWQsIHJlY2lwaWVudCwgc2NoZW1hX3VpZCwgYXR0ZXN0ZXIpCiAgICAgICAgYWx0IGluZGV4ZXIgYWNjZXB0cwogICAgICAgICAgICBJRFgtLT4+U0FTOiBPaygoKSkKICAgICAgICBlbHNlIGluZGV4ZXIgdHJhcHMgLyB1bmF2YWlsYWJsZQogICAgICAgICAgICBJRFgtLT4+U0FTOiBFcnIKICAgICAgICAgICAgYWx0IGZhaWwtb3BlbiBtb2RlIChkZWZhdWx0KQogICAgICAgICAgICAgICAgU0FTLT4+U0FTOiBlbWl0IElEWEZBSUwgKEluZGV4RmFpbGVkKSBldmVudAogICAgICAgICAgICBlbHNlIGZhaWwtY2xvc2VkIChJTkRFWEVSX1NUUklDVCA9IHRydWUpCiAgICAgICAgICAgICAgICBTQVMtLT4+QXR0ZXN0ZXI6IEluZGV4ZXJVbmF2YWlsYWJsZSDinJcKICAgICAgICAgICAgZW5kCiAgICAgICAgZW5kCiAgICBlbmQKCiAgICBTQVMtLT4+QXR0ZXN0ZXI6IHVpZCAoVUlEKQpgYGAKCiMjIyBEZWxlZ2F0ZWQgSXNzdWFuY2UgKGBhdHRlc3RfYnlfZGVsZWdhdGlvbmApCgpEZWxlZ2F0ZWQgaXNzdWFuY2Ugc3Vic3RpdHV0ZXMgdGhlIGF0dGVzdGVyJ3MgYHJlcXVpcmVfYXV0aCgpYCB3aXRoIGFuICoq b2ZmLWNoYWluIGVkMjU1MTkgc2lnbmF0dXJlKiogdmVyaWZpY2F0aW9uLiBUaGUgb24tY2hhaW4gc3RvcmFnZSBwYXRoIGlzIGlkZW50aWNhbCB0byBkaXJlY3QgaXNzdWFuY2UuCgpgYGBtZXJtYWlkCnNlcXVlbmNlRGlhZ3JhbQogICAgYXV0b251bWJlcgogICAgYWN0b3IgUmVsYXllcgogICAgcGFydGljaXBhbnQgU0FTCiAgICBwYXJ0aWNpcGFudCBTUiBhcyBTY2hlbWEgUmVnaXN0cnkKICAgIHBhcnRpY2lwYW50IFJlc29sdmVyCiAgICBwYXJ0aWNpcGFudCBJRFggYXMgSW5kZXhlcgoKICAgIE5vdGUgb3ZlciBSZWxheWVyOiBSZWxheWVyIGhvbGRzIGEgcHJlLXNpZ25lZCBwYXlsb2FkIGZyb20gdGhlIEF0dGVzdGVyIChvZmYtY2hhaW4pCgogICAgUmVsYXllci0+PlNBUzogYXR0ZXN0X2J5X2RlbGVnYXRpb24oYXR0ZXN0YXRpb24sIG5vbmNlLCBzaWduYXR1cmUsIHB1YmxpY19rZXkpCiAgICBTQVMtPj5TQVM6IGNoZWNrIHBhdXNlZCBmbGFnCiAgICBTQVMtPj5TQVM6IHJlcXVpcmUgcmV2b2NhdGlvbl90aW1lID09IDAKICAgIFNBUy0+PlNBUzogcmVxdWlyZV9hdHRlc3Rlcl9rZXkoYXR0ZXN0ZXIsIHB1YmxpY19rZXkpXG5ba2V5IG11c3QgbWF0Y2ggYWNjb3VudCBvciByZWdpc3RlcmVkIGtleV0KICAgIFNBUy0+PlNBUzogY29uc3RydWN0IEF0dGVzdGF0aW9uRG9tYWluKG5ldHdvcmtfaWQsIGNvbnRyYWN0LCBub25jZSkKICAgIFNBUy0+PlNBUzogaGFzaF9vZmZjaGFpbl9hdHRlc3RhdGlvbihhdHRlc3RhdGlvbiwgZG9tYWluKQogICAgU0FTLT4+U0FTOiB2ZXJpZnlfb2ZmY2hhaW5fc2lnbmF0dXJlKGhhc2gsIHB1YmxpY19rZXksIHNpZ25hdHVyZSkKICAgIFNBUy0+PlNBUzogY29uc3VtZV9kZWxlZ2F0aW9uX25vbmNlKGF0dGVzdGVyLCBub25jZSlcbltub25jZSBtdXN0IGJlIHN0cmljdGx5ID4gd2F0ZXJtYXJrXQoKICAgIE5vdGUgb3ZlciBTQVM6IENvbnRpbnVlcyBhcyBhdHRlc3RfaW50ZXJuYWwgKHNlZSBEaXJlY3QgSXNzdWFuY2UgZmxvdykKICAgIFNBUy0+PlNSOiBnZXRfc2NoZW1hKHNjaGVtYV91aWQpCiAgICBTQVMtPj5TUjogaXNfYXV0aG9yaXplZChzY2hlbWFfdWlkLCBhdHRlc3RlcikKICAgIFNBUy0+PlJlc29sdmVyOiBvbl9hdHRlc3QoYXR0ZXN0YXRpb24pCiAgICBTQVMtPj5TQVM6IHN0b3JlIGF0dGVzdGF0aW9uICsgZW1pdCBBVFRFU1RFRCBldmVudAogICAgU0FTLT4+SURYOiBpbmRleF9hdHRlc3RhdGlvbih1aWQsIHJlY2lwaWVudCwgc2NoZW1hX3VpZCwgYXR0ZXN0ZXIpCgogICAgU0FTLS0+PlJlbGF5ZXI6IHVpZCAoVUlEKQpgYGAKCiMjIyBCYXRjaCBJc3N1YW5jZSAoYG11bHRpX2F0dGVzdGApCgpgYGBtZXJtYWlkCnNlcXVlbmNlRGlhZ3JhbQogICAgYXV0b251bWJlcgogICAgYWN0b3IgQ2FsbGVyCiAgICBwYXJ0aWNpcGFudCBTQVMKICAgIHBhcnRpY2lwYW50IFNSIGFzIFNjaGVtYSBSZWdpc3RyeQogICAgcGFydGljaXBhbnQgUmVzb2x2ZXIKICAgIHBhcnRpY2lwYW50IElEWCBhcyBJbmRleGVyCgogICAgQ2FsbGVyLT4+U0FTOiBtdWx0aV9hdHRlc3QoYXR0ZXN0YXRpb25zW10pCiAgICBTQVMtPj5TQVM6IGNoZWNrIHBhdXNlZCBmbGFnCiAgICBTQVMtPj5TQVM6IGxlbiDiiaQgTUFYX01VTFRJX0FUVEVTVCAoMTAwKSBlbHNlIEJhdGNoVG9vTGFyZ2UKICAgIFNBUy0+PlNBUzogZW50ZXJfcmVlbnRyYW5jeV9ndWFyZCgpCgogICAgbG9vcCBmb3IgZWFjaCBhdHRlc3RhdGlvbiBpCiAgICAgICAgU0FTLT4+U0FTOiByZXF1aXJlX2F1dGgoYXR0ZXN0YXRpb25baV0uYXR0ZXN0ZXIpCiAgICAgICAgTm90ZSBvdmVyIFNBUzogYXR0ZXN0X2ludGVybmFsIChhYmJyZXZpYXRlZCkKICAgICAgICBTQVMtPj5TUjogZ2V0X3NjaGVtYSArIGlzX2F1dGhvcml6ZWQKICAgICAgICBTQVMtPj5SZXNvbHZlcjogb25fYXR0ZXN0CiAgICAgICAgU0FTLT4+U0FTOiBzdG9yZSArIGVtaXQgQVRURVNURUQgZXZlbnQKICAgICAgICBTQVMtPj5JRFg6IGluZGV4X2F0dGVzdGF0aW9uIChmYWlsLW9wZW4vY2xvc2VkKQogICAgZW5kCgogICAgU0FTLT4+U0FTOiBlbWl0IEJBVENIX0FUVEVTVEVEIChCYXRjaEF0dGVzdGVkKSBldmVudCBbbGFzdF0KICAgIFNBUy0+PlNBUzogZXhpdF9yZWVudHJhbmN5X2d1YXJkKCkKICAgIFNBUy0tPj5DYWxsZXI6IHVpZHNbXSAoVmVjPFVJRD4pCmBgYAoKLS0tCgojIyBBdHRlc3RhdGlvbiBSZXZvY2F0aW9uIEZsb3cKCiMjIyBEaXJlY3QgUmV2b2NhdGlvbiAoYHJldm9rZWApCgpgYGBtZXJtYWlkCnNlcXVlbmNlRGlhZ3JhbQogICAgYXV0b251bWJlcgogICAgYWN0b3IgQXR0ZXN0ZXIKICAgIHBhcnRpY2lwYW50IFNBUwogICAgcGFydGljaXBhbnQgU1IgYXMgU2NoZW1hIFJlZ2lzdHJ5CiAgICBwYXJ0aWNpcGFudCBSZXNvbHZlcgogICAgcGFydGljaXBhbnQgSURYIGFzIEluZGV4ZXIKCiAgICBBdHRlc3Rlci0+PlNBUzogcmV2b2tlKHVpZCkKICAgIFNBUy0+PlNBUzogY2hlY2sgcGF1c2VkIGZsYWcKICAgIFNBUy0+PlNBUzogcmVxdWlyZV9hdXRoKGF0dGVzdGVyIGZyb20gc3RvcmVkIGF0dGVzdGF0aW9uKQoKICAgIE5vdGUgb3ZlciBTQVM6IHJldm9rZV9pbnRlcm5hbCBiZWdpbnMKICAgIFNBUy0+PlNBUzogbG9hZCBhdHRlc3RhdGlvbiBmcm9tIHBlcnNpc3RlbnQgc3RvcmFnZQogICAgU0FTLT4+U0FTOiBhc3NlcnQgcmV2b2NhYmxlID09IHRydWUKICAgIFNBUy0+PlNBUzogYXNzZXJ0IHJldm9jYXRpb25fdGltZSA9PSAwCiAgICBTQVMtPj5TQVM6IHNldCByZXZvY2F0aW9uX3RpbWUgPSBsZWRnZXIudGltZXN0YW1wKCkKICAgIFNBUy0+PlNBUzogcGVyc2lzdCB1cGRhdGVkIGF0dGVzdGF0aW9uICgrIFRUTCkKICAgIFNBUy0+PlNBUzogd3JpdGUgcmV2b2NhdGlvbiB0aW1lc3RhbXAgYW5jaG9yCiAgICBTQVMtPj5TQVM6IGVtaXQgUkVWT0tFRCAoQXR0ZXN0YXRpb25SZXZva2VkKSBldmVudAoKICAgIFNBUy0+PlNSOiBnZXRfc2NoZW1hKGF0dGVzdGF0aW9uLnNjaGVtYV91aWQpCiAgICBhbHQgc2NoZW1hIGV4aXN0cwogICAgICAgIFNSLS0+PlNBUzogU2NoZW1hUmVjb3JkIHsgcmVzb2x2ZXIsIC4uLiB9CiAgICBlbHNlIHNjaGVtYSBtaXNzaW5nCiAgICAgICAgU1ItLT4+U0FTOiBOb25lCiAgICAgICAgU0FTLS0+PkF0dGVzdGVyOiBJbnZhbGlkU2NoZW1hIOKclyBbcm9sbHMgYmFja10KICAgIGVuZAoKICAgIFNBUy0+PlJlc29sdmVyOiB0cnlfaW52b2tlIG9uX3Jldm9rZShhdHRlc3RhdGlvbikKICAgIGFsdCByZXNvbHZlciBhY2NlcHRzCiAgICAgICAgUmVzb2x2ZXItLT4+U0FTOiBPaygoKSkKICAgIGVsc2UgcmVzb2x2ZXIgcmVqZWN0cyAvIHRyYXBzIC8gbWlzc2luZwogICAgICAgIFJlc29sdmVyLS0+PlNBUzogRXJyCiAgICAgICAgU0FTLS0+PkF0dGVzdGVyOiBSZXNvbHZlclJlamVjdGVkIOKclyBbcm9sbHMgYmFjayBzdG9yYWdlICsgZXZlbnRdCiAgICBlbmQKCiAgICBvcHQgSW5kZXhlciBpcyBib3VuZAogICAgICAgIFNBUy0+PklEWDogdHJ5X2ludm9rZSBoYW5kbGVfcmV2b2tlKHVpZCkgW2Jlc3QtZWZmb3J0OyBzaWxlbnRseSBpZ25vcmVkIGlmIGFic2VudF0KICAgICAgICBOb3RlIG92ZXIgSURYOiBXaGVuIGltcGxlbWVudGVkLCB1cGRhdGVzIEluZGV4U3RhdHVzIOKGkiBSZXZva2VkXG4obm90IHByZXNlbnQgaW4gY3VycmVudCBpbmRleGVyOyBmYWlsdXJlIGlzIHNpbGVudGx5IGlnbm9yZWQpCiAgICBlbmQKCiAgICBTQVMtLT4+QXR0ZXN0ZXI6ICgpIFtzdWNjZXNzXQpgYGAKCj4gKipOb3RlIG9uIHJlc29sdmVyIG9yZGVyaW5nIGR1cmluZyByZXZvY2F0aW9uOioqIFRoZSByZXZvY2F0aW9uIHdyaXRlIGFuZCBpdHMgYFJFVk9LRURgIGV2ZW50IGFyZSBjb21taXR0ZWQgdG8gdGhlIGNhbGwgZnJhbWUgYmVmb3JlIGBvbl9yZXZva2VgIGlzIGludm9rZWQuIElmIHRoZSByZXNvbHZlciByZWplY3RzLCB0aGUgZW50aXJlIGludm9jYXRpb24gcm9sbHMgYmFjayDigJQgaW5jbHVkaW5nIHRoZSB3cml0ZSBhbmQgdGhlIGV2ZW50IOKAlCBzbyBvYnNlcnZlcnMgbmV2ZXIgc2VlIGEgaGFsZi1jb21taXR0ZWQgcmV2b2NhdGlvbi4KCj4gKipOb3RlIG9uIGBoYW5kbGVfcmV2b2tlYDoqKiBUaGUgU0FTIGNvbnRyYWN0IGNhbGxzIGBoYW5kbGVfcmV2b2tlYCBvbiB0aGUgSW5kZXhlciBhcyBhIGJlc3QtZWZmb3J0IGB0cnlfaW52b2tlX2NvbnRyYWN0YC4gSWYgdGhlIEluZGV4ZXIgZG9lcyBub3QgaW1wbGVtZW50IHRoZSBtZXRob2QgKHRoZSBjdXJyZW50IHZlcnNpb24gZG9lcyBub3QpLCBvciBpZiB0aGUgY2FsbCBmYWlscyBmb3IgYW55IHJlYXNvbiwgU0FTIHNpbGVudGx5IGlnbm9yZXMgdGhlIGVycm9yLiBUaGlzIGFsbG93cyB0aGUgaW5kZXhlciB0byBiZSB1cGdyYWRlZCBpbmRlcGVuZGVudGx5IHRvIGFkZCBzdGF0dXMtdHJhY2tpbmcgY2FsbGJhY2tzIHdpdGhvdXQgcmVxdWlyaW5nIGEgc2ltdWx0YW5lb3VzIFNBUyB1cGdyYWRlLgoKIyMjIERlbGVnYXRlZCBSZXZvY2F0aW9uIChgcmV2b2tlX2J5X2RlbGVnYXRpb25gKQoKYGBgbWVybWFpZApzZXF1ZW5jZURpYWdyYW0KICAgIGF1dG9udW1iZXIKICAgIGFjdG9yIFJlbGF5ZXIKICAgIHBhcnRpY2lwYW50IFNBUwogICAgcGFydGljaXBhbnQgU1IgYXMgU2NoZW1hIFJlZ2lzdHJ5CiAgICBwYXJ0aWNpcGFudCBSZXNvbHZlcgogICAgcGFydGljaXBhbnQgSURYIGFzIEluZGV4ZXIKCiAgICBSZWxheWVyLT4+U0FTOiByZXZva2VfYnlfZGVsZWdhdGlvbih1aWQsIG5vbmNlLCBzaWduYXR1cmUsIHB1YmxpY19rZXkpCiAgICBTQVMtPj5TQVM6IGNoZWNrIHBhdXNlZCBmbGFnCiAgICBTQVMtPj5TQVM6IGxvYWQgYXR0ZXN0YXRpb24gYnkgdWlkCiAgICBTQVMtPj5TQVM6IHJlcXVpcmVfYXR0ZXN0ZXJfa2V5KGF0dGVzdGF0aW9uLmF0dGVzdGVyLCBwdWJsaWNfa2V5KQogICAgU0FTLT4+U0FTOiBjb25zdHJ1Y3QgQXR0ZXN0YXRpb25Eb21haW4obmV0d29ya19pZCwgY29udHJhY3QsIG5vbmNlKQogICAgU0FTLT4+U0FTOiBoYXNoX2RlbGVnYXRlZF9yZXZvY2F0aW9uKHVpZCwgYXR0ZXN0ZXIsIGRvbWFpbikKICAgIFNBUy0+PlNBUzogdmVyaWZ5X29mZmNoYWluX3NpZ25hdHVyZShoYXNoLCBwdWJsaWNfa2V5LCBzaWduYXR1cmUpCiAgICBTQVMtPj5TQVM6IGNvbnN1bWVfZGVsZWdhdGlvbl9ub25jZShhdHRlc3Rlciwgbm9uY2UpCgogICAgTm90ZSBvdmVyIFNBUzogQ29udGludWVzIGFzIHJldm9rZV9pbnRlcm5hbCAoc2VlIERpcmVjdCBSZXZvY2F0aW9uIGZsb3cpCiAgICBTQVMtPj5TQVM6IHNldCByZXZvY2F0aW9uX3RpbWUgKyBwZXJzaXN0CiAgICBTQVMtPj5TQVM6IGVtaXQgUkVWT0tFRCBldmVudAogICAgU0FTLT4+U1I6IGdldF9zY2hlbWEg4oaSIG9uX3Jldm9rZSB2aWEgUmVzb2x2ZXIKICAgIFNBUy0+PklEWDogdHJ5X2ludm9rZSBoYW5kbGVfcmV2b2tlKHVpZCkgW2Jlc3QtZWZmb3J0OyBzaWxlbnRseSBpZ25vcmVkIGlmIGFic2VudF0KCiAgICBTQVMtLT4+UmVsYXllcjogKCkgW3N1Y2Nlc3NdCmBgYAoKIyMjIEJhdGNoIFJldm9jYXRpb24gKGBtdWx0aV9yZXZva2VgKQoKYGBgbWVybWFpZApzZXF1ZW5jZURpYWdyYW0KICAgIGF1dG9udW1iZXIKICAgIGFjdG9yIENhbGxlcgogICAgcGFydGljaXBhbnQgU0FTCiAgICBwYXJ0aWNpcGFudCBTUiBhcyBTY2hlbWEgUmVnaXN0cnkKICAgIHBhcnRpY2lwYW50IFJlc29sdmVyCiAgICBwYXJ0aWNpcGFudCBJRFggYXMgSW5kZXhlcgoKICAgIENhbGxlci0+PlNBUzogbXVsdGlfcmV2b2tlKHJldm9jYXRpb25zW10pCiAgICBTQVMtPj5TQVM6IGNoZWNrIHBhdXNlZCBmbGFnCiAgICBTQVMtPj5TQVM6IGxlbiDiiaQgTUFYX01VTFRJX1JFVk9LRSAoMTAwKSBlbHNlIEJhdGNoVG9vTGFyZ2UKCiAgICBOb3RlIG92ZXIgU0FTOiBQYXNzIDEg4oCUIFZhbGlkYXRlIGFsbCBpdGVtcyBiZWZvcmUgYW55IHdyaXRlCiAgICBsb29wIGZvciBlYWNoIHVpZCBpCiAgICAgICAgU0FTLT4+U0FTOiBsb2FkIGF0dGVzdGF0aW9uW2ldLCBhc3NlcnQgcmV2b2NhYmxlICsgub3QgcmV2b2tlZAogICAgICAgIFNBUy0+PlNBUzogZ3JvdXAgYnkgYXR0ZXN0ZXIgZm9yIGF1dGgKICAgIGVuZAogICAgU0FTLT4+U0FTOiByZXF1aXJlX2F1dGggZm9yIGVhY2ggZGlzdGluY3QgYXR0ZXN0ZXIKCiAgICBOb3RlIG92ZXIgU0FTOiBQYXNzIDIg4oCUIENvbW1pdCByZXZvY2F0aW9ucwogICAgbG9vcCBmb3IgZWFjaCB1aWQgaQogICAgICAgIE5vdGUgb3ZlciBTQVM6IHJldm9rZV9pbnRlcm5hbCAoYWJicmV2aWF0ZWQpCiAgICAgICAgU0FTLT4+U0FTOiBzZXQgcmV2b2NhdGlvbl90aW1lICsgcGVyc2lzdCArIGVtaXQgUkVWT0tFRCBldmVudAogICAgICAgIFNBUy0+PlNSOiBnZXRfc2NoZW1hICsgb25fcmV2b2tlIHZpYSBSZXNvbHZlcgogICAgICAgIFNBUy0+PklEWDogdHJ5X2ludm9rZSBoYW5kbGVfcmV2b2tlKHVpZCkgW2Jlc3QtZWZmb3J0OyBzaWxlbnRseSBpZ25vcmVkIGlmIGFic2VudF0KICAgIGVuZAoKICAgIFNBUy0tPj5DYWxsZXI6ICgpIFtzdWNjZXNzXQpgYGAKCi0tLQoKIyMgVmVyaWZpY2F0aW9uIEZsb3cKCmBgYG1lcm1haWQKc2VxdWVuY2VEaWFncmFtCiAgICBhdXRvbnVtYmVyCiAgICBhY3RvciBDYWxsZXIKICAgIHBhcnRpY2lwYW50IFNBUwogICAgcGFydGljaXBhbnQgU1IgYXMgU2NoZW1hIFJlZ2lzdHJ5CgogICAgQ2FsbGVyLT4+U0FTOiB2ZXJpZnkodWlkKQogICAgU0FTLT4+U0FTOiBsb2FkIGF0dGVzdGF0aW9uIGZyb20gcGVyc2lzdGVudCBzdG9yYWdlCiAgICBhbHQgYXR0ZXN0YXRpb24gZm91bmQKICAgICAgICBTQVMtPj5TQVM6IGNoZWNrIHJldm9jYXRpb25fdGltZSA9PSAwCiAgICAgICAgU0FTLT4+U0FTOiBjaGVjayBleHBpcmF0aW9uX3RpbWUgPiBsZWRnZXIudGltZXN0YW1wKCkgb3IgPT0gMAogICAgICAgIFNBUy0+PlNSOiBnZXRfc2NoZW1hKGF0dGVzdGF0aW9uLnNjaGVtYV91aWQpCiAgICAgICAgYWx0IHNjaGVtYSBleGlzdHMgYW5kIG5vdCBkZXByZWNhdGVkCiAgICAgICAgICAgIFNSLS0+PlNBUzogU2NoZW1hUmVjb3JkCiAgICAgICAgICAgIFNBUy0tPj5DYWxsZXI6IHRydWUKICAgICAgICBlbHNlIHNjaGVtYSBtaXNzaW5nIG9yIGRlcHJlY2F0ZWQKICAgICAgICAgICAgU1ItLT4+U0FTOiBOb25lCiAgICAgICAgICAgIFNBUy0tPj5DYWxsZXI6IGZhbHNlCiAgICAgICAgZW5kCiAgICBlbHNlIGF0dGVzdGF0aW9uIG5vdCBmb3VuZAogICAgICAgIFNBUy0tPj5DYWxsZXI6IGZhbHNlCiAgICBlbmQKYGBgCgotLS0KCiMjIFN0b3JhZ2UgTGF5b3V0Cgp8IENvbnRyYWN0IHwgS2V5IHwgVmFsdWUgfCBEZXNjcmlwdGlvbiB8CnwtLS0tLS0tLS0tfC0tLS0tfC0tLS0tLS18LS0tLS0tLS0tLS0tfAp8IFNBUyB8IGBBdHRlc3RhdGlvbih1aWQpYCB8IGBBdHRlc3RhdGlvbmAgfCBUaGUgYXR0ZXN0YXRpb24gcmVjb3JkIHwKfCBTQVMgfCBgVGltZXN0YW1wQW5jaG9yKHVpZClgIHwgYHVpNjRgIHwgTGVkZ2VyIHRpbWVzdGFtcCBvZiBpc3N1YW5jZSBvciByZXZvY2F0aW9uIHwKfCBTQVMgfCBgRGVsZWdhdGlvbk5vbmNlKGF0dGVzdGVyKWAgfCBgdWludDY0YCB8IE5vbmNlIHdhdGVybWFyayBmb3IgZGVsZWdhdGVkIGF0dGVzdGF0aW9ucyB8CnwgU0FTIHwgYFJFR0lTVFJZYCB8IGBBZGRyZXNzYCB8IFNjaGVtYSBSZWdpc3RyeSBjb250cmFjdCBhZGRyZXNzIHwKfCBTQVMgfCBgSU5ERVhFUmAgfCBgQWRkcmVzc2AgfCBJbmRleGVyIGNvbnRyYWN0IGFkZHJlc3MgfAp8IFNBUyB8IGBQYXVzZWRgIHwgYGJvb2xgIHwgUGF1c2UgZmxhZyB8CnwgU0FTIHwgYEFkbWluYCB8IGBBZGRyZXNzYCB8IEFkbWluIGFkZHJlc3MgfAp8IFNBUyB8IGBJTkRFWEVSX1NUUklDVGAgfCBgYm9vbGAgfCBGYWlsLWNsb3NlZCBpbmRleGVyIG1vZGUgfAp8IFNSIHwgYFNjaGVtYSh1aWQpYCB8IGBTY2hlbWFSZWNvcmRgIHwgVGhlIHNjaGVtYSByZWNvcmQgfAp8IFNSIHwgYEF1dGhvcml6ZWQoc2NoZW1hX3VpZCwgYWRkcmVzcylgIHwgYGJvb2xgIHwgQXV0aG9yaXphdGlvbiBmbGFnIHwKfCBJRFggfCBgUmVjaXBpZW50SW5kZXgocmVjaXBpZW50KWAgfCBgVmVjPFVJRD5gIHwgQXR0ZXN0YXRpb25zIGZvciBhIHJlY2lwaWVudCB8CnwgSURDIHwgYFNjaGVtYUluZGV4KHNjaGVtYV91aWQpYCB8IGBWZWM8VUlEPmAgfCBBdHRlc3RhdGlvbnMgZm9yIGEgc2NoZW1hIHwKfCBJRFggfCBgQXR0ZXN0ZXJJbmRleChhdHRlc3RlcilgIHwgYFZlYzxVSUQ+YCB8IEF0dGVzdGF0aW9ucyBieSBhbiBhdHRlc3RlciB8CgotLS0KCiMjIEV2ZW50cwoKfCBFdmVudCB8IEVtaXR0ZWQgYnkgfCBEZXNjcmlwdGlvbiB8CnwtLS0tLS0tfC0tLS0tLS0tLS0tfC0tLS0tLS0tLS0tLS18CnwgYEFUVEVTVEVEYCB8IFNBUyB8IEF0dGVzdGF0aW9uIGlzc3VlZCB8CnwgYFJFVk9LRURgIHwgU0FTIHwgQXR0ZXN0YXRpb24gcmV2b2tlZCB8CnwgYEJBVENIX0FUVEVTVEVEYCB8IFNBUyB8IEJhdGNoIGF0dGVzdGF0aW9uIGlzc3VlZCB8CnwgYElEWEZBSUxgIHwgU0FTIHwgSW5kZXhlciBmYWlsdXJlIChmYWlsLW9wZW4gbW9kZSkgfAp8IGBJbmRleGVyVXBkYXRlZGAgfCBTQVMgfCBJbmRleGVyIGFkZHJlc3MgdXBkYXRlZCB8CnwgYFNjaGVtYVJlZ2lzdGVyZWRgIHwgU1IgfCBTY2hlbWEgcmVnaXN0ZXJlZCB8CnwgYFNjaGVtYURlcHJlY2F0ZWRgIHwgU1IgfCBTY2hlbWEgZGVwcmVjYXRlZCB8CgotLS0KCiMjIFNlY3VyaXR5IENvbnNpZGVyYXRpb25zCgotICoqUmVlbnRyYW5jeSBndWFyZCoqOiBgYXR0ZXN0X2ludGVybmFsYCBhbmQgYHJldm9rZV9pbnRlcm5hbGAgYXJlIHByb3RlY3RlZCBieSBhIHJlZW50cmFuY3kgZ3VhcmQgd2hlbiBpbnZva2VkIGZyb20gYmF0Y2ggb3BlcmF0aW9ucy4KLSBQYXlsb2FkIHNpemUgaXMgYm91bmRlZCBieSBgTUFYX0FUVEVTVEFUSU9OX0RBVEFfQllURVNgIHRvIHByZXZlbnQgZ2FzIGV4aGF1c3Rpb24uCi0gQmF0Y2ggc2l6ZSBpcyBib3VuZGVkIGJ5IGBNQVhfTVVMVElfQVRURVNUYCBhbmQgYE1BWF9NVUxUSV9SRVZPS0VgICgxMDApLgotIERlbGVnYXRlZCBvcGVyYXRpb25zIHVzZSBzdHJpY3RseSBpbmNyZWFzaW5nIG5vbmNlcyB0byBwcmV2ZW50IHJlcGxheSBhdHRhY2tzLgotIENyb3NzLWNvbnRyYWN0IGNhbGxzIHRvIHRoZSByZXNvbHZlciBhcmUgd3JhcHBlZCBpbiBgdHJ5X2ludm9rZWAgdG8gaGFuZGxlIG1pc3NpbmcgbWV0aG9kcyBncmFjZWZ1bGx5LgotIEluZGV4ZXIgY2FsbHMgYXJlIGJlc3QtZWZmb3J0IGFuZCBjYW4gYmUgY29uZmlndXJlZCB0byBmYWlsLW9wZW4gb3IgZmFpbC1jbG9zZWQuCgotLS0KCiMjIE1pZ3JhdGlvbiBmcm9tIERlcHJlY2F0ZWQgSG9zdCBGdW5jdGlvbnMKCkFzIHBhcnQgb2YgdGhlIGBjaG9yZWAgc2NvcGUsIHRoZSBjb250cmFjdHMgdXNlIHRoZSBsYXRlc3QgU29yb2JhbiBTREsgQVBJcy4gVGhlIGZvbGxvd2luZyBkZXByZWNhdGVkIGhvc3QgZnVuY3Rpb25zIGhhdmUgYmVlbiByZXBsYWNlZDoKCnwgRGVwcmVjYXRlZCB8IFJlcGxhY2VtZW50IHwKfC0tLS0tLS0tLS0tfC0tLS0tLS0tLS0tLS18CnwgYGVudigubGVkZ2VyKCkudGltZXN0YW1wKCkoKWAgfCBgZW52LmxlZGdlcigpLnRpbWVzdGFtcCgpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuc2V0KClgIHwgYGVudi5zdG9yYWdlKCkucGVyc2lzdGVudCgpLnNldCgpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuZ2V0KClgIHwgYGVudi5zdG9yYWdlKCkucGVyc2lzdGVudCgpLmdldCgpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuaGFzKClgIHwgYGVudi5zdG9yYWdlKCkucGVyc2lzdGVudCgpLmhhcygpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuZXh0ZW5kX3R0bCgpYCB8IGBlbnYuc3RvcmFnZSgpLnBlcnNpc3RlbnQoKS5leHRlbmRfdHRsKClgIHwKfCBgZW52KCkuc3RvcmFnZSgpLnBlcnNpc3RlbnQoKS5yZW1vdmUoKWAgfCBgZW52LnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkucmVtb3ZlKClgIHwKfCBgZW52KCkuc3RvcmFnZSgpLmluc3RhbmNlKCkuc2V0KClgIHwgYGVudi5zdG9yYWdlKCkuaW5zdGFuY2UoKS5zZXQoKWAgfAp8IGBlbnYoKS5zdG9yYWdlKCkuaW5zdGFuY2UoKS5nZXQoKWAgfCBgZW52LnN0b3JhZ2UoKS5pbnN0YW5jZSgpLmdldCgpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS5pbnN0YW5jZSgpLmhhcygpYCB8IGBlbnYuc3RvcmFnZSgpLmluc3RhbmNlKCkuaGFzKClgIHwKfCBgZW52KCkuc3RvcmFnZSgpLmluc3RhbmNlKCkuZXh0ZW5kX3R0bCgpYCB8IGBlbnYuc3RvcmFnZSgpLmluc3RhbmNlKCkuZXh0ZW5kX3R0bCgpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS5pbnN0YW5jZSgpLnJlbW92ZSgpYCB8IGBlbnYuc3RvcmFnZSgpLmluc3RhbmNlKCkucmVtb3ZlKClgIHwKfCBgZW52KCkuc3RvcmFnZSgpLnRlbXBvcmFyeSgpLnNldCgpYCB8IGBlbnYuc3RvcmFnZSgpLnRlbXBvcmFyeSgpLnNldCgpYCB8CnwgYGVudigpLnN0b3JhZ2UoKS50ZW1wb3JhcnkoKS5nZXQoKWAgfCBgZW52LnN0b3JhZ2UoKS50ZW1wb3JhcnkoKS5nZXQoKWAgfAp8IGBlbnYoKS5zdG9yYWdlKCkudGVtcG9yYXJ5KCkuaGFzKClgIHwgYGVudi5zdG9yYWdlKCkudGVtcG9yYXJ5KCkuaGFzKClgIHwKfCBgZW52KCkuc3RvcmFnZSgpLnRlbXBvcmFyeSgpLmV4dGVuZF90dGwoKWAgfCBgZW52LnN0b3JhZ2UoKS50ZW1wb3JhcnkoKS5leHRlbmRfdHRsKClgIHwKfCBgZW52KCkuc3RvcmFnZSgpLnRlbXBvcmFyeSgpLnJlbW92ZSgpYCB8IGBlbnYuc3RvcmFnZSgpLnRlbXBvcmFyeSgpLnJlbW92ZSgpYCB8CnwgYGVudigpLmV2ZW50cygpLnB1Ymxpc2goKWAgfCBgZW52LmV2ZW50cygpLnB1Ymxpc2goKWAgfAp8IGBlbnYoKS5hdXRoKCkucmVxdWlyZV9hdXRoKClgIHwgYGVudi5hdXRoKCkucmVxdWlyZV9hdXRoKClgIHwKfCBgZW52KCkuY3J5cHRvKCkuZWQyNTUxOV92ZXJpZnkoKWAgfCBgZW52LmNyeXB0bygpLmVkMjU1MTlfdmVyaWZ5KClgIHwKfCBgZW52KCkuY3J5cHRvKCkuc2hhMjU2KClgIHwgYGVudi5jcnlwdG8oKS5zaGEyNTYoKWAgfAp8IGBlbnYoKS5jcm9zc19jb250cmFjdCgpLnRyeV9pbnZva2UoKWAgfCBgZW52LmNyb3NzX2NvbnRyYWN0KCkudHJ5X2ludm9rZSgpYCB8CgpBbGwgY29udHJhY3RzIG5vdyB1c2UgdGhlIG1vZGVybiBgZW52LmBgIGFjY2Vzc29yIHN5bnRheCBpbnN0ZWFkIG9mIHRoZSBkZXByZWNhdGVkIGBlbnYoKWAgaG9zdCBmdW5jdGlvbiBjYWxscy4gVGhpcyBhbGlnbnMgd2l0aCB0aGUgbGF0ZXN0IFNvcm9iYW4gU0RLIGJlc3QgcHJhY3RpY2VzIGFuZCBlbnN1cmVzIGZvcndhcmQgY29tcGF0aWJpbGl0eSB3aXRoIGZ1dHVyZSBwcm90b2NvbCB1cGdyYWRlcy4K
+# Soroban SAS Architecture
+
+## Overview
+The Soroban Attestation Service (SAS) is composed of three primary components:
+1. **Schema Registry**: Stores reusable data layouts (schemas) identified by deterministic UIDs.
+2. **SAS Core Contract**: Issues, revokes and verifies attestations based on registered schemas.
+3. **Indexer Contract**: Provides efficient off-chain and on-chain reverse lookups for recipients, schemas and attesters.
+
+## Design Goals
+- High throughput via parallelized state access.
+- Minimal gas overhead.
+- Strict payload boundaries to prevent gas exhaustion attacks.
+- Use only non-deprecated Soroban host functions (e.g. `ledger().timestamp()` instead of `env.ledger().timestamp()`, `env.storage()` accessors, `env.events().publish()`).
+
+---
+
+## System Overview
+
+The following diagram shows the high-level static relationships between all contracts and external actors.
+
+```mermaid
+graph TD
+    User([Attester / Relayer])
+    Admin([Admin])
+    TokenContract([Token Contract])
+
+    subgraph "Soroban SAS System"
+        SAS["SAS Contract\n(attest, revoke, verify)"]
+        SR["Schema Registry\n(register, get_schema, is_authorized)"]
+        IDX["Indexer Contract\n(index_attestation, handle_revoke)"]
+        Resolver["Resolver Contract\n(on_attest, on_revoke)"]
+    end
+
+    User -->|attest / revoke| SAS
+    Admin -->|init, upgrade, pause| SAS
+    Admin -->|init, upgrade| SR
+    Admin -->|init, upgrade| IDX
+    SAS -->|get_schema, is_authorized| SR
+    SAS -->|on_attest, on_revoke| Resolver
+    SAS -->|index_attestation, handle_revoke| IDX
+    SAS -->|transfer fee| TokenContract
+    SR -->|transfer fee| TokenContract
+    Resolver -.->|enforces policy| SAS
+```
+
+---
+
+## Initialization and Compatibility Probes
+
+Before trusting a dependency address, each contract issues a **compatibility probe** — a cross-contract call to a well-known marker function. If the call fails or returns false, initialization is rejected with `IncompatibleDependency`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin
+    participant SAS
+    participant SR as Schema Registry
+    participant IDX as Indexer
+
+    Note over Admin,SR: Phase 1 — Deploy and init Schema Registry
+    Admin->>SR: init(admin, fee_config?)
+    SR-->>Admin: OK
+
+    Note over Admin,SAS: Phase 2 — Init SAS against the registry
+    Admin->>SAS: init(admin, registry=SR)
+    SAS->>SR: try_invoke sasreg() [compatibility probe]
+    alt registry responds true
+        SR-->>SAS: true
+        SAS->>SAS: store REGISTRY = SR
+        SAS-->>Admin: OK
+    else probe fails
+        SAS-->>Admin: IncompatibleDependency ✗
+    end
+
+    Note over Admin,IDX: Phase 3 — Init Indexer, then bind to SAS
+    Admin->>IDX: init(admin, sas=SAS)
+    IDX->>SAS: try_invoke sasv1() [compatibility probe]
+    alt SAS responds true
+        SAS-->>IDX: true
+        IDX->>IDX: store SAS_CONTRACT = SAS
+        IDX-->>Admin: OK
+    else probe fails
+        IDX-->>Admin: IncompatibleDependency ✗
+    end
+
+    Note over Admin,SAS: Phase 4 — Bind Indexer to SAS
+    Admin->>SAS: set_indexer(indexer=IDX)
+    SAS->>SAS: store INDEXER = IDX
+    SAS-->>Admin: IndexerUpdated event
+```
+
+---
+
+## Attestation Issuance Flow
+
+This is the most complex cross-contract flow. Every `attest`, `attest_by_delegation`, `multi_attest`, and `attest_with_value` call converges on `attest_internal`.
+
+### Direct Issuance (`attest`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Attester
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Attester->>SAS: attest(attestation)
+    SAS->>SAS: require_auth(attester)
+    SAS->>SAS: check paused flag
+
+    Note over SAS: attest_internal begins
+    SAS->>SAS: validate payload size ≤ MAX_ATTESTATION_DATA_BYTES
+    SAS->>SAS: check UID not already in persistent storage
+    SAS->>SAS: verify UID == content-addressed hash(schema_uid, recipient, attester, data)
+    SAS->>SAS: validate expiration_time not in the past
+    SAS->>SAS: validate_attestation_parties (no zero/self recipient)
+    SAS->>SAS: validate ref_uid integrity
+
+    SAS->>SR: get_schema(schema_uid)
+    alt schema exists and not deprecated
+        SR-->>SAS: SchemaRecord { resolver, revocable, ... }
+    else unknown or deprecated
+        SR-->>SAS: None
+        SAS-->>Attester: InvalidSchema ✗
+    end
+
+    SAS->>SR: is_authorized(schema_uid, attester)
+    alt attester is owner or delegate
+        SR-->>SAS: true
+    else unauthorized
+        SR-->>SAS: false
+        SAS-->>Attester: Unauthorized ✗
+    end
+
+    SAS->>SAS: check_revocable(schema.revocable, attestation.revocable)
+
+    SAS->>Resolver: try_invoke on_attest(attestation)
+    alt resolver accepts
+        Resolver-->>SAS: Ok(())
+    else resolver rejects / traps / missing method
+        Resolver-->>SAS: Err
+        SAS-->>Attester: ResolverRejected ✗
+    end
+
+    SAS->>SAS: normalize time = ledger.timestamp()
+    SAS->>SAS: store attestation in persistent storage (+ TTL)
+    SAS->>SAS: write timestamp anchor (issuance ledger)
+    SAS->>SAS: emit ATTESTED (AttestationIssued) event
+
+    opt Indexer is bound
+        SAS->>IDX: try_invoke index_attestation(uid, recipient, schema_uid, attester)
+        alt indexer accepts
+            IDX-->>SAS: Ok(())
+        else indexer traps / unavailable
+            IDX-->>SAS: Err
+            alt fail-open mode (default)
+                SAS->>SAS: emit IDXFAIL (IndexFailed) event
+            else fail-closed (INDEXER_STRICT = true)
+                SAS-->>Attester: IndexerUnavailable ✗
+            end
+        end
+    end
+
+    SAS-->>Attester: uid (UID)
+```
+
+### Delegated Issuance (`attest_by_delegation`)
+
+Delegated issuance substitutes the attester's `require_auth()` with an **off-chain ed25519 signature** verification. The on-chain storage path is identical to direct issuance.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Relayer
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Note over Relayer: Relayer holds a pre-signed payload from the Attester (off-chain)
+
+    Relayer->>SAS: attest_by_delegation(attestation, nonce, signature, public_key)
+    SAS->>SAS: check paused flag
+    SAS->>SAS: require revocation_time == 0
+    SAS->>SAS: require_attester_key(attester, public_key)\n[key must match account or registered key]
+    SAS->>SAS: construct AttestationDomain(network_id, contract, nonce)
+    SAS->>SAS: hash_offchain_attestation(attestation, domain)
+    SAS->>SAS: verify_offchain_signature(hash, public_key, signature)
+    SAS->>SAS: consume_delegation_nonce(attester, nonce)\n[nonce must be strictly > watermark]
+
+    Note over SAS: Continues as attest_internal (see Direct Issuance flow)
+    SAS->>SR: get_schema(schema_uid)
+    SAS->>SR: is_authorized(schema_uid, attester)
+    SAS->>Resolver: on_attest(attestation)
+    SAS->>SAS: store attestation + emit ATTESTED event
+    SAS->>IDX: index_attestation(uid, recipient, schema_uid, attester)
+
+    SAS-->>Relayer: uid (UID)
+```
+
+### Batch Issuance (`multi_attest`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Caller
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Caller->>SAS: multi_attest(attestations[])
+    SAS->>SAS: check paused flag
+    SAS->>SAS: len ≤ MAX_MULTI_ATTEST (100) else BatchTooLarge
+    SAS->>SAS: enter_reentrancy_guard()
+
+    loop for each attestation i
+        SAS->>SAS: require_auth(attestation[i].attester)
+        Note over SAS: attest_internal (abbreviated)
+        SAS->>SR: get_schema + is_authorized
+        SAS->>Resolver: on_attest
+        SAS->>SAS: store + emit ATTESTED event
+        SAS->>IDX: index_attestation (fail-open/closed)
+    end
+
+    SAS->>SAS: emit BATCH_ATTESTED (BatchAttested) event [last]
+    SAS->>SAS: exit_reentrancy_guard()
+    SAS-->>Caller: uids[] (Vec<UID>)
+```
+
+---
+
+## Attestation Revocation Flow
+
+### Direct Revocation (`revoke`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Attester
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Attester->>SAS: revoke(uid)
+    SAS->>SAS: check paused flag
+    SAS->>SAS: require_auth(attester from stored attestation)
+
+    Note over SAS: revoke_internal begins
+    SAS->>SAS: load attestation from persistent storage
+    SAS->>SAS: assert revocable == true
+    SAS->>SAS: assert revocation_time == 0
+    SAS->>SAS: set revocation_time = ledger.timestamp()
+    SAS->>SAS: persist updated attestation (+ TTL)
+    SAS->>SAS: write revocation timestamp anchor
+    SAS->>SAS: emit REVOKED (AttestationRevoked) event
+
+    SAS->>SR: get_schema(attestation.schema_uid)
+    alt schema exists
+        SR-->>SAS: SchemaRecord { resolver, ... }
+    else schema missing
+        SR-->>SAS: None
+        SAS-->>Attester: InvalidSchema ✗ [rolls back]
+    end
+
+    SAS->>Resolver: try_invoke on_revoke(attestation)
+    alt resolver accepts
+        Resolver-->>SAS: Ok(())
+    else resolver rejects / traps / missing
+        Resolver-->>SAS: Err
+        SAS-->>Attester: ResolverRejected ✗ [rolls back storage + event]
+    end
+
+    opt Indexer is bound
+        SAS->>IDX: try_invoke handle_revoke(uid) [best-effort; silently ignored if absent]
+        Note over IDX: When implemented, updates IndexStatus → Revoked\n(not present in current indexer; failure is silently ignored)
+    end
+
+    SAS-->>Attester: () [success]
+```
+
+> **Note on resolver ordering during revocation:** The revocation write and its `REVOKED` event are committed to the call frame before `on_revoke` is invoked. If the resolver rejects, the entire invocation rolls back — including the write and the event — so observers never see a half-committed revocation.
+
+> **Note on `handle_revoke`:** The SAS contract calls `handle_revoke` on the Indexer as a best-effort `try_invoke_contract`. If the Indexer does not implement the method (the current version does not), or if the call fails for any reason, SAS silently ignores the error. This allows the indexer to be upgraded independently to add status-tracking callbacks without requiring a simultaneous SAS upgrade.
+
+### Delegated Revocation (`revoke_by_delegation`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Relayer
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Relayer->>SAS: revoke_by_delegation(uid, nonce, signature, public_key)
+    SAS->>SAS: check paused flag
+    SAS->>SAS: load attestation by uid
+    SAS->>SAS: require_attester_key(attestation.attester, public_key)
+    SAS->>SAS: construct AttestationDomain(network_id, contract, nonce)
+    SAS->>SAS: hash_delegated_revocation(uid, attester, domain)
+    SAS->>SAS: verify_offchain_signature(hash, public_key, signature)
+    SAS->>SAS: consume_delegation_nonce(attester, nonce)
+
+    Note over SAS: Continues as revoke_internal (see Direct Revocation flow)
+    SAS->>SAS: set revocation_time + persist
+    SAS->>SAS: emit REVOKED event
+    SAS->>SR: get_schema → on_revoke via Resolver
+    SAS->>IDX: try_invoke handle_revoke(uid) [best-effort; silently ignored if absent]
+
+    SAS-->>Relayer: () [success]
+```
+
+### Batch Revocation (`multi_revoke`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Caller
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Caller->>SAS: multi_revoke(revocations[])
+    SAS->>SAS: check paused flag
+    SAS->>SAS: len ≤ MAX_MULTI_REVOKE (100) else BatchTooLarge
+
+    Note over SAS: Pass 1 — Validate all items before any write
+    loop for each uid i
+        SAS->>SAS: load attestation[i], assert revocable + not revoked
+        SAS->>SAS: group by attester for auth
+    end
+    SAS->>SAS: require_auth for each distinct attester
+
+    Note over SAS: Pass 2 — Commit revocations
+    loop for each uid i
+        Note over SAS: revoke_internal (abbreviated)
+        SAS->>SAS: set revocation_time + persist + emit REVOKED event
+        SAS->>SR: get_schema + on_revoke via Resolver
+        SAS->>IDX: try_invoke handle_revoke(uid) [best-effort; silently ignored if absent]
+    end
+
+    SAS->>SAS: emit BATCH_REVOKED (BatchRevoked) event [last]
+    SAS-->>Caller: () [success]
+```
+
+---
+
+## Attestation Replacement Flow (`replace_attestation`)
+
+`replace_attestation` atomically revokes an old attestation and issues a new one linked via `ref_uid`, eliminating any validity gap between the two.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Attester
+    participant SAS
+    participant SR as Schema Registry
+    participant Resolver
+    participant IDX as Indexer
+
+    Attester->>SAS: replace_attestation(old_uid, new_data)
+    SAS->>SAS: check paused flag
+    SAS->>SAS: load old attestation, assert revocable + not revoked
+    SAS->>SAS: assert new_data.attester == old.attester
+    SAS->>SAS: assert new_data.recipient == old.recipient
+    SAS->>SAS: assert new expiration_time ≥ old (monotonicity rule)
+    SAS->>SAS: require_auth(old.attester)
+    SAS->>SAS: set new_data.ref_uid = old_uid [enforced, not caller-supplied]
+
+    Note over SAS: revoke_internal on old_uid
+    SAS->>SAS: set old.revocation_time, persist, emit REVOKED event
+    SAS->>SR: get_schema(old.schema_uid) → on_revoke(old attestation)
+    SAS->>IDX: try_invoke handle_revoke(old_uid) [best-effort; silently ignored if absent]
+
+    Note over SAS: attest_internal on new_data
+    SAS->>SR: get_schema(new_data.schema_uid) + is_authorized(schema_uid, attester)
+    SAS->>Resolver: on_attest(new_data)
+    SAS->>SAS: store new attestation, emit ATTESTED event
+    SAS->>IDX: index_attestation(new_uid, ...) [fail-open/closed]
+
+    SAS-->>Attester: new_uid (UID)
+```
+
+---
+
+## Indexer Reconciliation Flow
+
+When the Indexer is unavailable during issuance, SAS emits an `IDXFAIL` event (fail-open mode) instead of rolling back. Operators can replay missed attestations using `reindex_attestation` or `bulk_reindex`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator
+    participant SAS
+    participant IDX as Indexer
+    participant Monitor as Off-Chain Monitor
+
+    Note over Monitor: Detects IDXFAIL(uid) event on-chain
+
+    Monitor->>Operator: alert: uid missed by Indexer
+
+    Operator->>SAS: reindex_attestation(uid)
+    SAS->>SAS: load attestation from persistent storage [read-only]
+    SAS->>SAS: assert INDEXER is bound (NotInitialized otherwise)
+
+    SAS->>IDX: try_invoke index_attestation(uid, recipient, schema_uid, attester)
+    alt indexer now healthy
+        IDX-->>SAS: Ok(())
+        SAS->>SAS: emit REINDEX (Reindexed) event
+        SAS-->>Operator: success
+    else still unavailable
+        IDX-->>SAS: Err
+        SAS-->>Operator: IndexerUnavailable ✗ [retry later]
+    end
+
+    Note over Operator: bulk_reindex(uids[]) batches up to 100 UIDs in one call
+```
+
+---
+
+## Schema Registry Flows
+
+### Schema Registration (`register`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner
+    participant SR as Schema Registry
+    participant TokenContract as Token Contract
+
+    Owner->>SR: register(schema, resolver, revocable)
+    SR->>SR: validate_schema_syntax(schema)
+    SR->>SR: uid = schema_uid(schema, resolver, revocable) [content-addressed hash]
+    SR->>SR: assert uid not already stored
+    SR->>SR: require_auth(owner)
+
+    opt Fee is configured
+        SR->>SR: assert treasury is set
+        SR->>TokenContract: transfer(owner → treasury, amount)
+    end
+
+    SR->>SR: persist SchemaRecord { schema, resolver, revocable, ... }
+    SR->>SR: persist schema_creator = owner
+    SR->>SR: emit REGISTER (SchemaRegistered) event
+    SR-->>Owner: uid (UID)
+```
+
+### Schema Deprecation (`deprecate`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner
+    participant SR as Schema Registry
+    participant SAS
+
+    Owner->>SR: deprecate(uid)
+    SR->>SR: assert schema exists
+    SR->>SR: require_auth(owner or admin)
+    SR->>SR: mark (DEPRECATED, uid) = true in persistent storage
+    SR->>SR: emit SCHEMA_DEPRECATED (SchemaDeprecated) event
+    SR-->>Owner: () [success]
+
+    Note over SAS: Subsequent attest calls using this uid will fail
+    SAS->>SR: get_schema(uid) — returns None
+    SR-->>SAS: None [deprecated]
+    SAS-->>SAS: panic InvalidSchema
+```
+
+---
+
+## Indexer Write Authorization
+
+`index_attestation` is **not a public write path**. It uses Soroban's native contract-address `require_auth()` mechanism so that only the exact SAS contract bound at `Indexer::init` can invoke it successfully.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SAS
+    participant IDX as Indexer
+    actor ExternalCaller
+
+    Note over ExternalCaller,IDX: Rejected path — direct external call
+    ExternalCaller->>IDX: index_attestation(uid, ...)
+    IDX->>IDX: sas.require_auth() [sas = stored SAS_CONTRACT address]
+    IDX-->>ExternalCaller: Unauthorized ✗ [no contract-origin authorization]
+
+    Note over SAS,IDX: Accepted path — call originates from within SAS execution
+    SAS->>IDX: invoke index_attestation(uid, recipient, schema_uid, attester)
+    Note over IDX: Soroban satisfies require_auth() automatically\nbecause the call originates from SAS's own execution frame
+    IDX->>IDX: idempotency check: (uid, recipient, schema_uid, attester) must match if uid seen before
+    IDX->>IDX: append uid to recipient / schema / attester lookup chunks
+    IDX->>IDX: update per-key counters (RCOUNT / SCOUNT / ACOUNT)
+    IDX->>IDX: set IndexStatus = Active
+    IDX-->>SAS: Ok(())
+```
+
+---
+
+## Upgrade Flow
+
+All three contracts share the same monotonic versioned upgrade pattern. Each upgrade is admin-authorized, validated against the stored layout before any state is written, and emits a `ContractUpgraded` event immediately before the WASM swap.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin
+    participant Contract as Any Contract\n(SAS / Registry / Indexer)
+
+    Admin->>Contract: upgrade(new_wasm_hash, new_version)
+    Contract->>Contract: validate_upgrade:\n  - admin key readable\n  - new_version == old_version + 1\n  - new_version ≤ MAX_KNOWN_VERSION\n  - new_wasm_hash ≠ zero bytes
+    Contract->>Contract: require_auth(admin)
+    Contract->>Contract: store VERSION = new_version
+    Contract->>Contract: store WASMHASH = new_wasm_hash
+    Contract->>Contract: emit CONTRACT_UPGRADED (ContractUpgraded)\n  (old_wasm_hash, new_wasm_hash, authorizer)
+    Contract->>Contract: update_current_contract_wasm(new_wasm_hash)
+    Contract-->>Admin: () [success — new WASM now active]
+
+    Note over Contract: Schema Registry also emits\nUPGRADE("UPGRADE", old_version, new_version)\nas an additional versioned event
+```
+
+---
+
+## Storage Retention Policy
+
+Soroban has two independent expiry mechanisms, and each contract's core
+configuration is deliberately held to a stricter policy than the
+attestation/schema data it governs:
+
+- **Instance storage** holds a contract's core configuration: SAS's
+  `SAS_ADMIN`, `SCHEMA_REGISTRY`, and `INDEXER` bindings; the schema
+  registry's `REGISTRY_ADMIN`, `SCHEMA_FEE`, and `TREASURY`; and the
+  indexer's `INDEXER_ADMIN` and `SAS_CONTRACT` binding. If instance storage
+  expires and is archived, the contract's own configuration becomes
+  unreadable and every entry point that depends on it stops working —
+  there is no way to "read the admin address to renew the admin address."
+  For this reason every contract renews its instance TTL
+  (`soroban_sas_common::extend_instance_ttl`, using the shared
+  `INSTANCE_TTL_THRESHOLD_LEDGERS`/`INSTANCE_EXTEND_TO_LEDGERS` constants)
+  from `init` and from both admin-gated and commonly used public entry
+  points, so ordinary traffic keeps configuration alive without any single
+  call being solely responsible for it.
+- **Persistent storage** holds the data instance configuration governs —
+  attestations, schema records, delegation nonces, indexer lookup chunks —
+  and is extended independently, per entry, using `LEDGERS_IN_ONE_YEAR`
+  wherever it is written or read. An individual attestation or schema
+  expiring does not take down the rest of the contract the way a lost
+  admin binding would, so persistent entries are extended on their own
+  schedule rather than the stricter instance policy. The indexer's per-key
+  UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) live here too, on the same
+  horizon as the chunks they count — they used to live in instance storage,
+  where their independent expiry from the chunk data they count could reset
+  a counter to zero while its chunks survived, corrupting the index with
+  duplicate UIDs on the next write (#219).
+  Timestamp anchors (#298) — the ledger sequence and close time recorded
+  for each issuance and revocation — are written on the same per-entry
+  schedule, with the TTL of the attestation they describe, so a record's
+  verifiable timestamps never outlive the record itself.
+
+---
+
+## Contract Upgrades
+
+All three contracts are upgraded in place by an admin-authorized
+`upgrade(new_wasm_hash, new_version)`. Each contract stores a monotonic
+instance `VERSION` (a missing key on a legacy instance reads as genesis `1`),
+accepts only the exact next audited version, and requires the candidate to be
+non-zero and already uploaded. Validation reads the existing layout before any
+state is written; the version and the targeted hash (`WASMHASH`) are then
+committed, and each contract emits `ContractUpgraded` with
+`(old_wasm_hash, new_wasm_hash, authorizer)` immediately before the swap is
+requested. The schema registry additionally emits its own versioned
+`UPGRADE("UPGRADE", old_version, new_version)` event. Because Soroban rolls a
+failed invocation back, an upgrade event an off-chain consumer observes always
+corresponds to an activation that durably took effect.
+
+See [Contract Events](events.md) for the payloads and the
+[Contract Upgrade and Recovery Runbook](UPGRADE_RUNBOOK.md) for the staged
+activation and rollback procedure.
+
+---
+
+## Trust Boundaries
+
+### Indexer writes
+
+`Indexer::index_attestation` is not a public write path. It records UIDs
+into the recipient, schema, and attester lookup tables, and those tables are
+only useful if every entry actually corresponds to an attestation the SAS
+contract issued. If any caller could invoke it directly, an attacker could
+inject arbitrary UIDs and silently poison every reverse lookup the indexer
+serves.
+
+`index_attestation` therefore requires `sas.require_auth()`, where `sas` is
+the address recorded by `Indexer::init`. Soroban satisfies a contract
+address's `require_auth()` without an explicit signature when the call
+originates from that contract's own execution — concretely, only
+`SAS::attest_internal` invoking `index_attestation` as part of handling
+`attest`/`attest_by_delegation`/`multi_attest`/`attest_with_value` can
+satisfy it. An external account, or any other contract (including one that
+merely forwards the same arguments), cannot produce this authorization and
+the call is rejected. A call made before `Indexer::init` has bound a SAS
+address is rejected outright, since there is no trusted address to
+authorize against yet.
+
+This mirrors how `SAS::init` and `Indexer::init` already gate on a
+compatibility probe (`sasreg`/`sasv1`) before trusting a configured
+dependency address — the indexer's SAS binding is a similar one-way trust
+relationship, just enforced per-call instead of once at initialization.
+
+### Indexer Pagination
+
+Each lookup key's history is stored as fixed-size persistent chunks of
+`MAX_CHUNK_SIZE` (100) UIDs plus a per-key counter. The complete reads
+(`get_attestations_by_*`) walk every chunk and so grow with the history.
+Callers with large histories use the paginated reads instead:
+`get_atts_by_recipient_paginated`, `get_atts_by_schema_paginated`, and
+`get_atts_by_attester_paginated`, each `(key, cursor, limit)`. All three share
+one reader (`collect_page`), which loads only the chunks that overlap the
+requested window. A page therefore costs `O(limit)` storage reads and TTL
+renewals, not `O(count)`.
+
+Pagination semantics follow from the append-only index. Ordering is
+insertion order (oldest first), and new UIDs are only ever appended, so pages
+stay stable while issuance continues. A page holds exactly
+`min(limit, count - cursor)` UIDs, so resuming at `cursor + page.len()` never
+skips or repeats an entry. `limit == 0` and any request at or beyond the end
+return an empty page. `get_count_by_*` provides `count` for totals. Paginated
+reads count toward the per-ledger query limit (`LimitExceeded`). The SDK
+(`IndexerClient::get_attestations_by_*_paginated`) and the CLI
+(`query by-* --cursor/--limit`, 1–100 UIDs per page) expose the same model.
+
+### Recipients
+
+Every on-chain attestation has a concrete recipient. SAS rejects the zero
+account/contract sentinels that other attestation systems use for "no
+recipient", and it rejects an attester naming itself, with `InvalidRecipient`
+(`soroban_sas_common::validate_attestation_parties`). The Indexer therefore
+never receives a recipient-less record. The SDK's `AttestationRequestBuilder`
+and the CLI's on-chain issuance commands apply the same shared check before
+building a transaction.
+
+### Indexer Reconciliation
+
+When running under default fail-open mode, any downstream indexing failures emit `IndexFailed(uid)` (`IDXFAIL`) events rather than rolling back core attestation writes. Operators recover missed entries using `SAS::reindex_attestation(uid)`.
+
+For operational instructions covering event detection, unreconciled UID enumeration, CLI/SDK invocation, health checks, and retry strategies, see the [Indexer Reconciliation Runbook](reconciliation.md) and [Indexer Availability Policy](indexer-availability-and-fees.md).
+
+### Delegated signature authorization
+
+`attest_by_delegation`, `revoke_by_delegation`, and their batch variants
+(`multi_attest_by_delegation`, `multi_revoke_by_delegation`) authorize a write
+from an off-chain ed25519 signature instead of `require_auth()` on the
+attester. The relayer that submits the transaction consequently needs no
+special privilege: it only funds and signs the envelope, and the contract
+derives authority from the issuer's signature.
+
+A signature commits to the network id, the SAS contract address, and a
+per-attester nonce, then to the action's own fields (the full attestation, or
+the UID plus recorded attester for a revocation). That binding is what makes a
+signature meaningful for exactly one network, one contract deployment, and one
+nonce, and it is what prevents a relayer from substituting a different payload.
+The nonce high-watermark is per attester and shared by issuance and revocation;
+see [Delegated Issuance and Revocation](delegation.md) for the full model,
+limitations, and the SDK signing helpers.
+
+---
+
+## Attestation Lifecycle and State Machine
+
+An attestation within the Soroban SAS framework flows through several definitive states managed strictly by the core SAS smart contract:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active : attest / multi_attest\nattest_by_delegation
+
+    Active --> Revoked : revoke / revoke_by_delegation\nmulti_revoke / replace_attestation (old uid)
+    Active --> Expired : ledger.timestamp() > expiration_time\n[no transaction needed]
+    Active --> Replaced : replace_attestation\n(new attestation issued with ref_uid → old uid)
+
+    Replaced --> [*] : old uid is revoked;\nnew uid is Active
+    Revoked --> [*]
+    Expired --> [*]
+
+    note right of Active
+        revocation_time == 0
+        AND (expiration_time == 0
+             OR timestamp < expiration_time)
+    end note
+
+    note right of Revoked
+        revocation_time != 0
+        verify_attestation → false
+    end note
+
+    note right of Expired
+        expiration_time != 0
+        AND timestamp >= expiration_time
+        verify_attestation → false
+    end note
+```
+
+- **Issuance (`attest` / `multi_attest`)**: A new, revocable or non-revocable attestation is firmly anchored to the chain. A deterministic `UID` is assigned based strictly on `(schema_uid, recipient, attester, data, time, expiration_time, revocable)`.
+- **Active State**: While `timestamp < expiration_time` (and `expiration_time != 0`) and `revocation_time == 0`, the attestation is publicly active.
+- **Revoked State (`revoke`)**: If the attestation was initialized with `revocable = true`, the `attester` (or a delegated proxy) can flip the state by setting the `revocation_time` parameter on-chain. From this moment, `verify_attestation` returns `false`.
+- **Expired State**: Occurs naturally when the ledger timestamp overtakes `expiration_time`. No explicit transaction is needed to reach this state. Expired attestations strictly cannot be actively rotated or replaced in-place.
+- **Replacement (`replace_attestation`)**: Binds an active, non-revoked attestation into a revoked state natively, synchronously emitting a new child attestation mapped backwards through the `ref_uid` pointer structure.
+
+## Mutation Testing
+
+The workspace has a mutation testing baseline measured with `cargo-mutants`.
+It shows which behaviour the test suites do not actually check, beyond what
+line coverage reports. Results, exclusions and reproduction steps are in
+[MUTATION_TESTING.md](MUTATION_TESTING.md).
+
+- Configuration: `.cargo/mutants.toml`
+- CI: the "Mutation Testing" workflow, manual only (`workflow_dispatch`), so
+  the existing CI, coverage and fuzz pipelines are unaffected.
+---
+
+## Event Summary
+
+The table below maps every cross-contract flow to the events it emits, in the order they appear on-chain.
+
+| Flow | Contract | Event constant | Struct |
+|---|---|---|---|
+| `attest` / `attest_by_delegation` | SAS | `ATTESTED` | `AttestationIssued` |
+| `multi_attest` (each item) | SAS | `ATTESTED` | `AttestationIssued` |
+| `multi_attest` (summary) | SAS | `BATCH_ATTESTED` | `BatchAttested` |
+| `revoke` / `revoke_by_delegation` | SAS | `REVOKED` | `AttestationRevoked` |
+| `multi_revoke` (each item) | SAS | `REVOKED` | `AttestationRevoked` |
+| `multi_revoke` (summary) | SAS | `BATCH_REVOKED` | `BatchRevoked` |
+| `replace_attestation` | SAS | `REVOKED` then `ATTESTED` | `AttestationRevoked`, `AttestationIssued` |
+| Indexer push failure (fail-open) | SAS | `IDXFAIL` | `uid` |
+| `reindex_attestation` / `bulk_reindex` success | SAS | `REINDEX` | `uid` |
+| `register` | Schema Registry | `REGISTER` | `SchemaRegistered` |
+| `deprecate` | Schema Registry | `SCHEMA_DEPRECATED` | `SchemaDeprecated` |
+| `upgrade` | SAS / Registry / Indexer | `CONTRACT_UPGRADED` | `ContractUpgraded` |
+| `set_indexer` | SAS | `INDEXER_UPDATED` | `IndexerUpdated` |
+| `set_fee` / `clear_fee` | SAS | `FEECFG_UPDATED` | `FeeConfigUpdated` |
+| `pause` | SAS | `CONTRACT_PAUSED` | `ContractPaused` |
+| `unpause` | SAS | `CONTRACT_UNPAUSED` | `ContractUnpaused` |
+| `propose_admin` | SAS | `ADMIN_TRANSFER_PROPOSED` | `AdminTransferProposed` |
+| `accept_admin` | SAS | `ADMIN_TRANSFER_COMPLETED` | `AdminTransferCompleted` |
+
+For complete payload schemas and XDR encoding, see [Contract Events](events.md).
+
+---
+
+## Cross-Contract Call Summary
+
+The following table is a concise reference of every cross-contract call in the system.
+
+| Caller | Callee | Method | Direction | Fail behaviour |
+|---|---|---|---|---|
+| SAS `init` | Schema Registry | `sasreg()` | probe | Rejects init with `IncompatibleDependency` |
+| Indexer `init` | SAS | `sasv1()` | probe | Rejects init with `IncompatibleDependency` |
+| SAS `attest_internal` | Schema Registry | `get_schema(uid)` | mandatory read | Panics `InvalidSchema` on None |
+| SAS `attest_internal` | Schema Registry | `is_authorized(uid, attester)` | mandatory read | Panics `Unauthorized` on false |
+| SAS `attest_internal` | Resolver | `on_attest(attestation)` | mandatory callback | Panics `ResolverRejected` on any error |
+| SAS `attest_internal` | Indexer | `index_attestation(uid, recipient, schema_uid, attester)` | optional write | `IDXFAIL` event (fail-open) or `IndexerUnavailable` (fail-closed) |
+| SAS `revoke_internal` | Schema Registry | `get_schema(uid)` | mandatory read | Panics `InvalidSchema` on None |
+| SAS `revoke_internal` | Resolver | `on_revoke(attestation)` | mandatory callback | Panics `ResolverRejected` → rolls back revocation write + event |
+| SAS `revoke_internal` | Indexer | `handle_revoke(uid)` | optional write | Silently ignored if method absent or call fails (best-effort) |
+| SAS `reindex_attestation` | Indexer | `index_attestation(uid, ...)` | optional write | Returns `IndexerUnavailable` on failure |
+| SAS `attest_with_value` | Token Contract | `transfer(attester → SAS, amount)` | mandatory transfer | Panics on failure |
+| Schema Registry `register_with_value` | Token Contract | `transfer(owner → treasury, amount)` | mandatory transfer | Panics on failure |

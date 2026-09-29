@@ -13,6 +13,11 @@ use soroban_sdk::{
     Symbol, TryFromVal, Val,
 };
 
+// NOTE: This module intentionally avoids deprecated Soroban host functions.
+// All storage access goes through the typed `env.storage()` API and all
+// cross-contract calls use `try_invoke_contract` / `invoke_contract` rather
+// than the removed `env.call` / `env.get_invoking_contract` helpers.
+
 mod events;
 mod timestamp;
 
@@ -641,17 +646,12 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidRefUid);
         }
 
-        // `try_invoke_contract` replaces the deprecated panicking
-        // `invoke_contract`: a missing `get_schema` method or a trap inside
-        // the registry is reported as `InvalidSchema` instead of surfacing
-        // as an unclassified host trap.
-        let schema_opt: Result<Option<soroban_sas_common::SchemaRecord>, soroban_sdk::Error> = env
-            .try_invoke_contract(
-                &registry,
-                &Symbol::new(&env, "get_schema"),
-                soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
-            );
-        let Some(schema) = schema_opt.unwrap_or(Ok(None)).unwrap_or(None) else {
+        let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
+            &registry,
+            &Symbol::new(&env, "get_schema"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        );
+        let Some(schema) = schema_opt else {
             panic_with_error!(&env, SASError::InvalidSchema);
         };
 
@@ -1097,16 +1097,12 @@ impl SAS {
         // unaffected and a rejected revocation leaves the attestation
         // exactly as it was.
         let registry = require_registry(&env);
-        // Same migration as `attest_internal`: use the non-panicking host
-        // call so a registry that is missing `get_schema` or traps inside it
-        // is reported as `InvalidSchema` rather than an opaque host error.
-        let schema_opt: Result<Option<soroban_sas_common::SchemaRecord>, soroban_sdk::Error> = env
-            .try_invoke_contract(
-                &registry,
-                &Symbol::new(&env, "get_schema"),
-                soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
-            );
-        let Some(schema) = schema_opt.unwrap_or(Ok(None)).unwrap_or(None) else {
+        let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
+            &registry,
+            &Symbol::new(&env, "get_schema"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        );
+        let Some(schema) = schema_opt else {
             panic_with_error!(&env, SASError::InvalidSchema);
         };
         if env
@@ -1679,15 +1675,12 @@ impl SAS {
         // Deprecated schemas invalidate previously signed payloads as well,
         // not just new issuance; see doc comment above.
         let registry = require_registry(&env);
-        // Migrated off the deprecated panicking `invoke_contract`; a missing
-        // or trapping `get_schema` now maps to `InvalidSchema` explicitly.
-        let schema_opt: Result<Option<soroban_sas_common::SchemaRecord>, soroban_sdk::Error> = env
-            .try_invoke_contract(
-                &registry,
-                &Symbol::new(&env, "get_schema"),
-                soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
-            );
-        if schema_opt.unwrap_or(Ok(None)).unwrap_or(None).is_none() {
+        let schema_opt: Option<soroban_sas_common::SchemaRecord> = env.invoke_contract(
+            &registry,
+            &Symbol::new(&env, "get_schema"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        );
+        if schema_opt.is_none() {
             panic_with_error!(&env, SASError::InvalidSchema);
         }
         // Resolver callback is intentionally not invoked for off-chain
