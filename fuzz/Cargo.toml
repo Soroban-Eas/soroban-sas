@@ -13,6 +13,8 @@ soroban-sas-common = { path = "../packages/soroban-sas-common" }
 soroban-sas-sdk = { path = "../packages/soroban-sas-sdk" }
 soroban-sdk = { version = "21.7.7", features = ["testutils"] }
 soroban-sas-indexer = { path = "../contracts/indexer", features = ["testutils"] }
+sas = { path = "../contracts/sas" }
+schema-registry = { path = "../contracts/schema-registry" }
 serde_json = "1.0"
 stellar-strkey = "0.0.8"
 
@@ -55,5 +57,11 @@ doc = false
 [[bin]]
 name = "indexer_idempotency_fuzz"
 path = "fuzz_targets/indexer_idempotency_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "cross_contract_registry_sas_fuzz"
+path = "fuzz_targets/cross_contract_registry_sas_fuzz.rs"
 test = false
 doc = false

@@ -1647,4 +1647,60 @@ mod pagination_query_tests {
         let (_, data) = format_page(Some(("attester", &attester)), &uids(&env, &[1]), 0, 1, 1);
         assert_eq!(data["attester"], attester.as_str());
     }
+
+    fn canned_lines(answers: &[&str]) -> impl Iterator<Item = std::io::Result<String>> {
+        answers
+            .iter()
+            .map(|s| Ok(s.to_string()))
+            .collect::<std::vec::Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn build_schema_interactively_happy_path() {
+        let mut lines = canned_lines(&["name string", "age uint32", "", "CRESOLVER", "y"]);
+        let (schema, resolver, revocable) =
+            crate::build_schema_interactively(&mut lines).unwrap();
+        assert_eq!(schema, "name string, age uint32");
+        assert_eq!(resolver, "CRESOLVER");
+        assert!(revocable);
+    }
+
+    #[test]
+    fn build_schema_interactively_retries_an_invalid_field() {
+        let mut lines = canned_lines(&["not a valid field!!", "name string", "", "CRESOLVER", "n"]);
+        let (schema, resolver, revocable) =
+            crate::build_schema_interactively(&mut lines).unwrap();
+        assert_eq!(schema, "name string");
+        assert_eq!(resolver, "CRESOLVER");
+        assert!(!revocable);
+    }
+
+    #[test]
+    fn build_schema_interactively_requires_at_least_one_field() {
+        let mut lines = canned_lines(&["", "name string", "", "CRESOLVER", "yes"]);
+        let (schema, ..) = crate::build_schema_interactively(&mut lines).unwrap();
+        assert_eq!(schema, "name string");
+    }
+
+    #[test]
+    fn build_schema_interactively_retries_an_empty_resolver() {
+        let mut lines = canned_lines(&["name string", "", "", "CRESOLVER", "no"]);
+        let (_, resolver, _) = crate::build_schema_interactively(&mut lines).unwrap();
+        assert_eq!(resolver, "CRESOLVER");
+    }
+
+    #[test]
+    fn build_schema_interactively_retries_an_invalid_revocable_answer() {
+        let mut lines = canned_lines(&["name string", "", "CRESOLVER", "maybe", "y"]);
+        let (_, _, revocable) = crate::build_schema_interactively(&mut lines).unwrap();
+        assert!(revocable);
+    }
+
+    #[test]
+    fn build_schema_interactively_fails_on_unexpected_eof() {
+        let mut lines = canned_lines(&["name string", ""]);
+        let err = crate::build_schema_interactively(&mut lines).unwrap_err();
+        assert_eq!(err, "unexpected end of input");
+    }
 }

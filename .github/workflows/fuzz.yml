@@ -29,6 +29,19 @@ jobs:
       - run: cargo fuzz build indexer_chunking_fuzz
       - run: cargo fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400 -rss_limit_mb=4096
 
+  cross-contract-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build cross_contract_registry_sas_fuzz
+      - run: cargo fuzz run cross_contract_registry_sas_fuzz -- -runs=2000 -max_len=300 -rss_limit_mb=4096
+
   # One hundred shards total ten million executions. Keep the expensive
   # campaign scheduled/manual, while every PR replays seeds and runs a smoke test.
   indexer-campaign:

@@ -244,6 +244,88 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Maximum length, in bytes, of one line of interactive input this CLI will
+/// accept. Guards against unbounded memory growth from a pasted or piped
+/// oversized line, mirroring the file-read cap in
+/// [`io_safety::MAX_INPUT_FILE_BYTES`].
+const MAX_INTERACTIVE_LINE_BYTES: usize = 4096;
+
+/// Reads one prompted line from `lines`, trimmed, rejecting it if it exceeds
+/// [`MAX_INTERACTIVE_LINE_BYTES`] or the source is exhausted mid-prompt.
+fn next_interactive_line<I>(lines: &mut I, prompt: &str) -> Result<String, String>
+where
+    I: Iterator<Item = std::io::Result<String>>,
+{
+    use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout()
+        .flush()
+        .map_err(|e| format!("cannot write to stdout: {e}"))?;
+    let line = lines
+        .next()
+        .ok_or_else(|| "unexpected end of input".to_string())?
+        .map_err(|e| format!("cannot read stdin: {e}"))?;
+    if line.len() > MAX_INTERACTIVE_LINE_BYTES {
+        return Err(format!(
+            "input exceeds the {MAX_INTERACTIVE_LINE_BYTES}-byte limit"
+        ));
+    }
+    Ok(line.trim().to_string())
+}
+
+/// Builds a schema definition, resolver address, and revocable flag from a
+/// sequence of interactive answers (#326). Generic over the line source so
+/// tests can drive it with canned input instead of real stdin — the CLI
+/// feeds it `io::stdin().lock().lines()`. Each schema field is validated
+/// with [`validate_schema_syntax`] as it's entered, re-prompting on failure
+/// rather than deferring the error to submission time; the resolver must be
+/// non-empty and revocability must be answered `y`/`yes`/`n`/`no`
+/// (case-insensitive), both re-prompted on an invalid answer.
+fn build_schema_interactively<I>(lines: &mut I) -> Result<(String, String, bool), String>
+where
+    I: Iterator<Item = std::io::Result<String>>,
+{
+    println!("Interactive schema builder. Enter fields as `name Type`; blank line to finish.");
+    let mut fields: Vec<String> = Vec::new();
+    loop {
+        let prompt = format!("field {} (blank to finish): ", fields.len() + 1);
+        let line = next_interactive_line(lines, &prompt)?;
+        if line.is_empty() {
+            if fields.is_empty() {
+                println!("at least one field is required");
+                continue;
+            }
+            break;
+        }
+        if let Err(e) = validate_schema_syntax(&line) {
+            println!("invalid field, try again: {e}");
+            continue;
+        }
+        fields.push(line);
+    }
+    let schema = fields.join(", ");
+
+    let resolver = loop {
+        let line = next_interactive_line(lines, "Resolver contract address (C...): ")?;
+        if line.is_empty() {
+            println!("resolver is required");
+            continue;
+        }
+        break line;
+    };
+
+    let revocable = loop {
+        let line = next_interactive_line(lines, "Revocable? [y/n]: ")?;
+        match line.to_ascii_lowercase().as_str() {
+            "y" | "yes" => break true,
+            "n" | "no" => break false,
+            _ => println!("please answer y or n"),
+        }
+    };
+
+    Ok((schema, resolver, revocable))
+}
+
 #[derive(Parser)]
 #[command(name = "soroban-sas")]
 #[command(about = "CLI for Soroban Attestation Service")]
@@ -469,6 +551,34 @@ enum SchemaCommands {
         resolver: String,
         #[arg(long, help = "Whether attestations against this schema can be revoked")]
         revocable: bool,
+        #[arg(
+            long,
+            help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Interactively build a schema definition field-by-field, then register
+    /// it. Prompts for each field (`name Type`, blank line to finish), the
+    /// resolver address, and revocability, re-prompting on an invalid
+    /// answer; `--secret-key` / `--registry-contract-id` still come from
+    /// flags or environment variables, matching `register` (#326).
+    Interactive {
         #[arg(
             long,
             help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
@@ -1885,6 +1995,39 @@ fn run_schema(
             // or oversized schema exits 1 with a clear message and never pays
             // for a simulation.
             validate_schema_syntax(&schema)?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
+            let result = client
+                .register_schema(
+                    &env,
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    &schema,
+                    &resolver,
+                    revocable,
+                )
+                .map_err(|e| e.to_string())?;
+            print_schema_registration_result(result, &uid_hex, output)
+        }
+        SchemaCommands::Interactive {
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let mut lines = stdin.lock().lines();
+            let (schema, resolver, revocable) = build_schema_interactively(&mut lines)?;
+
             let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;

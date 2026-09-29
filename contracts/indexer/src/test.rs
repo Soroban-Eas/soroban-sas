@@ -1397,3 +1397,100 @@ fn test_chunking_seed_boundaries() {
         chunking_test_support::check_chunking(&pairs);
     }
 }
+
+/// Issue #310: `get_*_by_issuer` reads must agree with the corresponding
+/// `get_*_by_attester` reads, since "issuer" is the attester dimension under
+/// the naming attestation issuers actually look up by.
+#[test]
+fn test_get_by_issuer_matches_get_by_attester_happy_path() {
+    let env = Env::default();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+
+    let issuer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[3u8; 32]));
+
+    assert_eq!(client.get_count_by_issuer(&issuer), 0);
+    assert_eq!(client.get_attestations_by_issuer(&issuer).len(), 0);
+
+    for i in 0u8..5 {
+        let mut bytes = [0u8; 32];
+        bytes[0] = i;
+        let uid = UID(soroban_sdk::BytesN::from_array(&env, &bytes));
+        sas_client.relay_index(&indexer_id, &uid, &recipient, &schema_uid, &issuer);
+    }
+
+    assert_eq!(client.get_count_by_issuer(&issuer), 5);
+    assert_eq!(
+        client.get_count_by_issuer(&issuer),
+        client.get_count_by_attester(&issuer)
+    );
+    assert_eq!(
+        client.get_attestations_by_issuer(&issuer),
+        client.get_attestations_by_attester(&issuer)
+    );
+    assert_eq!(
+        client.get_atts_by_issuer_paginated(&issuer, &0, &3),
+        client.get_atts_by_attester_paginated(&issuer, &0, &3)
+    );
+    assert_eq!(
+        client.get_issuer_filtered(&issuer, &true),
+        client.get_attester_filtered(&issuer, &true)
+    );
+    assert_eq!(client.get_issuer_page_filtered(&issuer, &0, &3, &true).len(), 3);
+    assert_eq!(
+        client.get_issuer_page_filtered(&issuer, &0, &3, &true),
+        client.get_atts_by_issuer_paginated(&issuer, &0, &3)
+    );
+}
+
+/// Issue #310: an issuer with no indexed attestations reads as empty rather
+/// than trapping, matching the other lookup dimensions (see
+/// `test_get_count_by_defaults_to_zero_for_unindexed_key`).
+#[test]
+fn test_get_by_issuer_unindexed_key_is_empty() {
+    let env = Env::default();
+    let (_indexer_id, client, _sas) = setup_indexed(&env);
+
+    let issuer = Address::generate(&env);
+
+    assert_eq!(client.get_count_by_issuer(&issuer), 0);
+    assert_eq!(client.get_attestations_by_issuer(&issuer).len(), 0);
+    assert_eq!(client.get_atts_by_issuer_paginated(&issuer, &0, &10).len(), 0);
+    assert_eq!(client.get_issuer_filtered(&issuer, &true).len(), 0);
+    assert_eq!(
+        client.get_issuer_page_filtered(&issuer, &0, &10, &true).len(),
+        0
+    );
+}
+
+/// Issue #310: revoked UIDs are hidden from the active-only issuer views,
+/// same as the attester views (see `test_filtered_pagination_skips_a_full_chunk_of_revoked_uids`).
+#[test]
+fn test_get_by_issuer_filtered_excludes_revoked() {
+    let env = Env::default();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+
+    let issuer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let schema_uid = UID(soroban_sdk::BytesN::from_array(&env, &[4u8; 32]));
+    let uid = UID(soroban_sdk::BytesN::from_array(&env, &[5u8; 32]));
+
+    sas_client.relay_index(&indexer_id, &uid, &recipient, &schema_uid, &issuer);
+    env.as_contract(&indexer_id, || {
+        set_index_status(&env, &uid, IndexStatus::Revoked);
+    });
+
+    assert_eq!(client.get_issuer_filtered(&issuer, &true).len(), 1);
+    assert_eq!(client.get_issuer_filtered(&issuer, &false).len(), 0);
+    assert_eq!(
+        client
+            .get_issuer_page_filtered(&issuer, &0, &10, &false)
+            .len(),
+        0
+    );
+    // Count is unaffected by status: the UID stays indexed.
+    assert_eq!(client.get_count_by_issuer(&issuer), 1);
+}

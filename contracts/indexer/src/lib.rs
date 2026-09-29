@@ -780,6 +780,124 @@ impl Indexer {
         )
     }
 
+    /// Total number of UIDs indexed under `issuer` as an attestation issuer.
+    ///
+    /// `issuer` is an alias for the attester dimension: in this system's
+    /// terminology (see `docs/getting-started.md` and `docs/delegation.md`)
+    /// the account that calls `SAS::attest` is the attestation's issuer, so
+    /// this reads the same `ATTESTER_TOTAL` counter as
+    /// [`Indexer::get_count_by_attester`] under a name that matches how
+    /// callers look up "who issued this" (#310).
+    pub fn get_count_by_issuer(env: Env, issuer: Address) -> u32 {
+        extend_instance_ttl(&env);
+        index_total(&env, &(ATTESTER_TOTAL, issuer))
+    }
+
+    /// Complete issuer history, oldest first. Alias for
+    /// [`Indexer::get_attestations_by_attester`]; see
+    /// [`Indexer::get_count_by_issuer`] for the issuer/attester naming (#310).
+    pub fn get_attestations_by_issuer(env: Env, issuer: Address) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
+        let total = index_total(&env, &(ATTESTER_TOTAL, issuer.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(issuer.clone(), chunk_index)),
+            true,
+        )
+    }
+
+    /// One page of the complete issuer history. Alias for
+    /// [`Indexer::get_atts_by_attester_paginated`]; see
+    /// [`Indexer::get_count_by_issuer`] for the issuer/attester naming (#310).
+    pub fn get_atts_by_issuer_paginated(
+        env: Env,
+        issuer: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<UID> {
+        extend_instance_ttl(&env);
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
+        let total = index_total(&env, &(ATTESTER_TOTAL, issuer.clone()));
+        collect_page(&env, total, cursor, limit, |chunk_index| {
+            read_chunk(&env, &(issuer.clone(), chunk_index))
+        })
+    }
+
+    /// Filtered issuer history. Alias for [`Indexer::get_attester_filtered`];
+    /// see [`Indexer::get_count_by_issuer`] for the issuer/attester naming
+    /// (#310).
+    pub fn get_issuer_filtered(
+        env: Env,
+        issuer: Address,
+        include_revoked: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
+        let total = index_total(&env, &(ATTESTER_TOTAL, issuer.clone()));
+        collect_filtered(
+            &env,
+            total,
+            |chunk_index| read_chunk(&env, &(issuer.clone(), chunk_index)),
+            include_revoked,
+        )
+    }
+
+    /// Paginated active-only issuer history. Alias for
+    /// [`Indexer::get_recipient_page_filtered`]'s attester counterpart; see
+    /// [`Indexer::get_count_by_issuer`] for the issuer/attester naming
+    /// (#310).
+    pub fn get_issuer_page_filtered(
+        env: Env,
+        issuer: Address,
+        cursor: u32,
+        limit: u32,
+        include_revoked: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        if let Err(err) = check_query_limit(&env) {
+            panic_with_error!(&env, err);
+        }
+        if limit == 0 {
+            return soroban_sdk::Vec::new(&env);
+        }
+        let total = index_total(&env, &(ATTESTER_TOTAL, issuer.clone()));
+        if cursor >= total {
+            return soroban_sdk::Vec::new(&env);
+        }
+        let mut out = soroban_sdk::Vec::new(&env);
+        let mut index = cursor;
+        let mut loaded: Option<u32> = None;
+        let mut chunk = soroban_sdk::Vec::new(&env);
+        while index < total && out.len() < limit {
+            let chunk_index = index / MAX_CHUNK_SIZE;
+            let chunk_offset = index % MAX_CHUNK_SIZE;
+            if loaded != Some(chunk_index) {
+                let Some(next) = read_chunk(&env, &(issuer.clone(), chunk_index)) else {
+                    break;
+                };
+                chunk = next;
+                loaded = Some(chunk_index);
+            }
+            if chunk_offset >= chunk.len() {
+                index = (chunk_index + 1) * MAX_CHUNK_SIZE;
+                continue;
+            }
+            if let Some(uid) = chunk.get(chunk_offset) {
+                if include_revoked || is_active(&env, &uid) {
+                    out.push_back(uid);
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
+            }
+            index += 1;
+        }
+        out
+    }
+
     /// Paginated active-only view: walks the underlying chunks and
     /// skips revoked/replaced UIDs until `limit` active entries are
     /// collected or the total is exhausted. `cursor` is a raw offset
