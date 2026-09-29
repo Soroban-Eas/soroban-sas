@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Global `--timeout <SECS>` CLI flag (also `SOROBAN_RPC_TIMEOUT`; whole
+  seconds, 1-3600) that sets the per-request timeout for every Soroban RPC
+  call the CLI makes. Without it the SDK's 10-second default applies. (#337)
+- `SdkError::Timeout { timeout }`: an RPC request that exceeds the client's
+  timeout, while connecting, sending, or reading the response, is now
+  reported as a timeout instead of an opaque `SdkError::TransportError`.
+  Blocking submission keeps polling a known transaction hash through a
+  timed-out `getTransaction` call and still ends in `SettlementTimeout` if
+  the transaction never settles. A timed-out `sendTransaction` may still have
+  reached the network, so check the hash before resubmitting. (#337)
 - Indexer pagination for every lookup dimension:
   `get_atts_by_schema_paginated` and `get_atts_by_attester_paginated` join
   `get_atts_by_recipient_paginated`, all backed by one chunk-window reader

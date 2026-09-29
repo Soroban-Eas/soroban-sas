@@ -712,6 +712,32 @@ stateDiagram-v2
 - **Expired State**: Occurs naturally when the ledger timestamp overtakes `expiration_time`. No explicit transaction is needed to reach this state. Expired attestations strictly cannot be actively rotated or replaced in-place.
 - **Replacement (`replace_attestation`)**: Binds an active, non-revoked attestation into a revoked state natively, synchronously emitting a new child attestation mapped backwards through the `ref_uid` pointer structure.
 
+
+## RPC Timeouts
+
+Every request the SDK's `RpcClient` makes is bounded by a per-request timeout
+that covers connecting, sending, and reading the response. The default is 10
+seconds (`DEFAULT_RPC_TIMEOUT`); override it with `RpcClient::with_timeout`,
+or, on the CLI, with the global `--timeout <SECS>` flag or the
+`SOROBAN_RPC_TIMEOUT` environment variable (whole seconds, 1-3600).
+
+A request that exceeds the timeout fails with `SdkError::Timeout { timeout }`.
+Other network failures, such as a refused or reset connection, remain
+`SdkError::TransportError`, so callers can tell "the node did not answer in
+time" apart from "the node could not be reached".
+
+Timeouts are not retried automatically, because whether a retry is safe
+depends on the call:
+
+- **Reads and simulations** are idempotent; callers may retry them.
+- **`sendTransaction`** is not. A timeout does not say whether the node
+  received the transaction, so blind resubmission can double-submit. Check the
+  transaction hash before sending again.
+- **Blocking submission** (`SubmissionPolicy`) already knows the hash while it
+  polls `getTransaction`. A poll that times out is treated as transient: the
+  wait continues under the policy's poll cap and deadline, and ends in
+  `SdkError::SettlementTimeout` if the transaction never settles.
+
 ## Mutation Testing
 
 The workspace has a mutation testing baseline measured with `cargo-mutants`.
