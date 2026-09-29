@@ -1,0 +1,8 @@
+# cargo-mutants configuration for soroban-sas.
+# Test-support code is not production logic, so mutating it is noise.
+exclude_globs = [
+    "**/chunking_test_support.rs",
+    "tests/**",
+    "benches/**",
+    "fuzz/**",
+]
