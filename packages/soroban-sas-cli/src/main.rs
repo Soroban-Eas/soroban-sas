@@ -109,10 +109,17 @@ fn emit_error(output: OutputFormat, message: &str) {
             let envelope = serde_json::json!({ "status": "error", "message": message });
             match serde_json::to_string_pretty(&envelope) {
                 Ok(text) => println!("{text}"),
-                Err(_) => println!(
-                    "{{\"status\":\"error\",\"message\":\"{}\"}}",
-                    message.replace('\\', "\\\\").replace('"', "\\\"")
-                ),
+                Err(_) => {
+                    // Graceful fallback for malformed JSON: use manual escaping
+                    // to ensure output is always valid JSON even with unusual characters
+                    let escaped = message
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r")
+                        .replace('\t', "\\t");
+                    println!("{{\"status\":\"error\",\"message\":\"{escaped}\"}}")
+                }
             }
         }
     }
