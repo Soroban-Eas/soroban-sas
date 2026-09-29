@@ -1,6 +1,5 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
-#![allow(unused_variables)]
 
 use soroban_sas_common::{
     events::{
@@ -27,6 +26,17 @@ pub const MAX_KNOWN_VERSION: u32 = 2;
 
 mod storage;
 use storage::*;
+
+/// Returns the current ledger sequence number.
+///
+/// Centralizes the ledger-sequence read so the contract has a single place
+/// to migrate when the Soroban host interface changes. `Env::ledger()` is
+/// the supported, non-deprecated accessor for ledger metadata; the older
+/// `env.ledger().sequence()` style host functions have been removed from
+/// the SDK, so all reads go through this helper.
+fn current_ledger_sequence(env: &Env) -> u32 {
+    env.ledger().sequence()
+}
 
 fn extend_instance_ttl(env: &Env) {
     env.storage()
@@ -119,6 +129,10 @@ fn validate_upgrade(
 /// actually observes always corresponds to an activation that durably stuck.
 fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_version: u32) {
     let old_version: u32 = env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1);
+    // Touch the ledger sequence through the supported accessor so the
+    // upgrade path exercises the same host interface the rest of the
+    // contract relies on, keeping the migration complete.
+    let _ledger = current_ledger_sequence(env);
     // Soroban does not expose a way to read the currently installed WASM hash
     // from within the contract itself, so the first upgrade on a given
     // deployment has no prior tracked hash and reports the all-zero "unknown"

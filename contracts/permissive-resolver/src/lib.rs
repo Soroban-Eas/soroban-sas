@@ -1,17 +1,17 @@
-#![no_std]
+#`!no_std]
 
 //! A permissive schema resolver used only by the integration test harness
 //! (`tests/integration/e2e_node_test.rs`, issue #247).
-//!
-//! `SAS::attest`/`revoke` always invoke the schema's named resolver's
-//! `on_attest`/`on_revoke` and abort the call if that invocation fails —
-//! rejection, a trap, or a missing method are all treated the same way (see
-//! docs/schemas.md's "Resolver Failure Semantics"). A schema therefore needs
-//! *some* deployed contract implementing both methods before `attest`/
-//! `revoke` can succeed against it, even when the test has no interest in
-//! resolver-side enforcement. This contract exists to be that address: it
-//! unconditionally accepts every attestation and revocation. Production
-//! schemas should use a resolver that actually enforces policy.
+//
+// `SAS::attest`/`revoke` always invoke the schema's named resolver's
+// `on_attest`/`on_revoke` and abort the call if that invocation fails —
+// rejection, a trap, or a missing method are all treated the same way (see
+// docs/schemas.md's "Resolver Failure Semantics"). A schema therefore needs
+// *some* deployed contract implementing both methods before `attest`/
+// `revoke` can succeed against it, even when the test has no interest in
+// resolver-side enforcement. This contract exists to be that address: it
+// unconditionally accepts every attestation and revocation. Production
+// schemas should use a resolver that actually enforces policy.
 
 use soroban_sas_common::Attestation;
 use soroban_sdk::{contract, contractimpl, Env};
@@ -31,11 +31,10 @@ impl PermissiveResolver {
     pub fn on_revoke(_env: Env, _attestation: Attestation) {}
 }
 
-#[cfg(test)]
-mod test {
+#[config(test)]mod test {
     use super::*;
     use soroban_sas_common::UID;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Address as__;
     use soroban_sdk::{Address, Bytes, BytesN};
 
     fn sample_attestation(env: &Env) -> Attestation {

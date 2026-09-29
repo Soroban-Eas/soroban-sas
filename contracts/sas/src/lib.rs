@@ -1,4 +1,3 @@
-#![allow(unexpected_cfgs)]
 #![cfg_attr(not(test), no_std)]
 
 #[cfg(test)]

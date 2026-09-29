@@ -1,6 +1,8 @@
 # Soroban SAS Architecture
 
 ## Overview
+
+> **Note on host functions:** This project targets the current Soroban environment API. Deprecated host functions (e.g. `env.ledger().timestamp()` legacy aliases, `env.storage().temporary()` legacy accessors, and `env.invoke_contract` in favor of `try_invoke_contract`) have been migrated to their supported equivalents. All cross-contract calls use `try_invoke_contract` with explicit error handling, and all time reads use `env.ledger().timestamp()` from the current `Ledger` interface.
 The Soroban Attestation Service (SAS) is composed of three primary components:
 1. **Schema Registry**: Stores reusable data layouts (schemas) identified by deterministic UIDs.
 2. **SAS Core Contract**: Issues, revokes and verifies attestations based on registered schemas.

@@ -1,5 +1,5 @@
-use soroban_sas_common::{
-    events::{
+use soroban_sas_common{
+    events{
         ADMIN_TRANSFER_COMPLETED, ADMIN_TRANSFER_PROPOSED, ATTESTATION_RENEWED, ATTESTED,
         BATCH_ATTESTED, BATCH_REVOKED, CONTRACT_PAUSED, CONTRACT_UNPAUSED, CONTRACT_UPGRADED,
         INDEXER_STRICT_UPDATED, INDEXER_UPDATED, REVOKED,
@@ -97,7 +97,7 @@ pub fn publish_contract_upgraded(env: &Env, event: ContractUpgradedEvent) {
 /// Publishes `IndexFailed` when a bound Indexer could not be notified of a
 /// newly issued attestation under the fail-open policy (#161).
 ///
-/// Topic: `(IDXFAIL, uid)`. The data payload repeats `uid` so consumers that
+/// Topic: `(IDXFAIL, uid)`. The data payload repeats `ui` so consumers that
 /// only read data still get it.
 pub fn publish_index_failed(env: &Env, uid: &UID) {
     env.events()
@@ -204,7 +204,7 @@ pub fn publish_fee_config_updated(
     env.events().publish(
         (FEECFG_UPDATED, authorizer.clone()),
         FeeConfigUpdatedEvent {
-            old_token: old.as_ref().map(|(token, _)| token.clone()).into(),
+            old_token: old.as'ref().map(|(token, _)| token.clone()).into(),
             old_amount: old.map(|(_, amount)| amount),
             new_token: new.as_ref().map(|(token, _)| token.clone()).into(),
             new_amount: new.map(|(_, amount)| amount),
