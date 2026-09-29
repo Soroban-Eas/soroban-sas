@@ -119,7 +119,10 @@ pub fn build_simulate_transaction_xdr(
     unsigned_envelope_xdr(tx)
 }
 
-pub(crate) fn unsigned_envelope_xdr(tx: Transaction) -> Result<String, SdkError> {
+/// Converts an unsigned `Transaction` into a base64-encoded `TransactionEnvelope`.
+///
+/// Exposed for advanced users who need to build custom transaction workflows.
+pub fn unsigned_envelope_xdr(tx: Transaction) -> Result<String, SdkError> {
     let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
         tx,
         signatures: VecM::default(),
@@ -133,7 +136,9 @@ pub(crate) fn unsigned_envelope_xdr(tx: Transaction) -> Result<String, SdkError>
 /// ensuring operation count, type, and invoke arguments are unchanged. Returns
 /// `Err` if the simulation response was malformed or contained substitutions
 /// that would cross a trust boundary before signing.
-pub(crate) fn validate_simulated_transaction(
+///
+/// Exposed for advanced users who need custom validation workflows.
+pub fn validate_simulated_transaction(
     tx: &Transaction,
     contract_id: &str,
     function_name: &str,
