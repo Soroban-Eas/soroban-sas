@@ -468,6 +468,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
+            None,
         )
         .unwrap_err();
         assert!(set_error.contains("invalid --identity"));
@@ -482,6 +483,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
+            None,
         )
         .unwrap_err();
         assert!(clear_error.contains("invalid --identity"));
@@ -510,6 +512,7 @@ mod tests {
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
                 },
                 OutputFormat::Human,
+                None,
                 None,
                 None,
             )
@@ -582,6 +585,7 @@ mod tests {
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
                 },
                 OutputFormat::Human,
+                None,
                 None,
                 None,
             )
@@ -1102,6 +1106,7 @@ mod online_verification_tests {
             crate::OutputFormat::Json,
             None,
             None,
+            None,
         );
         assert!(res.is_ok());
     }
@@ -1122,6 +1127,7 @@ mod online_verification_tests {
                 rpc_url: Some(url),
             },
             crate::OutputFormat::Human,
+            None,
             None,
             None,
         );
@@ -1320,6 +1326,7 @@ mod by_attester_query_tests {
             },
             OutputFormat::Json,
             None,
+            None,
         )
         .unwrap();
 
@@ -1473,6 +1480,7 @@ mod schema_withdraw_fees_tests {
             OutputFormat::Json,
             None,
             None,
+            None,
         );
         assert!(res.is_ok(), "withdraw-fees should settle: {res:?}");
     }
@@ -1569,6 +1577,7 @@ mod pagination_query_tests {
             },
             OutputFormat::Json,
             None,
+            None,
         )
         .unwrap_err();
         assert!(err.contains("--limit"), "{err}");
@@ -1646,5 +1655,82 @@ mod pagination_query_tests {
         let attester = account();
         let (_, data) = format_page(Some(("attester", &attester)), &uids(&env, &[1]), 0, 1, 1);
         assert_eq!(data["attester"], attester.as_str());
+    }
+}
+
+mod timeout_flag_tests {
+    use crate::Cli;
+    use clap::{CommandFactory, Parser};
+    use std::time::Duration;
+
+    #[test]
+    fn parse_timeout_accepts_whole_seconds() {
+        assert_eq!(crate::parse_timeout("30").unwrap(), Duration::from_secs(30));
+        assert_eq!(crate::parse_timeout(" 5 ").unwrap(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn parse_timeout_rejects_zero_non_numeric_and_absurd_values() {
+        assert!(crate::parse_timeout("0").is_err());
+        assert!(crate::parse_timeout("abc").is_err());
+        assert!(crate::parse_timeout("-3").is_err());
+        assert!(crate::parse_timeout("1.5").is_err());
+        assert!(crate::parse_timeout("3601").is_err());
+    }
+
+    #[test]
+    fn build_rpc_applies_the_requested_timeout() {
+        let rpc = crate::build_rpc(
+            "http://127.0.0.1:1".to_string(),
+            Some(Duration::from_secs(7)),
+        );
+        assert_eq!(rpc.timeout(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn build_rpc_keeps_the_sdk_default_when_no_timeout_is_given() {
+        let rpc = crate::build_rpc("http://127.0.0.1:1".to_string(), None);
+        assert_eq!(rpc.timeout(), soroban_sas_sdk::rpc::DEFAULT_RPC_TIMEOUT);
+    }
+
+    #[test]
+    fn root_help_documents_the_timeout_flag() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("--timeout"));
+        assert!(help.contains("SECS"));
+    }
+
+    #[test]
+    fn timeout_flag_parses_before_and_after_the_subcommand() {
+        let before = Cli::try_parse_from([
+            "soroban-sas",
+            "--timeout",
+            "5",
+            "query",
+            "by-attester",
+            "--address",
+            "GABC",
+            "--contract-id",
+            "CABC",
+        ]);
+        let after = Cli::try_parse_from([
+            "soroban-sas",
+            "query",
+            "by-attester",
+            "--address",
+            "GABC",
+            "--contract-id",
+            "CABC",
+            "--timeout",
+            "5",
+        ]);
+        assert_eq!(before.unwrap().timeout, Some(Duration::from_secs(5)));
+        assert_eq!(after.unwrap().timeout, Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn timeout_flag_rejects_zero() {
+        let result = Cli::try_parse_from(["soroban-sas", "--timeout", "0", "query", "by-attester"]);
+        assert!(result.is_err());
     }
 }

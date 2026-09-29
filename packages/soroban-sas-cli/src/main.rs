@@ -278,6 +278,19 @@ struct Cli {
     )]
     output: OutputFormat,
 
+    #[arg(
+        long,
+        global = true,
+        value_name = "SECS",
+        env = "SOROBAN_RPC_TIMEOUT",
+        value_parser = parse_timeout,
+        help = "Per-request timeout for Soroban RPC calls, in whole seconds \
+                (1-3600). Defaults to the SDK's 10s. A timed-out write may \
+                still have reached the network: check the transaction hash \
+                before resubmitting."
+    )]
+    timeout: Option<std::time::Duration>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1004,13 +1017,18 @@ fn main() {
     // Taken before matching on `cli.command`, which moves it.
     let network = cli.network;
     let identity = cli.identity;
+    let timeout = cli.timeout;
     let result = match cli.command {
-        Some(Commands::Offchain { action }) => run_offchain(action, output, network, identity),
-        Some(Commands::Schema { action }) => run_schema(action, output, network, identity),
-        Some(Commands::Attest { action }) => run_attest(action, output, network, identity),
-        Some(Commands::Sas { action }) => run_sas(action, output, network, identity),
-        Some(Commands::Query { action }) => run_query(action, output, network),
-        Some(Commands::Delegate { action }) => run_delegate(action, output, network, identity),
+        Some(Commands::Offchain { action }) => {
+            run_offchain(action, output, network, identity, timeout)
+        }
+        Some(Commands::Schema { action }) => run_schema(action, output, network, identity, timeout),
+        Some(Commands::Attest { action }) => run_attest(action, output, network, identity, timeout),
+        Some(Commands::Sas { action }) => run_sas(action, output, network, identity, timeout),
+        Some(Commands::Query { action }) => run_query(action, output, network, timeout),
+        Some(Commands::Delegate { action }) => {
+            run_delegate(action, output, network, identity, timeout)
+        }
         _ => emit_ok(
             output,
             || println!("CLI initialized"),
@@ -1051,6 +1069,7 @@ fn run_sas(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1059,7 +1078,7 @@ fn run_sas(
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let fee = client.fetch_fee(&env, &rpc).map_err(|e| e.to_string())?;
 
@@ -1081,7 +1100,7 @@ fn run_sas(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .set_fee(&env, &rpc, &network_passphrase, &seed, &token, amount)
@@ -1099,7 +1118,7 @@ fn run_sas(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .clear_fee(&env, &rpc, &network_passphrase, &seed)
@@ -1163,6 +1182,7 @@ fn run_attest(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1198,7 +1218,7 @@ fn run_attest(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| format!("system clock error: {e}"))?;
 
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
 
             // Issuance time is the network ledger close time, not the local
@@ -1287,7 +1307,7 @@ fn run_attest(
             }
             let attestation = offchain::parse_attestation(&env, &input)?;
             offchain::validate_onchain_parties(&env, &attestation)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
@@ -1308,7 +1328,7 @@ fn run_attest(
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid = parse_uid(&uid)?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
                 .revoke(&env, &rpc, &network_passphrase, &seed, &uid)
@@ -1322,7 +1342,7 @@ fn run_attest(
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid = parse_uid(&uid)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let valid = client
                 .verify_attestation(&env, &rpc, &uid)
@@ -1368,7 +1388,7 @@ fn run_attest(
             }
             let new_data = offchain::parse_attestation(&env, &input)?;
             offchain::validate_onchain_parties(&env, &new_data)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
             let result = client
@@ -1542,6 +1562,7 @@ fn run_query(
     action: QueryCommands,
     output: OutputFormat,
     network: Option<String>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1553,7 +1574,7 @@ fn run_query(
         } => {
             let page = page.resolve()?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let Some((cursor, limit)) = page else {
                 let uids = client
@@ -1577,7 +1598,7 @@ fn run_query(
         } => {
             let page = page.resolve()?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let Some((cursor, limit)) = page else {
                 let uids = client
@@ -1609,7 +1630,7 @@ fn run_query(
             let page = page.resolve()?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let schema_uid = parse_uid(&uid)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::IndexerClient::new(contract_id);
             let Some((cursor, limit)) = page else {
                 let uids = client
@@ -1754,6 +1775,7 @@ fn run_delegate(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1814,7 +1836,7 @@ fn run_delegate(
             let public_key = parse_uid(&signed.public_key)?;
             let signature = decode_hex64(&signed.signature)?;
             let relayer_seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(signed.contract_id.clone());
             let result = client
                 .attest_by_delegation(
@@ -1845,7 +1867,7 @@ fn run_delegate(
             let public_key = parse_uid(&signed.public_key)?;
             let signature = decode_hex64(&signed.signature)?;
             let relayer_seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(signed.contract_id.clone());
             let result = client
                 .revoke_by_delegation(
@@ -1869,6 +1891,7 @@ fn run_schema(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1890,7 +1913,7 @@ fn run_schema(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
             let result = client
@@ -1914,7 +1937,7 @@ fn run_schema(
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid_bytes = parse_uid(&uid)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let schema = client
                 .get_schema(&env, &rpc, &registry_contract_id, &uid_bytes)
@@ -1965,7 +1988,7 @@ fn run_schema(
                 "resolver",
             )
             .map_err(|e| e.to_string())?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let schema_record = client
                 .get_schema_by_content(
@@ -2022,7 +2045,7 @@ fn run_schema(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
             let result = client
@@ -2054,7 +2077,7 @@ fn run_schema(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let result = client
                 .set_schema_fee(
@@ -2080,7 +2103,7 @@ fn run_schema(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let result = client
                 .clear_schema_fee(
@@ -2105,7 +2128,7 @@ fn run_schema(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let result = client
                 .set_schema_treasury(
@@ -2132,7 +2155,7 @@ fn run_schema(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let result = client
                 .withdraw_schema_fees(
@@ -2151,7 +2174,7 @@ fn run_schema(
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let fee = client
                 .get_schema_fee(&env, &rpc, &registry_contract_id)
@@ -2185,7 +2208,7 @@ fn run_schema(
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let rpc = build_rpc(rpc_url, timeout);
             let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
             let treasury = client
                 .get_schema_treasury(&env, &rpc, &registry_contract_id)
@@ -2223,6 +2246,7 @@ fn run_offchain(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<(), String> {
     match action {
         OffchainCommands::Sign {
@@ -2313,7 +2337,7 @@ fn run_offchain(
                  SAS contract to verify against"
                     .to_string()
             })?;
-            let rpc = soroban_sas_sdk::rpc::RpcClient::new(trusted_rpc_url);
+            let rpc = build_rpc(trusted_rpc_url, timeout);
 
             let report = perform_online_verification(
                 &signed,
@@ -2459,3 +2483,31 @@ fn perform_online_verification(
 
 #[cfg(test)]
 mod test;
+
+/// Upper bound for `--timeout`; anything longer is almost certainly a typo.
+const MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// Parses `--timeout`: whole seconds, at least 1 (a zero timeout would make
+/// every request fail instantly) and at most [`MAX_TIMEOUT_SECS`].
+fn parse_timeout(raw: &str) -> Result<std::time::Duration, String> {
+    let secs: u64 = raw
+        .trim()
+        .parse()
+        .map_err(|_| format!("`{raw}` is not a whole number of seconds"))?;
+    if secs == 0 || secs > MAX_TIMEOUT_SECS {
+        return Err(format!(
+            "timeout must be between 1 and {MAX_TIMEOUT_SECS} seconds"
+        ));
+    }
+    Ok(std::time::Duration::from_secs(secs))
+}
+
+/// The single place where the CLI builds an RPC client, so every subcommand
+/// honours `--timeout` the same way.
+fn build_rpc(url: String, timeout: Option<std::time::Duration>) -> soroban_sas_sdk::rpc::RpcClient {
+    let rpc = soroban_sas_sdk::rpc::RpcClient::new(url);
+    match timeout {
+        Some(t) => rpc.with_timeout(t),
+        None => rpc,
+    }
+}
