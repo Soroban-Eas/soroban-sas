@@ -1021,3 +1021,98 @@ fn offchain_sign_reports_an_absent_recipient_field_without_panicking() {
     );
     assert!(!run.stderr.contains("panicked"), "{}", run.stderr);
 }
+
+mod rpc_timeout {
+    use super::*;
+
+    /// A listener that accepts connections and never answers, like a hung
+    /// RPC node. The thread lives until the test process exits.
+    fn silent_rpc_url() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => held.push(stream),
+                    Err(_) => break,
+                }
+            }
+        });
+        url
+    }
+
+    fn contract_id() -> String {
+        stellar_strkey::Contract([9u8; 32]).to_string()
+    }
+
+    #[test]
+    fn timeout_flag_cuts_off_a_hung_rpc_node() {
+        let dir = TempDir::new();
+        let url = silent_rpc_url();
+        let address = account(3);
+        let contract = contract_id();
+
+        let start = std::time::Instant::now();
+        let run = cli(
+            dir.path(),
+            &[
+                "--output",
+                "json",
+                "--timeout",
+                "1",
+                "query",
+                "by-attester",
+                "--address",
+                &address,
+                "--contract-id",
+                &contract,
+                "--rpc-url",
+                &url,
+            ],
+        );
+        let elapsed = start.elapsed();
+
+        let json = run.assert_failed().json();
+        let message = json["message"].as_str().unwrap();
+        assert!(message.contains("timed out"), "message: {message}");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(900),
+            "failed after {elapsed:?}; the node never answers, so the timeout must fire"
+        );
+        // The SDK default is 10s, so finishing well before that proves the
+        // flag was applied rather than ignored.
+        assert!(
+            elapsed < std::time::Duration::from_secs(8),
+            "took {elapsed:?}; --timeout 1 was not applied"
+        );
+    }
+
+    #[test]
+    fn zero_timeout_is_a_usage_error() {
+        let dir = TempDir::new();
+        let address = account(3);
+        let contract = contract_id();
+        let run = cli(
+            dir.path(),
+            &[
+                "--timeout",
+                "0",
+                "query",
+                "by-attester",
+                "--address",
+                &address,
+                "--contract-id",
+                &contract,
+                "--rpc-url",
+                "http://127.0.0.1:1",
+            ],
+        );
+        assert_eq!(run.code, Some(2), "{}", run.stderr);
+        assert!(
+            run.stderr.contains("between 1 and 3600"),
+            "stderr: {}",
+            run.stderr
+        );
+    }
+}
