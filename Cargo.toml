@@ -7,6 +7,7 @@ members = [
     "packages/soroban-sas-sdk",
     "packages/soroban-sas-cli",
     "contracts/permissive-resolver",
+    "contracts/cross-chain-verifier",
 ]
 exclude = ["fuzz"]
 resolver = "2"

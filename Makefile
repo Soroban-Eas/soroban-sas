@@ -1,13 +1,14 @@
 .PHONY: all build build-contracts build-native test bench smoke-local clean print-contract-artifacts \
 	fmt lint install-hooks localnet localnet-down deploy-local
 
-CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer
+CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer soroban-sas-cross-chain-verifier
 WASM_TARGET := wasm32-unknown-unknown
 RELEASE_DIR := target/$(WASM_TARGET)/release
 CONTRACT_WASM := \
 	$(RELEASE_DIR)/schema_registry.wasm \
 	$(RELEASE_DIR)/sas.wasm \
-	$(RELEASE_DIR)/soroban_sas_indexer.wasm
+	$(RELEASE_DIR)/soroban_sas_indexer.wasm \
+	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
 
 all: build test
 

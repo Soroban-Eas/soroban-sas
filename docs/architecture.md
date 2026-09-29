@@ -5,6 +5,7 @@ The Soroban Attestation Service (SAS) is composed of three primary components:
 1. **Schema Registry**: Stores reusable data layouts (schemas) identified by deterministic UIDs.
 2. **SAS Core Contract**: Issues, revokes and verifies attestations based on registered schemas.
 3. **Indexer Contract**: Provides efficient off-chain and on-chain reverse lookups for recipients, schemas and attesters.
+4. **Cross-chain Verifier**: Tracks short-lived remote attestation verdicts delivered through an Axelar GMP gateway. It is deployed separately from the SAS v1 contract and binds one remote source contract and chain at initialization.
 
 ## Design Goals
 - High throughput via parallelized state access.
@@ -22,12 +23,15 @@ graph TD
     User([Attester / Relayer])
     Admin([Admin])
     TokenContract([Token Contract])
+    AxelarGateway([Axelar GMP Gateway])
+    RemoteSAS([Remote Attestation Source])
 
     subgraph "Soroban SAS System"
         SAS["SAS Contract\n(attest, revoke, verify)"]
         SR["Schema Registry\n(register, get_schema, is_authorized)"]
         IDX["Indexer Contract\n(index_attestation, handle_revoke)"]
         Resolver["Resolver Contract\n(on_attest, on_revoke)"]
+        RemoteVerifier["Cross-chain Verifier\n(execute, verify_remote)"]
     end
 
     User -->|attest / revoke| SAS
@@ -38,9 +42,14 @@ graph TD
     SAS -->|on_attest, on_revoke| Resolver
     SAS -->|index_attestation, handle_revoke| IDX
     SAS -->|transfer fee| TokenContract
+    RemoteSAS -->|GMP status message| AxelarGateway
+    AxelarGateway -->|approved message| RemoteVerifier
+    RemoteVerifier -->|validate_message, consumes approval| AxelarGateway
     SR -->|transfer fee| TokenContract
     Resolver -.->|enforces policy| SAS
 ```
+
+Remote verification has a different trust boundary from `SAS::verify_attestation`: the local SAS reads its own attestation state, while the cross-chain verifier accepts only a status message approved by its configured Axelar gateway and sent by its configured remote source. The source must compute the verdict from its authoritative registry. Positive verdicts expire within 24 hours, and later messages must increase the per-UID revision. See [Cross-chain verification](cross-chain-verification.md) for the wire format, deployment and stale-state limits.
 
 ---
 
