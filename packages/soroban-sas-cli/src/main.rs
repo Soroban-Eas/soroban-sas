@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod bulk;
 mod identity;
 mod io_safety;
 mod network;
@@ -772,6 +773,58 @@ enum AttestCommands {
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
     },
+    /// Issue many on-chain attestations in one run, read from a CSV file
+    ///
+    /// The file needs a header row; `schema_uid` and `recipient` are
+    /// required and `data`, `expiration`, and `revocable` are optional.
+    /// Columns are matched by name, so their order is free. Every row is
+    /// fully validated before the first transaction is submitted, so a
+    /// typo in the last row cannot leave a half-issued batch behind. Use
+    /// `--dry-run` to validate and print the plan without spending fees;
+    /// it still needs a signing key, because each previewed UID is
+    /// content-addressed to the attester.
+    Bulk {
+        #[arg(long, help = "CSV file with one attestation per row")]
+        csv_file: String,
+        #[arg(
+            long,
+            help = "Attester signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+        #[arg(
+            long,
+            help = "Validate every row and print the plan without submitting any transaction"
+        )]
+        dry_run: bool,
+        #[arg(
+            long,
+            help = "Keep submitting after a row fails, instead of stopping at the first failure"
+        )]
+        continue_on_error: bool,
+        #[arg(
+            long,
+            help = "Use the local system clock if the network ledger time cannot be fetched or is out of range"
+        )]
+        allow_local_time: bool,
+        #[arg(
+            long,
+            help = "Max seconds the network ledger time may disagree with the local clock before it is rejected",
+            default_value_t = 300
+        )]
+        max_ledger_skew: u64,
+    },
     /// Revoke an existing on-chain attestation
     Revoke {
         #[arg(long, help = "32-byte attestation UID, hex encoded")]
@@ -1158,6 +1211,71 @@ fn print_sas_fee_admin_result(
     emit_ok(output, || println!("{human}"), data)
 }
 
+/// A CSV row that has passed every local check, ready to be submitted.
+///
+/// Holding the already-decoded UID and payload means the submission loop
+/// never re-parses a row, and the pre-validation pass can prove the whole
+/// file is issuable before the first transaction is built.
+struct PreparedRow {
+    line: usize,
+    recipient: String,
+    schema_uid: String,
+    expiration: u64,
+    revocable: bool,
+    uid_hex: String,
+    data_bytes: Vec<u8>,
+}
+
+/// Everything a single row submission needs that is fixed for the whole
+/// batch, bundled so the per-row call site stays readable.
+struct BulkContext<'a> {
+    env: &'a soroban_sdk::Env,
+    rpc: &'a soroban_sas_sdk::rpc::RpcClient,
+    client: &'a soroban_sas_sdk::client::SASClient,
+    network_passphrase: &'a str,
+    seed: &'a [u8; 32],
+    attester: &'a str,
+    /// One ledger close time shared by every row in the run.
+    issuance_time: u64,
+}
+
+/// Submits one already-validated row. Returns the attestation UID and the
+/// transaction hash, or a human-readable reason it could not be issued.
+fn submit_bulk_row(
+    ctx: &BulkContext<'_>,
+    row: &PreparedRow,
+) -> Result<(String, Option<String>), String> {
+    let input = offchain::AttestationInput {
+        uid: row.uid_hex.clone(),
+        schema_uid: row.schema_uid.clone(),
+        time: ctx.issuance_time,
+        expiration_time: row.expiration,
+        ref_uid: hex::encode([0u8; 32]),
+        recipient: row.recipient.clone(),
+        attester: ctx.attester.to_string(),
+        revocable: row.revocable,
+        data: hex::encode(&row.data_bytes),
+    };
+    let attestation = offchain::parse_attestation(ctx.env, &input)?;
+
+    let result = ctx
+        .client
+        .attest(
+            ctx.env,
+            ctx.rpc,
+            ctx.network_passphrase,
+            ctx.seed,
+            attestation,
+        )
+        .map_err(|e| e.to_string())?;
+
+    if result.status != "SUCCESS" {
+        return Err(format!("attest failed with status {}", result.status));
+    }
+
+    Ok((row.uid_hex.clone(), result.hash))
+}
+
 fn run_attest(
     action: AttestCommands,
     output: OutputFormat,
@@ -1294,6 +1412,213 @@ fn run_attest(
                 .attest(&env, &rpc, &network_passphrase, &seed, attestation)
                 .map_err(|e| e.to_string())?;
             print_transaction_result(result, output)
+        }
+        AttestCommands::Bulk {
+            csv_file,
+            secret_key,
+            network_passphrase,
+            contract_id,
+            rpc_url,
+            dry_run,
+            continue_on_error,
+            allow_local_time,
+            max_ledger_skew,
+        } => {
+            // Only the signing key is resolved up front: a dry run derives
+            // UIDs locally, so it must work with no network configuration at
+            // all. The RPC endpoint and network passphrase are resolved
+            // after the dry-run exit below, since nothing is signed or sent
+            // before then.
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+
+            // Bounded read, same cap as every other file input (#176, #177).
+            let raw = io_safety::read_bounded(&csv_file, io_safety::MAX_INPUT_FILE_BYTES)?;
+            let rows = bulk::parse_bulk_csv(&raw)?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let attester = stellar_strkey::ed25519::PublicKey(
+                soroban_sas_sdk::signature::derive_public_key(&seed),
+            )
+            .to_string();
+
+            // Validate *every* row before submitting the first one. A typo in
+            // the last line of a large file must not leave the operator with
+            // a half-issued batch that they have to reconcile by hand.
+            let mut prepared = Vec::with_capacity(rows.len());
+            for row in &rows {
+                let schema_uid_bytes = parse_uid(&row.schema_uid)
+                    .map_err(|e| format!("line {}: schema_uid is invalid: {e}", row.line))?;
+                let data_bytes = decode_hex_or_base64(&row.data)
+                    .map_err(|e| format!("line {}: {e}", row.line))?;
+                offchain::validate_onchain_recipient(&env, &row.recipient, &attester)
+                    .map_err(|e| format!("line {}: {e}", row.line))?;
+                let uid = offchain::generate_uid(
+                    &env,
+                    &schema_uid_bytes,
+                    &row.recipient,
+                    &attester,
+                    &data_bytes,
+                )
+                .map_err(|e| format!("line {}: {e}", row.line))?;
+
+                prepared.push(PreparedRow {
+                    line: row.line,
+                    recipient: row.recipient.clone(),
+                    schema_uid: row.schema_uid.clone(),
+                    expiration: row.expiration,
+                    revocable: row.revocable,
+                    uid_hex: hex::encode(uid),
+                    data_bytes,
+                });
+            }
+
+            // A dry run stops here: everything is validated and the plan is
+            // known, but no transaction is built or submitted.
+            if dry_run {
+                let data = serde_json::json!({
+                    "dry_run": true,
+                    "total": prepared.len(),
+                    "results": prepared
+                        .iter()
+                        .map(|p| serde_json::json!({
+                            "line": p.line,
+                            "recipient": p.recipient,
+                            "schema_uid": p.schema_uid,
+                            "uid": p.uid_hex,
+                            "expiration": p.expiration,
+                        }))
+                        .collect::<Vec<_>>(),
+                });
+                return emit_ok(
+                    output,
+                    || {
+                        println!(
+                            "Dry run: {} row(s) validated, nothing submitted",
+                            prepared.len()
+                        );
+                        for p in &prepared {
+                            println!("  line {}: {} -> {}", p.line, p.recipient, p.uid_hex);
+                        }
+                    },
+                    data,
+                );
+            }
+
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+
+            let local_now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| format!("system clock error: {e}"))?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+
+            // One issuance time for the whole batch: every row in a single
+            // run is signed against the same ledger close, so a batch cannot
+            // straddle a ledger boundary with mixed timestamps.
+            let issuance_time = resolve_cli_issuance_time(
+                &rpc,
+                local_now.as_secs(),
+                max_ledger_skew,
+                allow_local_time,
+            )?;
+
+            let ctx = BulkContext {
+                env: &env,
+                rpc: &rpc,
+                client: &client,
+                network_passphrase: &network_passphrase,
+                seed: &seed,
+                attester: &attester,
+                issuance_time,
+            };
+
+            let mut results: Vec<serde_json::Value> = Vec::with_capacity(prepared.len());
+            let mut succeeded = 0usize;
+            let mut failed = 0usize;
+            let mut first_error: Option<String> = None;
+
+            for p in &prepared {
+                let outcome = submit_bulk_row(&ctx, p);
+
+                match outcome {
+                    Ok((uid_hex, hash)) => {
+                        succeeded += 1;
+                        results.push(serde_json::json!({
+                            "line": p.line,
+                            "status": "ok",
+                            "recipient": p.recipient,
+                            "uid": uid_hex,
+                            "hash": hash,
+                        }));
+                    }
+                    Err(message) => {
+                        failed += 1;
+                        // Rows are already fully validated, so a failure here
+                        // is a chain-level rejection. Report the first one
+                        // verbatim in the top-level message and the rest in
+                        // the per-row results.
+                        if first_error.is_none() {
+                            first_error = Some(message.clone());
+                        }
+                        results.push(serde_json::json!({
+                            "line": p.line,
+                            "status": "error",
+                            "recipient": p.recipient,
+                            "uid": p.uid_hex,
+                            "error": message,
+                        }));
+                        if !continue_on_error {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let data = serde_json::json!({
+                "total": prepared.len(),
+                "succeeded": succeeded,
+                "failed": failed,
+                "results": results,
+            });
+
+            if failed > 0 {
+                let first = first_error.unwrap_or_default();
+                emit_error(
+                    output,
+                    &format!(
+                        "{failed} of {} attestation(s) failed; first error: {first}",
+                        prepared.len()
+                    ),
+                );
+                // Still print the per-row detail so the operator can see
+                // which rows landed and which did not.
+                if matches!(output, OutputFormat::Json) {
+                    let envelope = serde_json::json!({
+                        "status": "error",
+                        "message": format!(
+                            "{failed} of {} attestation(s) failed; first error: {first}",
+                            prepared.len()
+                        ),
+                        "data": data,
+                    });
+                    if let Ok(text) = serde_json::to_string_pretty(&envelope) {
+                        println!("{text}");
+                    }
+                }
+                std::process::exit(1);
+            }
+
+            emit_ok(
+                output,
+                || {
+                    println!("Issued {succeeded} attestation(s) from {}", csv_file);
+                    for r in &results {
+                        println!("  line {}: {} -> {}", r["line"], r["recipient"], r["uid"]);
+                    }
+                },
+                data,
+            )
         }
         AttestCommands::Revoke {
             uid,
