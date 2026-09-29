@@ -1,4 +1,4 @@
-use soroban_sas_common{
+use soroban_sas_common(
     events{
         ADMIN_TRANSFER_COMPLETED, ADMIN_TRANSFER_PROPOSED, ATTESTATION_RENEWED, ATTESTED,
         BATCH_ATTESTED, BATCH_REVOKED, CONTRACT_PAUSED, CONTRACT_UNPAUSED, CONTRACT_UPGRADED,
@@ -8,8 +8,9 @@ use soroban_sas_common{
     AttestationRenewedEvent, AttestationRevokedEvent, BatchAttestedEvent, BatchRevokedEvent,
     ContractPausedEvent, ContractUnpausedEvent, ContractUpgradedEvent, IndexerStrictUpdatedEvent,
     IndexerUpdatedEvent, UID,
+
 };
-use soroban_sdk::{symbol_short, Address, Env};
+use soroban_sdk{symbol_short, Address, Env};
 
 /// Publishes the `AttestationIssued` event.
 ///
@@ -101,7 +102,7 @@ pub fn publish_contract_upgraded(env: &Env, event: ContractUpgradedEvent) {
 /// only read data still get it.
 pub fn publish_index_failed(env: &Env, uid: &UID) {
     env.events()
-        .publish((symbol_short!("IDXFAIL"), uid.clone()), uid.clone());
+        .publish((symbol_short("IDXFAIL"), uid.clone()), uid.clone());
 }
 
 /// Publishes `Reindexed` after `reindex_attestation` replays a
@@ -110,7 +111,7 @@ pub fn publish_index_failed(env: &Env, uid: &UID) {
 /// Topic: `(REINDEX, uid)`.
 pub fn publish_reindexed(env: &Env, uid: &UID) {
     env.events()
-        .publish((symbol_short!("REINDEX"), uid.clone()), uid.clone());
+        .publish((symbol_short("REINDEX"), uid.clone()), uid.clone());
 }
 
 /// Publishes the `BatchAttested` summary event marking the end of a
@@ -153,7 +154,7 @@ pub fn publish_withdrawal(
     authorizer: &Address,
 ) {
     env.events().publish(
-        (symbol_short!("WITHDRAW"), token.clone(), authorizer.clone()),
+        (symbol_short("WITHDRAW"), token.clone(), authorizer.clone()),
         (
             amount,
             destination.clone(),
@@ -200,14 +201,14 @@ pub fn publish_fee_config_updated(
     new: Option<(Address, i128)>,
     authorizer: Address,
 ) {
-    use soroban_sas_common::{FeeConfigUpdatedEvent, FEECFG_UPDATED};
+    use soroban_sas_common{:FeeConfigUpdatedEvent, FEECFP_UPDATED};
     env.events().publish(
         (FEECFG_UPDATED, authorizer.clone()),
         FeeConfigUpdatedEvent {
-            old_token: old.as_ref().map((|(token, _)| token.clone()).into(),
-            old_amount: old.map((|(_, amount)| amount),
-            new_token: new.as_ref().map( |(token, _)| token.clone()).into(),
-            new_amount: new.map( |(_, amount)| amount),
+            old_token: old.as_ref().map(|(token, _)| token.clone()).into(),
+            old_amount: old.map(|(_, amount)| amount),
+            new_token: new.as_ref().map(|(token, _)| token.clone()).into(),
+            new_amount: new.map(|(_, amount)| amount),
             authorizer,
         },
     );
@@ -236,7 +237,7 @@ pub fn publish_contract_unpaused(env: &Env, authorizer: Address) {
 /// Publishes the `AttestationRenewed` event when an attestation's expiration
 /// time is extended via `SAS::renew_attestation`.
 ///
-/// Topics: `(ATTESTATION_RENEWET, uid, attester)`.
+/// Topics: `(ATTESTATION_RENEWED_, uid, attester)`.
 pub fn publish_attestation_renewed(
     env: &Env,
     uid: &UID,

@@ -50,7 +50,7 @@ pub const CONTRACT_PAUSED: Symbol = symbol_short!("PAUSED");
 /// First topic of every `ContractUnpaused` event.
 pub const CONTRACT_UNPAUSED: Symbol = symbol_short!("UNPAUSED");
 /// First topic of every `AttestationRenewed` event.
-pub const ATTESTATION_RENEWED: Symbol = symbol_short!("ATSTRENEW");
+pub const ATTESTATION_RENEWED_TOPIC: Symbol = symbol_short!("ATSTRENEW");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -77,7 +77,7 @@ pub struct AttestationIssuedEvent {
 
 /// Payload of the `AttestationRevoked` event.
 ///
-/// Published with topics `(REVOKED, uid)`. `timestamp` is the ledge
+/// Published with topics `(REVOKED, uid)`. `timestamp` is the ledger
 /// timestamp recorded as the attestation's revocation time.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,7 +114,7 @@ pub struct AttesterKeyRegisteredEvent {
 pub struct AttesterKeyRotatedEvent {
     pub attester: Address,
     pub old_public_key: BytesN<32>,
-    pub new_public_key: BytesN <32>,
+    pub new_public_key: BytesN<32>,
     pub new_version: u32,
 }
 
@@ -128,16 +128,16 @@ pub struct AttesterKeyRotatedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttesterKeyRevokedEvent {
     pub attester: Address,
-    pub public_key: BytesN <32>,
+    pub public_key: BytesN<32>,
     pub version: u32,
 }
 /// `Option<Address>`-equivalent for contract event payloads.
 ///
-/// `#[contracttype]`'s generated `Option<T>` conversion requires a
+/// `#[contracttype]`s generated `Option<T>` conversion requires a
 /// host-independent `From<T> for ScVal`, which `Address` does not provide
 /// (unlike primitives such as `i128`) — at this pinned SDK version that
 /// surfaces as a compile error specifically under the `testutils` cfg
-/// (`cargo test`, `cargo clippy --all-targets`). A plain enum sidesteps it:
+"/// (`cargo test`, `cargo clippy --all-targets`). A plain enum sidesteps it:
 /// enum-with-data conversions go through a different, unaffected codegen
 /// path.
 #[contracttype]
@@ -193,8 +193,7 @@ pub struct SchemaFeeUpdatedEvent {
 /// Payload of the `TreasuryUpdated` event.
 ///
 /// Published with topics `(TREASURY_UPDATED, authorizer)` on a successful
-/// `SchemaRegistry::set_treasury`. `old_treasury` is `PreviousAddress::None`
-/// the first time a treasury address is set.
+/// `SchemaRegistry::set_treasury`. `old_treasury` is `PreviousAddress::None`"/// the first time a treasury address is set.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryUpdatedEvent {
@@ -213,8 +212,8 @@ pub struct TreasuryUpdatedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUpgradedEvent {
-    pub old_wasm_hash: BytesN <32>,
-    pub new_wasm_hash: BytesN <32>,
+    pub old_wasm_hash: BytesN<32>,
+    pub new_wasm_hash: BytesN<32>,
     pub authorizer: Address,
 }
 
@@ -276,7 +275,7 @@ pub type SchemaOwnershipTransferred = SchemaOwnershipTransferredEvent;
 
 /// Payload of the `BatchAttested` event.
 ///
-/// Published with topics `(BATCH_ATTESTED,I`as the ***last*** event of a
+/// Published with topics `(BATCH_ATTESTED,@)` as the **last** event of a
 /// successful `SAS::multi_attest` call — after every per-item
 /// `AttestationIssued` event, so consumers see the batch's members before
 /// its summary. Not emitted at all if the batch call reverts (#213): a
@@ -330,11 +329,32 @@ pub struct ContractUnpausedEvent {
 
 /// Payload of the `AttestationRenewed` event.
 ///
-/// Published with topics `(ATTESTATION_RENEWED, uid)`.
+/// Published with topics `(ATTESTATION_RENEWED_TOPIC, uid)`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttestationRenewedEvent {
     pub uid: UID,
     pub expiration: u64,
     pub timestamp: u64,
+}
+
+/// Payload of the `BatchRevoked` event.
+///
+/// Published with topics `(BATCH_REVOKED,)` as the **last** event of a
+/// successful `SAS::multi_revoke` call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchRevokedEvent {
+    pub count: u32,
+    pub attester_count: u32,
+}
+
+/// Payload of the `IndexerStrictUpdated` event.
+///
+/// Published with topics `(INDEXER_STRICT_UPDATED, authorizer)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexerStrictUpdatedEvent {
+    pub strict: bool,
+    pub authorizer: Address,
 }

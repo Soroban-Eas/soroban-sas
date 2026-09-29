@@ -8,11 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Contract WASM SHA-256 Checksums
+
 | Contract | File | SHA-256 Checksum |
 |---|---|---|
-| Schema Registry | `schema_registry.wasm` | `TBD` |
+| Schema Registry | `schema_registry.wasm` | `TRDD` |
 | Core SAS | `sas.wasm` | `TBD` |
-| Indexer | `soroban_sas_indexer.wasm` | `TBD` |
+| Indexer | `soroban_sas_indexer.wasm` | `TRDD` |
 
 ### Added
 - Indexer pagination for every lookup dimension:
@@ -35,9 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nonces`, `signatures`, and `public_keys` vectors and validate each item
   independently, so one relayed transaction can carry signatures from several
   attesters. Length mismatches fail with `InvalidValue`, oversized batches
-  with `BatchTooLarg`, and a failure on any item reverts the whole batch
-  (no partial issuance and no consumed nonce). The SAS contract reuses
-  the same per-attester nonce high-watermark as the single-item paths. (#293)
+  with `BatchTooLarge`, and a failure on any item reverts the whole batch
+  (no partial issuance and no consumed nonce). The SAS contract reuses the
+  same per-attester nonce high-watermark as the single-item paths. (#293)
 - `soroban-sas-sdk` gains `delegation`, with `sign_offchain_attestation`,
   `sign_delegated_revocation`, `delegation_domain`,
   `attestation_digest`/`revocation_digest`, and local
@@ -58,10 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   design, resolvers, registration, issuance rules and their error codes,
   off-chain and on-chain (cross-contract) verification, indexer queries,
   revocation, and a security checklist. (#366)
-- Opt-in git hooks in `.githubs/`: `pre-commit` runs
+- Opt-in git hooks in `.githooks/`: `pre-commit` runs
   `cargo fmt --all -- --check` on staged Rust changes and `bash -n` on
   staged scripts; `pre-push` runs CI's fmt and
-  `clippy --workspace --all-targets - -D warnings` gates. Install with
+  `clippy --workspace --all-targets -- -D warnings` gates. Install with
   `./scripts/install_hooks.sh`; covered by `scripts/test_git_hooks.sh` in the
   new *Developer Tooling* workflow. `.gitattributes` pins LF endings for
   shell scripts, hooks and Rust sources. (#355)
@@ -90,24 +91,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   irrevocable successor, and `soroban-sas-common` unit tests pin the
   `check_revocable` truth table and `schema_uid`'s sensitivity to the flag.
   (#303)
-- Generic EIP-712 structured-data hashing in `soroban-sas-common::eip712`
+- Generic EIP-712 structured-data hashing in `soroban-sas-common::eip712`:
   `encode_type`/`type_hash`/`encode_data`/`hash_struct`/`hash_typed_data`
   derived from `StructDef`/`FieldDef` declarations, covering nested structs,
   dynamic arrays, sign-extended `intN` and right-aligned `address` words, with
   strict `SchemaError` reporting instead of silent field dropping. Adds a `v1`
   declaration set that checks each v1 literal type tag against the field list it
-  describes, an `ep712_encode_fuzz` fuzz target, and benchmarks for type-string
+  describes, an `eip712_encode_fuzz` fuzz target, and benchmarks for type-string
   derivation, nested-struct, array, and full-digest hashing. (#299)
 - `SchemaRegistry::upgrade` now emits the standardized `ContractUpgraded` event
   (`("UPGRADED", authorizer)` with `old_wasm_hash`/`new_wasm_hash`) in addition
   to its versioned `UPGRADE` event, tracking the activated WASM hash in instance
   storage so later activations report the hash they replaced. The upgrade path
-  is split into `validate_upgrade`/`commit_upgrade`, dropping the previous
+  is split into `validate_upgrade`/`commit_upgrade`, dropping the previously
   test-only event helper, with coverage for validation rejections, the first
   activation, and hash history. (#283)
 - Fuzz target `indexer_idempotency_fuzz` and seed corpus verifying `Indexer::index_attestation` idempotency invariants across first calls, retries, and mutated triples (#235).
 - Fee payment lifecycle coverage in `scripts/smoke_test.sh` covering token deployment, `set_treasury`, `set_fee`, `attest_with_value`, balance assertions, `withdraw_tokens`, and zero-fee paths (#239).
-- Operational runbook `docs/reconciliation.md` documenting detection, enumeration, CLI/SDK invocation, and health checks for `reindex_attestation` fail-open recovery (#238).
+- Operational runbook `docs/reconciliation.md` documenting detection, enumeration,
+  CLI/SDK invocation, and health checks for `reindex_attestation` fail-open recovery (#238).
 - Typed `DelegationNonceKey` storage key wrapper in `soroban-sas-common` and `contracts/sas` reducing instance storage XDR serialization overhead (#237).
 - `SAS::admin()` and `SASClient::fetch_admin()` expose the initialized SAS
   administrator through stable contract and SDK APIs. (#241)
@@ -171,13 +173,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helper. Dependency locks keep the SDK 21 graph compatible with the project's
   existing Rust 1.79 toolchain by resolving `ed25519-dalek` 2.1.1. (#230)
 - Migrated all contract code off deprecated Soroban environment host
-  functions. Storage access now goes through the typed `contracttype`/`instance`/`persistent`
-  `Env
-  accessors and the `storage` enum accessors instead of the removed
-  `data_key` family, and the cryptography and address helpers now call the
-  current `soroban_env::crypto` host functions. This keeps the contractss on
-  the supported host API surface and avoids the removal warnings that would
-  become errors in a future protocol version. (#370)
+  functions. Replaced `bump_contract_data`/`bump_contract_instance` calls
+  with the `extend_ttl` storage accessor on `persistent`/`instance` entries,
+  switched ledger-timestamp reads to `soroban-sdk`'s `env.ledger().timestamp()`,
+  and replaced the deprecated `put_wasm_hash`/`update_current_contract_wasm`
+  pair with the `update_current_contract_wasm` family that takes a ledger
+  duration. Adds a `deprecated_host_functions` linguist gate to CI and a
+  `sorban-sas-common` unit test pinning the new TTL bump behaviour. (#371)
 - `soroban-sas-sdk`: a blocking write that never settles now returns
   `SdkError::SettlementTimeout { hash, last_status, polls }` instead of a
   generic `SdkError::RpcError`, and a `sendTransaction` rejection returns

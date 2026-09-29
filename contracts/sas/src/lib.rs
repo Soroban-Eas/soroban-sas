@@ -13,10 +13,12 @@ use soroban_sdk::{
     Symbol, TryFromVal, Val,
 };
 
-// NOTE: This module intentionally avoids deprecated Soroban host functions.
-// All storage access goes through the typed `env.storage()` API and all
-// cross-contract calls use `try_invoke_contract` / `invoke_contract` rather
-// than the removed `env.call` / `env.get_invoking_contract` helpers.
+#[allow(deprecated)]
+fn extend_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
 
 mod events;
 mod timestamp;

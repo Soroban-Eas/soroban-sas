@@ -1,5 +1,5 @@
 #![allow(unexpected_cfgs)]
-#![allow(unused_variables)]
+#![no_std]
 
 use soroban_sas_common::{
     events::{
