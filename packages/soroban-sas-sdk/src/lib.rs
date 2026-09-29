@@ -21,7 +21,11 @@ pub mod transaction;
 
 pub mod errors;
 pub mod events;
-pub use rpc::RateLimitPolicy;
+pub use rpc::{RateLimitPolicy, RpcBackend};
 pub use schema_builder::SchemaBuilder;
+pub use simulate::{
+    build_invoke_transaction, build_simulate_transaction_xdr, decode_result, encode_arg,
+    sign_transaction, unsigned_envelope_xdr, validate_simulated_transaction,
+};
 #[cfg(test)]
 mod test;
