@@ -223,6 +223,30 @@ impl TransactionSubmitter {
         })
     }
 
+    /// Sleeps until the next poll is due. Returns `false` when polling should
+    /// stop: the poll cap is reached or the policy's deadline has passed.
+    fn wait_before_next_poll(
+        policy: &SubmissionPolicy,
+        clock: &dyn Clock,
+        started: Instant,
+        poll: u32,
+    ) -> bool {
+        if poll + 1 >= policy.max_polls {
+            return false;
+        }
+        match policy.deadline {
+            Some(deadline) => {
+                let elapsed = clock.now().duration_since(started);
+                if elapsed >= deadline {
+                    return false;
+                }
+                clock.sleep(policy.delay_for(poll).min(deadline - elapsed));
+            }
+            None => clock.sleep(policy.delay_for(poll)),
+        }
+        true
+    }
+
     /// Polls `fetch` until the transaction leaves `NOT_FOUND`/`PENDING`
     /// (returned as `Ok`), the policy's poll cap or deadline is reached
     /// (`Err(SdkError::SettlementTimeout)`), or `fetch` itself errors
@@ -241,7 +265,18 @@ impl TransactionSubmitter {
     {
         let mut last_status = String::from("NOT_FOUND");
         for poll in 0..policy.max_polls {
-            let mut result = fetch()?;
+            let mut result = match fetch() {
+                Ok(result) => result,
+                // The hash is already known, so a poll that timed out says
+                // nothing about the transaction itself: keep waiting.
+                Err(SdkError::Timeout { .. }) => {
+                    if !Self::wait_before_next_poll(policy, clock, started, poll) {
+                        break;
+                    }
+                    continue;
+                }
+                Err(other) => return Err(other),
+            };
             last_status.clone_from(&result.status);
             if result.status.eq_ignore_ascii_case("FAILED") {
                 return Err(SdkError::TransactionFailed {
@@ -253,18 +288,8 @@ impl TransactionSubmitter {
                 result.hash = Some(hash.to_string());
                 return Ok(result);
             }
-            if poll + 1 >= policy.max_polls {
+            if !Self::wait_before_next_poll(policy, clock, started, poll) {
                 break;
-            }
-            if let Some(deadline) = policy.deadline {
-                let elapsed = clock.now().duration_since(started);
-                if elapsed >= deadline {
-                    break;
-                }
-                let wait = policy.delay_for(poll).min(deadline - elapsed);
-                clock.sleep(wait);
-            } else {
-                clock.sleep(policy.delay_for(poll));
             }
         }
         Err(SdkError::SettlementTimeout {
@@ -437,6 +462,37 @@ mod tests {
                 Duration::from_millis(500),
             ]
         );
+    }
+
+    #[test]
+    fn a_timed_out_poll_does_not_abort_the_wait() {
+        let clock = FakeClock::new();
+        let mut calls = 0;
+        let outcome = poll(&SubmissionPolicy::default(), &clock, || {
+            calls += 1;
+            if calls == 1 {
+                Err(SdkError::Timeout {
+                    timeout: Duration::from_secs(10),
+                })
+            } else {
+                Ok(result("SUCCESS"))
+            }
+        });
+        assert!(outcome.is_ok());
+        assert_eq!(clock.sleeps().len(), 1);
+    }
+
+    #[test]
+    fn polls_that_only_time_out_end_as_settlement_timeout() {
+        let clock = FakeClock::new();
+        let policy = SubmissionPolicy::default().with_max_polls(3);
+        let err = poll(&policy, &clock, || {
+            Err(SdkError::Timeout {
+                timeout: Duration::from_secs(10),
+            })
+        })
+        .unwrap_err();
+        assert!(matches!(err, SdkError::SettlementTimeout { polls: 3, .. }));
     }
 
     #[test]

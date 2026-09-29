@@ -1,13 +1,21 @@
 //! Specialized error handling for SDK
 
+use std::time::Duration;
+
 /// Failures that can occur while building, signing, submitting, or querying
 /// through the SDK's RPC-backed clients.
 #[derive(Debug)]
 pub enum SdkError {
     /// A network/HTTP-level failure talking to the RPC endpoint — the
-    /// endpoint is unreachable, the connection times out, or the response
-    /// body can't be read.
+    /// endpoint is unreachable, the connection is refused or reset, or the
+    /// response body can't be read. Timeouts are reported separately as
+    /// [`SdkError::Timeout`].
     TransportError(String),
+    /// The RPC endpoint did not answer within the client's per-request
+    /// timeout (connecting, sending, or reading the response). For a write
+    /// (`sendTransaction`) this is ambiguous: the node may have received the
+    /// transaction, so check its hash before resubmitting.
+    Timeout { timeout: Duration },
     /// The invoked contract trapped (panicked) during `simulateTransaction`.
     SimulationError(String),
     /// The contract rejected the call with a specific on-chain `SASError`
@@ -96,6 +104,9 @@ impl std::fmt::Display for SdkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SdkError::TransportError(msg) => write!(f, "network error: {msg}"),
+            SdkError::Timeout { timeout } => {
+                write!(f, "RPC request timed out after {timeout:?}")
+            }
             SdkError::SimulationError(msg) => write!(f, "simulation failed: {msg}"),
             SdkError::ContractError(code) => write!(f, "contract rejected the call (error {code})"),
             SdkError::DecodingError(msg) => write!(f, "{msg}"),

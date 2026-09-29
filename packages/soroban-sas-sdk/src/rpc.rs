@@ -459,7 +459,7 @@ impl RpcClient {
             let response = self.agent.post(&self.network_url).send_json(request);
 
             match response {
-                Ok(resp) => return read_body_bounded(resp, self.max_response_bytes),
+                Ok(resp) => return read_body_bounded(resp, self.max_response_bytes, self.timeout),
                 Err(ureq::Error::Status(429, resp)) => {
                     let retry_after_dur = resp
                         .header("Retry-After")
@@ -476,7 +476,7 @@ impl RpcClient {
 
                     return Err(SdkError::RateLimited { retries: attempt });
                 }
-                Err(err) => return Err(SdkError::TransportError(err.to_string())),
+                Err(err) => return Err(classify_transport_error(&err, self.timeout)),
             }
         }
     }
@@ -486,7 +486,11 @@ impl RpcClient {
 /// [`SdkError::ResponseTooLarge`] if the announced `Content-Length` exceeds
 /// `limit` or if the body turns out to be longer than `limit` on the wire
 /// (covering chunked responses with no declared length).
-fn read_body_bounded(response: ureq::Response, limit: usize) -> Result<String, SdkError> {
+fn read_body_bounded(
+    response: ureq::Response,
+    limit: usize,
+    timeout: Duration,
+) -> Result<String, SdkError> {
     if let Some(len) = response
         .header("Content-Length")
         .and_then(|v| v.trim().parse::<usize>().ok())
@@ -506,7 +510,7 @@ fn read_body_bounded(response: ureq::Response, limit: usize) -> Result<String, S
         .into_reader()
         .take(limit as u64 + 1)
         .read_to_end(&mut buf)
-        .map_err(|err| SdkError::TransportError(err.to_string()))?;
+        .map_err(|err| classify_transport_error(&err, timeout))?;
     if read > limit {
         return Err(SdkError::ResponseTooLarge {
             limit,
@@ -514,6 +518,28 @@ fn read_body_bounded(response: ureq::Response, limit: usize) -> Result<String, S
         });
     }
     String::from_utf8(buf).map_err(|err| SdkError::TransportError(err.to_string()))
+}
+
+/// Maps a low-level HTTP failure to [`SdkError::Timeout`] when anything in
+/// its source chain is an I/O timeout, and to [`SdkError::TransportError`]
+/// otherwise. The single place that decides what counts as a timeout.
+fn classify_transport_error(
+    err: &(dyn std::error::Error + 'static),
+    timeout: Duration,
+) -> SdkError {
+    let mut current = Some(err);
+    while let Some(e) = current {
+        if let Some(io) = e.downcast_ref::<std::io::Error>() {
+            if matches!(
+                io.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ) {
+                return SdkError::Timeout { timeout };
+            }
+        }
+        current = e.source();
+    }
+    SdkError::TransportError(err.to_string())
 }
 
 /// Builds the `ureq` agent used for every [`RpcClient`] request, with
@@ -1234,8 +1260,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(
-            matches!(err, SdkError::TransportError(_)),
-            "expected SdkError::TransportError, got {err:?}"
+            matches!(err, SdkError::Timeout { .. }),
+            "expected SdkError::Timeout, got {err:?}"
         );
         assert!(
             elapsed >= Duration::from_millis(400),
@@ -1246,6 +1272,29 @@ mod tests {
             elapsed < Duration::from_secs(2),
             "hung node took {elapsed:?} to fail; timeout not applied"
         );
+    }
+
+    /// Headers arrive, then the body stalls: still a timeout, not a generic
+    /// transport failure.
+    #[test]
+    fn stalled_response_body_is_reported_as_a_timeout() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{",
+                );
+                held.push(stream);
+            }
+        });
+
+        let client = RpcClient::new(url.as_str()).with_timeout(Duration::from_millis(500));
+        let err = client.get_transaction("deadbeef").unwrap_err();
+        assert!(matches!(err, SdkError::Timeout { .. }), "got {err:?}");
     }
 
     // --- Issue #136: response bodies are bounded before JSON / XDR decode ---
