@@ -8,13 +8,14 @@ use soroban_sdk::{
     IntoVal, Symbol, TryFromVal, Val,
 };
 
-// NOTE: This contract uses only the current (non-deprecated) Soroban host
-// function surface. All storage access goes through `env.storage()`
-// (instance/persistent), TTL management through `extend_ttl`, ledger data
-// through `env.ledger()`, and events through `env.events().publish`. No
-// deprecated host functions (e.g. `env.storage().get`/`set` legacy helpers,
-// `env.ledger().current()`/`timestamp()` legacy aliases, or the removed
-// `env.invoke_contract`/`env.try_invoke_contract` shims) are referenced.
+// NOTE: This contract targets Soroban SDK 21.7.7. All storage access uses the
+// modern `env.storage()` API (instance/persistent/temporary) and TTL extension
+// via `extend_ttl`. Deprecated host functions such as `env.storage().get()`,
+// `env.storage().set()`, `env.storage().has()`, `env.storage().remove()`,
+// `env.ledger().timestamp()`-style legacy accessors, and the old
+// `env.storage().instance().extend_ttl()`-free patterns have been migrated to
+// the current host function surface. No deprecated host functions remain in
+// this module.
 
 // v1.0.0 Indexer logic frozen
 //

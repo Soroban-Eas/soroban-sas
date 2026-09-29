@@ -1,5 +1,5 @@
-#![allow(unexpected_cfgs)]
 #![no_std]
+#![allow(unused_variables)]
 
 use soroban_sas_common::{
     events::{
@@ -27,21 +27,10 @@ pub const MAX_KNOWN_VERSION: u32 = 2;
 mod storage;
 use storage::*;
 
-/// Returns the current ledger sequence number.
-///
-/// Centralizes the ledger-sequence read so the contract has a single place
-/// to migrate when the Soroban host interface changes. `Env::ledger()` is
-/// the supported, non-deprecated accessor for ledger metadata; the older
-/// `env.ledger().sequence()` style host functions have been removed from
-/// the SDK, so all reads go through this helper.
-fn current_ledger_sequence(env: &Env) -> u32 {
-    env.ledger().sequence()
-}
-
 fn extend_instance_ttl(env: &Env) {
     env.storage()
         .instance()
-        .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        .extend_ttl(&LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
 }
 
 /// Pushes a schema record's archival horizon back out to the shared
@@ -56,7 +45,7 @@ fn extend_instance_ttl(env: &Env) {
 fn renew_schema_record(env: &Env, uid: &UID) {
     env.storage()
         .persistent()
-        .extend_ttl(uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        .extend_ttl(uid, &LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
 }
 
 /// Reads the registry admin, or `Err(NotInitialized)` when the registry has
@@ -73,7 +62,7 @@ fn registry_admin(env: &Env) -> Result<Address, SASError> {
 fn require_registry_admin(env: &Env) -> Address {
     match registry_admin(env) {
         Ok(admin) => admin,
-        Err(error) => panic_with_error!(env, error),
+        Err(error) => panic_with_error!(env, &error),
     }
 }
 
@@ -129,10 +118,6 @@ fn validate_upgrade(
 /// actually observes always corresponds to an activation that durably stuck.
 fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_version: u32) {
     let old_version: u32 = env.storage().instance().get(&REGISTRY_VERSION).unwrap_or(1);
-    // Touch the ledger sequence through the supported accessor so the
-    // upgrade path exercises the same host interface the rest of the
-    // contract relies on, keeping the migration complete.
-    let _ledger = current_ledger_sequence(env);
     // Soroban does not expose a way to read the currently installed WASM hash
     // from within the contract itself, so the first upgrade on a given
     // deployment has no prior tracked hash and reports the all-zero "unknown"
@@ -286,20 +271,20 @@ fn is_owner_address(env: &Env, uid: &UID, who: &Address) -> bool {
 fn validate_owner_set(env: &Env, owners: &Vec<Address>, threshold: u32) {
     let length = owners.len();
     if length == 0 || length > MAX_OWNER_SET {
-        panic_with_error!(env, SASError::LimitExceeded);
+        panic_with_error!(env, &SASError::LimitExceeded);
     }
     if threshold == 0 || threshold > length {
-        panic_with_error!(env, SASError::InvalidValue);
+        panic_with_error!(env, &SASError::InvalidValue);
     }
 
     let mut seen: Vec<Address> = Vec::new(env);
     let mut index = 0;
     while index < length {
         let Some(owner) = owners.get(index) else {
-            panic_with_error!(env, SASError::InvalidValue);
+            panic_with_error!(env, &SASError::InvalidValue);
         };
         if members_contain(&seen, &owner) {
-            panic_with_error!(env, SASError::InvalidValue);
+            panic_with_error!(env, &SASError::InvalidValue);
         }
         seen.push_back(owner);
         index = index.saturating_add(1);
@@ -313,7 +298,7 @@ fn finalize_ownership_transfer(env: &Env, uid: &UID, old_owner: &Address, new_ow
     env.storage().persistent().set(&creator_key, new_owner);
     env.storage()
         .persistent()
-        .extend_ttl(&creator_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        .extend_ttl(&creator_key, &LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
     env.storage()
         .persistent()
         .remove(&(PENDING_OWNERSHIP, uid.clone()));
@@ -338,14 +323,14 @@ fn finalize_ownership_transfer(env: &Env, uid: &UID, old_owner: &Address, new_ow
 fn reject_single_sig_transfer_for_multisig(env: &Env, uid: &UID) {
     let (_, threshold) = effective_owner_set(env, uid);
     if threshold > 1 {
-        panic_with_error!(env, SASError::Unauthorized);
+        panic_with_error!(env, &SASError::Unauthorized);
     }
 }
 
 /// Shared precondition check for ownership-transfer entrypoints.
 fn require_transferable_schema(env: &Env, uid: &UID) {
     if !env.storage().persistent().has(uid) {
-        panic_with_error!(env, SASError::SchemaNotFound);
+        panic_with_error!(env, &SASError::SchemaNotFound);
     }
     if env
         .storage()
@@ -353,7 +338,7 @@ fn require_transferable_schema(env: &Env, uid: &UID) {
         .get(&(DEPRECATED, uid.clone()))
         .unwrap_or(false)
     {
-        panic_with_error!(env, SASError::InvalidSchema);
+        panic_with_error!(env, &SASError::InvalidSchema);
     }
 }
 
@@ -365,27 +350,27 @@ fn record_approval(env: &Env, uid: &UID, approver: &Address) -> PendingOwnership
         .persistent()
         .get::<_, PendingOwnershipTransfer>(&pending_key)
     else {
-        panic_with_error!(env, SASError::SchemaNotFound);
+        panic_with_error!(env, &SASError::SchemaNotFound);
     };
 
     let (set, _) = effective_owner_set(env, uid);
     let expected_version = set.map(|s| s.version).unwrap_or(0);
     if pending.owner_set_version != expected_version {
-        panic_with_error!(env, SASError::Unauthorized);
+        panic_with_error!(env, &SASError::Unauthorized);
     }
 
     if !is_owner_address(env, uid, approver) {
-        panic_with_error!(env, SASError::Unauthorized);
+        panic_with_error!(env, &SASError::Unauthorized);
     }
     if members_contain(&pending.approvals, approver) {
-        panic_with_error!(env, SASError::InvalidValue);
+        panic_with_error!(env, &SASError::InvalidValue);
     }
 
     pending.approvals.push_back(approver.clone());
     env.storage().persistent().set(&pending_key, &pending);
     env.storage()
         .persistent()
-        .extend_ttl(&pending_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        .extend_ttl(&pending_key, &LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
 
     let count = pending.approvals.len();
     env.events().publish(
@@ -406,7 +391,7 @@ impl SchemaRegistry {
     pub fn init(env: Env, admin: soroban_sdk::Address) {
         extend_instance_ttl(&env);
         if env.storage().instance().has(&REGISTRY_ADMIN) {
-            panic_with_error!(&env, SASError::AlreadyInitialized);
+            panic_with_error!(&env, &SASError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&REGISTRY_ADMIN, &admin);
@@ -445,14 +430,14 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
         let layout_admin = match validate_upgrade(&env, &new_wasm_hash, new_version) {
             Ok(admin) => admin,
-            Err(error) => panic_with_error!(&env, error),
+            Err(error) => panic_with_error!(&env, &error),
         };
         // Re-read through the panicking accessor so the address that actually
         // authorizes the activation is re-checked against the admin the
         // candidate was validated against, matching `sas` and `indexer`.
         let admin = require_registry_admin(&env);
         if admin != layout_admin {
-            panic_with_error!(&env, SASError::IncompatibleDependency);
+            panic_with_error!(&env, &SASError::IncompatibleDependency);
         }
         admin.require_auth();
         extend_instance_ttl(&env);
@@ -474,7 +459,7 @@ impl SchemaRegistry {
         let admin = require_registry_admin(&env);
         admin.require_auth();
         if amount <= 0 {
-            panic_with_error!(&env, SASError::InvalidValue);
+            panic_with_error!(&env, &SASError::InvalidValue);
         }
 
         let old_fee: Option<(Address, i128)> = env.storage().instance().get(&SCHEMA_FEE);
@@ -561,7 +546,7 @@ impl SchemaRegistry {
         let admin = require_registry_admin(&env);
 
         if !env.storage().persistent().has(&uid) {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         }
 
         authorizer.require_auth();
@@ -571,7 +556,7 @@ impl SchemaRegistry {
             .persistent()
             .get(&(SCHEMA_CREATOR, uid.clone()));
         if authorizer != admin && creator.as_ref() != Some(&authorizer) {
-            panic_with_error!(&env, SASError::Unauthorized);
+            panic_with_error!(&env, &SASError::Unauthorized);
         }
 
         let deprecated_key = (DEPRECATED, uid.clone());
@@ -586,8 +571,8 @@ impl SchemaRegistry {
         env.storage().persistent().set(&deprecated_key, &true);
         env.storage().persistent().extend_ttl(
             &deprecated_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
         );
 
         env.events().publish(
@@ -608,13 +593,13 @@ impl SchemaRegistry {
     pub fn add_delegate(env: Env, uid: UID, delegate: Address) {
         extend_instance_ttl(&env);
         if !env.storage().persistent().has(&uid) {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         }
 
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         let creator: Option<Address> = env.storage().persistent().get(&creator_key);
         let Some(owner) = creator else {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         };
 
         owner.require_auth();
@@ -623,8 +608,8 @@ impl SchemaRegistry {
         env.storage().persistent().set(&delegate_key, &true);
         env.storage().persistent().extend_ttl(
             &delegate_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
         );
 
         env.events().publish(
@@ -646,13 +631,13 @@ impl SchemaRegistry {
     pub fn remove_delegate(env: Env, uid: UID, delegate: Address) {
         extend_instance_ttl(&env);
         if !env.storage().persistent().has(&uid) {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         }
 
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         let creator: Option<Address> = env.storage().persistent().get(&creator_key);
         let Some(owner) = creator else {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         };
 
         owner.require_auth();
@@ -681,7 +666,7 @@ impl SchemaRegistry {
     pub fn transfer_schema_ownership(env: Env, uid: UID, new_owner: Address) {
         extend_instance_ttl(&env);
         if !env.storage().persistent().has(&uid) {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         }
 
         if env
@@ -690,7 +675,7 @@ impl SchemaRegistry {
             .get(&(DEPRECATED, uid.clone()))
             .unwrap_or(false)
         {
-            panic_with_error!(&env, SASError::InvalidSchema);
+            panic_with_error!(&env, &SASError::InvalidSchema);
         }
 
         // A schema owned by a multi-signature set can only change hands
@@ -700,7 +685,7 @@ impl SchemaRegistry {
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         let creator: Option<Address> = env.storage().persistent().get(&creator_key);
         let Some(old_owner) = creator else {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         };
 
         old_owner.require_auth();
@@ -708,8 +693,8 @@ impl SchemaRegistry {
         env.storage().persistent().set(&creator_key, &new_owner);
         env.storage().persistent().extend_ttl(
             &creator_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
         );
         renew_schema_record(&env, &uid);
 
@@ -734,7 +719,7 @@ impl SchemaRegistry {
 
         // Ensure schema exists
         let _record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         });
 
         // Multi-signature schemas must move ownership through
@@ -764,7 +749,7 @@ impl SchemaRegistry {
         }
 
         if !authorized {
-            panic_with_error!(&env, SASError::Unauthorized);
+            panic_with_error!(&env, &SASError::Unauthorized);
         }
 
         // Set new owner
@@ -800,7 +785,7 @@ impl SchemaRegistry {
 
         authorizer.require_auth();
         if !is_owner_address(&env, &uid, &authorizer) {
-            panic_with_error!(&env, SASError::Unauthorized);
+            panic_with_error!(&env, &SASError::Unauthorized);
         }
         validate_owner_set(&env, &owners, threshold);
 
@@ -818,7 +803,7 @@ impl SchemaRegistry {
         env.storage().persistent().set(&set_key, &set);
         env.storage()
             .persistent()
-            .extend_ttl(&set_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            .extend_ttl(&set_key, &LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
 
         // Approvals gathered under the previous set can no longer authorize
         // anything, so the transfer is abandoned rather than left to be
@@ -883,14 +868,14 @@ impl SchemaRegistry {
 
         proposer.require_auth();
         if !is_owner_address(&env, &uid, &proposer) {
-            panic_with_error!(&env, SASError::Unauthorized);
+            panic_with_error!(&env, &SASError::Unauthorized);
         }
 
         let Some(current_owner) = schema_creator(&env, &uid) else {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         };
         if current_owner == new_owner {
-            panic_with_error!(&env, SASError::InvalidValue);
+            panic_with_error!(&env, &SASError::InvalidValue);
         }
 
         let (set, threshold) = effective_owner_set(&env, &uid);
@@ -920,8 +905,8 @@ impl SchemaRegistry {
         env.storage().persistent().set(&pending_key, &pending);
         env.storage().persistent().extend_ttl(
             &pending_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
         );
 
         env.events().publish(
@@ -969,7 +954,7 @@ impl SchemaRegistry {
         }
 
         let old_owner = schema_creator(&env, &uid).unwrap_or_else(|| {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         });
         finalize_ownership_transfer(&env, &uid, &old_owner, &pending.new_owner);
 
@@ -991,12 +976,12 @@ impl SchemaRegistry {
 
         canceller.require_auth();
         if !is_owner_address(&env, &uid, &canceller) {
-            panic_with_error!(&env, SASError::Unauthorized);
+            panic_with_error!(&env, &SASError::Unauthorized);
         }
 
         let pending_key = (PENDING_OWNERSHIP, uid.clone());
         if !env.storage().persistent().has(&pending_key) {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         }
         env.storage().persistent().remove(&pending_key);
 
@@ -1011,7 +996,7 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
 
         let mut record = Self::get_schema(env.clone(), uid.clone()).unwrap_or_else(|| {
-            panic_with_error!(&env, SASError::SchemaNotFound);
+            panic_with_error!(&env, &SASError::SchemaNotFound);
         });
 
         // Deprecation is an owner action: the creator, any member of the
@@ -1019,7 +1004,7 @@ impl SchemaRegistry {
         // perform it. Unlike ownership transfer it is not irreversible
         // ownership movement, so a single owner's signature is enough.
         if !is_owner_address(&env, &uid, &sender) {
-            panic_with_error!(&env, SASError::Unauthorized);
+            panic_with_error!(&env, &SASError::Unauthorized);
         }
 
         record.deprecated = true;
@@ -1062,19 +1047,19 @@ impl SchemaRegistry {
         value: i128,
     ) -> UID {
         if value < 0 {
-            panic_with_error!(&env, SASError::InvalidValue);
+            panic_with_error!(&env, &SASError::InvalidValue);
         }
 
         let configured: Option<(Address, i128)> = env.storage().instance().get(&SCHEMA_FEE);
         match &configured {
             Some((fee_token, fee_amount)) => {
                 if &token != fee_token || value != *fee_amount {
-                    panic_with_error!(&env, SASError::FeeMismatch);
+                    panic_with_error!(&env, &SASError::FeeMismatch);
                 }
             }
             None => {
                 if value != 0 {
-                    panic_with_error!(&env, SASError::FeeMismatch);
+                    panic_with_error!(&env, &SASError::FeeMismatch);
                 }
             }
         }
@@ -1088,7 +1073,7 @@ impl SchemaRegistry {
                 .storage()
                 .instance()
                 .get(&TREASURY)
-                .unwrap_or_else(|| panic_with_error!(&env, SASError::TreasuryNotSet));
+                .unwrap_or_else(|| panic_with_error!(&env, &SASError::TreasuryNotSet));
             token::Client::new(&env, &token).transfer(&owner, &treasury, &value);
         }
 
@@ -1104,7 +1089,7 @@ impl SchemaRegistry {
     ) -> UID {
         extend_instance_ttl(&env);
         if let Err(err) = validate_schema_syntax(&env, &schema) {
-            panic_with_error!(&env, err);
+            panic_with_error!(&env, &err);
         }
 
         // Canonical schema identity includes the schema string, resolver
@@ -1115,7 +1100,7 @@ impl SchemaRegistry {
         let uid = soroban_sas_common::schema_uid(&env, &schema, &resolver, revocable);
 
         if env.storage().persistent().has(&uid) {
-            panic_with_error!(&env, SASError::SchemaAlreadyExists);
+            panic_with_error!(&env, &SASError::SchemaAlreadyExists);
         }
 
         let record = SchemaRecord {
@@ -1128,38 +1113,38 @@ impl SchemaRegistry {
         env.storage().persistent().set(&uid, &record);
         env.storage()
             .persistent()
-            .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            .extend_ttl(&uid, &LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         env.storage().persistent().set(&creator_key, &owner);
         env.storage().persistent().extend_ttl(
             &creator_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
         );
 
         let mut count: u32 = if let Some(c) = env.storage().persistent().get(&SCHEMA_COUNT) {
             env.storage().persistent().extend_ttl(
                 &SCHEMA_COUNT,
-                LEDGERS_IN_ONE_YEAR,
-                LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
             );
             c
         } else if env.storage().persistent().has::<u32>(&0u32) {
             // Count is missing but a record exists at index 0 — metadata expired.
-            panic_with_error!(&env, SASError::CountMetadataExpired);
+            panic_with_error!(&env, &SASError::CountMetadataExpired);
         } else {
             0
         };
         env.storage().persistent().set(&count, &uid);
         env.storage()
             .persistent()
-            .extend_ttl(&count, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            .extend_ttl(&count, &LEDGERS_IN_ONE_YEAR, &LEDGERS_IN_ONE_YEAR);
         count += 1;
         env.storage().persistent().set(&SCHEMA_COUNT, &count);
         env.storage().persistent().extend_ttl(
             &SCHEMA_COUNT,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
+            &LEDGERS_IN_ONE_YEAR,
         );
 
         env.events().publish(
@@ -1216,7 +1201,7 @@ impl SchemaRegistry {
         revocable: bool,
     ) -> Option<SchemaRecord> {
         if let Err(err) = validate_schema_syntax(&env, &schema) {
-            panic_with_error!(&env, err);
+            panic_with_error!(&env, &err);
         }
         let uid = soroban_sas_common::schema_uid(&env, &schema, &resolver, revocable);
         Self::get_schema(env, uid)
@@ -1256,8 +1241,8 @@ impl SchemaRegistry {
         {
             env.storage().persistent().extend_ttl(
                 &delegate_key,
-                LEDGERS_IN_ONE_YEAR,
-                LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
             );
             true
         } else {
@@ -1273,8 +1258,8 @@ impl SchemaRegistry {
         if creator.is_some() {
             env.storage().persistent().extend_ttl(
                 &creator_key,
-                LEDGERS_IN_ONE_YEAR,
-                LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
             );
         }
         creator
@@ -1303,8 +1288,8 @@ impl SchemaRegistry {
             if creator == attester {
                 env.storage().persistent().extend_ttl(
                     &creator_key,
-                    LEDGERS_IN_ONE_YEAR,
-                    LEDGERS_IN_ONE_YEAR,
+                    &LEDGERS_IN_ONE_YEAR,
+                    &LEDGERS_IN_ONE_YEAR,
                 );
                 return true;
             }
@@ -1321,8 +1306,8 @@ impl SchemaRegistry {
         {
             env.storage().persistent().extend_ttl(
                 &delegate_key,
-                LEDGERS_IN_ONE_YEAR,
-                LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
             );
             return true;
         }
@@ -1341,8 +1326,8 @@ impl SchemaRegistry {
         if count > 0 {
             env.storage().persistent().extend_ttl(
                 &SCHEMA_COUNT,
-                LEDGERS_IN_ONE_YEAR,
-                LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
             );
         }
         if start >= count {
@@ -1355,8 +1340,8 @@ impl SchemaRegistry {
             if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
                 env.storage().persistent().extend_ttl(
                     &index,
-                    LEDGERS_IN_ONE_YEAR,
-                    LEDGERS_IN_ONE_YEAR,
+                    &LEDGERS_IN_ONE_YEAR,
+                    &LEDGERS_IN_ONE_YEAR,
                 );
                 let is_deprecated: bool = env
                     .storage()
@@ -1368,8 +1353,8 @@ impl SchemaRegistry {
                     {
                         env.storage().persistent().extend_ttl(
                             &uid,
-                            LEDGERS_IN_ONE_YEAR,
-                            LEDGERS_IN_ONE_YEAR,
+                            &LEDGERS_IN_ONE_YEAR,
+                            &LEDGERS_IN_ONE_YEAR,
                         );
                         schemas.push_back(record);
                     }
@@ -1392,8 +1377,8 @@ impl SchemaRegistry {
         if count > 0 {
             env.storage().persistent().extend_ttl(
                 &SCHEMA_COUNT,
-                LEDGERS_IN_ONE_YEAR,
-                LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
+                &LEDGERS_IN_ONE_YEAR,
             );
         }
         if limit == 0 || start >= count {
@@ -1409,8 +1394,8 @@ impl SchemaRegistry {
             if let Some(uid) = env.storage().persistent().get::<u32, UID>(&index) {
                 env.storage().persistent().extend_ttl(
                     &index,
-                    LEDGERS_IN_ONE_YEAR,
-                    LEDGERS_IN_ONE_YEAR,
+                    &LEDGERS_IN_ONE_YEAR,
+                    &LEDGERS_IN_ONE_YEAR,
                 );
                 let is_deprecated: bool = env
                     .storage()
@@ -1422,8 +1407,8 @@ impl SchemaRegistry {
                     {
                         env.storage().persistent().extend_ttl(
                             &uid,
-                            LEDGERS_IN_ONE_YEAR,
-                            LEDGERS_IN_ONE_YEAR,
+                            &LEDGERS_IN_ONE_YEAR,
+                            &LEDGERS_IN_ONE_YEAR,
                         );
                         schemas.push_back(record);
                     }
