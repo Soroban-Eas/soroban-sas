@@ -12,6 +12,31 @@ The Soroban Attestation Service (SAS) is composed of three primary components:
 - Minimal gas overhead.
 - Strict payload boundaries to prevent gas exhaustion attacks.
 
+## WASM Binary Size
+
+Contract WASM artifacts are built with the release profile in the workspace
+Cargo.toml, which already enables the compiler and linker optimizations needed to
+keep deployed bytecode small:
+
+-  opt-level = "z" - optimize for size rather than speed.
+-  lto = true - link-time optimization across all crates.
+-  codegen-units = 1 - maximize cross-unit optimization opportunities.
+-  strip = "symbols" - remove debug and symbol tables from the final binary.
+- debug = 0 - do not embed DFWARF/DWARF debug info.
+-  panic = "abort" - avoid the unwind table and associated landing pads.
+
+The `strip = "symbols"` setting is the key change for binary size: it instructs
+Cargo to run the linker with symbol stripping enabled, so the deployed WASM does
+not carry the name section, DFWARF/DWARF debug info, or the symbol table. Those
+sections are useful for native debugging but are never read by the Soroban host
+when executing a contract, and they can account for a large fraction of the
+artifact bytes that must be uploaded and stored on-chain.
+
+To keep the benefit verifiable, the Makefile exposes a `wasm-size` target that
+prints the byte size of each built contract and fails if any artifact exceeds the
+configured budget. The budget is defined in the Makefile as `WASM_SIZE_LIMIT_BYTES`
+so that a regression in binary size fails the build instead of silpping through.
+
 ---
 
 ## System Overview
@@ -551,7 +576,7 @@ attestation/schema data it governs:
   there is no way to "read the admin address to renew the admin address."
   For this reason every contract renews its instance TTL
   (`soroban_sas_common::extend_instance_ttl`, using the shared
-  `INSTATCE_TTL_THRESHOLD_LEDGERS`/`INSTATCE_EXTEND_TO_LEDGERS` constants)
+  `INSTANCE_TTL_THRESHOLD_LEDGERS`/`INSTANCE_EXTEND_TO_LEDGERS` constants)
   from `init` and from both admin-gated and commonly used public entry
   points, so ordinary traffic keeps configuration alive without any single
   call being solely responsible for it.

@@ -52,6 +52,7 @@ jobs:
       - name: Optimize WASM binaries
         run: |
           cd target/wasm32-unknown-unknown/release
+          export RUSTFLAGS="-C debuginfo=0"
           stellar contract optimize --wasm schema_registry.wasm
           stellar contract optimize --wasm sas.wasm
           stellar contract optimize --wasm soroban_sas_indexer.wasm
@@ -60,6 +61,9 @@ jobs:
               cp "${contract}.wasm" "${contract}.optimized.wasm"
             fi
           done
+          for contract in schema_registry sas soroban_sas_indexer; do
+            wasm-strip "${contract}.optimized.wasm" 2>/dev/null || true
+          done
 
       - name: Compute and print checksums
         id: checksums
@@ -67,6 +71,7 @@ jobs:
           cd target/wasm32-unknown-unknown/release
           sha256sum schema_registry.optimized.wasm sas.optimized.wasm soroban_sas_indexer.optimized.wasm | tee checksums.sha256
           echo "hashes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "### WASM Binary Sizes (bytes)" >> "$GITHUB_STEP_SUMMARY"
           cat checksums.sha256 >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "### WASM Artifacts SHA-256 Checksums" >> "$GITHUB_STEP_SUMMARY"
