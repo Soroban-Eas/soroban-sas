@@ -52,6 +52,13 @@ fi
 
 info "Waiting for Soroban RPC readiness at $RPC_URL (timeout: ${TIMEOUT}s)..."
 
+# Check if docker is running and the service is starting
+if command -v docker >/dev/null 2>&1; then
+    if ! docker ps >/dev/null 2>&1; then
+        warn "Docker daemon is not accessible. Is Docker running?"
+    fi
+fi
+
 START_TIME=$(date +%s)
 LAST_ERROR="No response received yet"
 LAST_RESPONSE=""
