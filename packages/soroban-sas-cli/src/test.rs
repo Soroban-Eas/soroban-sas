@@ -536,7 +536,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
-            None,
+            None, None
         )
         .unwrap_err();
         assert!(set_error.contains("invalid --identity"));
@@ -551,7 +551,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
-            None,
+            None, None
         )
         .unwrap_err();
         assert!(clear_error.contains("invalid --identity"));
@@ -582,7 +582,7 @@ mod tests {
                 OutputFormat::Human,
                 None,
                 None,
-                None,
+                None, None
             )
             .unwrap_err();
             assert_eq!(error, "--amount must be greater than 0");
@@ -655,7 +655,7 @@ mod tests {
                 OutputFormat::Human,
                 None,
                 None,
-                None,
+                None, None
             )
             .unwrap_err();
             assert_eq!(error, "--amount must be greater than 0");
@@ -1174,7 +1174,7 @@ mod online_verification_tests {
             crate::OutputFormat::Json,
             None,
             None,
-            None,
+            None, None
         );
         assert!(res.is_ok());
     }
@@ -1197,7 +1197,7 @@ mod online_verification_tests {
             crate::OutputFormat::Human,
             None,
             None,
-            None,
+            None, None
         );
         assert!(res.is_ok());
     }
@@ -1548,7 +1548,7 @@ mod schema_withdraw_fees_tests {
             OutputFormat::Json,
             None,
             None,
-            None,
+            None, None
         );
         assert!(res.is_ok(), "withdraw-fees should settle: {res:?}");
     }

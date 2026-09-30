@@ -1550,7 +1550,7 @@ fn run_attest(
             // all. The RPC endpoint and network passphrase are resolved
             // after the dry-run exit below, since nothing is signed or sent
             // before then.
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
 
             // Bounded read, same cap as every other file input (#176, #177).
             let raw = io_safety::read_bounded(&csv_file, io_safety::MAX_INPUT_FILE_BYTES)?;
