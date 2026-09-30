@@ -646,6 +646,14 @@ never receives a recipient-less record. The SDK's `AttestationRequestBuilder`
 and the CLI's on-chain issuance commands apply the same shared check before
 building a transaction.
 
+### Indexing progress
+
+A first-time `index_attestation` publishes `IndexingProgress` (`IDXPROG`)
+with the recipient as a topic and the updated recipient, schema, and attester
+counts in the payload. Retries of an identical triple stay silent, so
+consumers can treat each event as one newly indexed UID. See
+[Contract Events](events.md).
+
 ### Indexer Reconciliation
 
 When running under default fail-open mode, any downstream indexing failures emit `IndexFailed(uid)` (`IDXFAIL`) events rather than rolling back core attestation writes. Operators recover missed entries using `SAS::reindex_attestation(uid)`.
@@ -738,6 +746,15 @@ depends on the call:
   wait continues under the policy's poll cap and deadline, and ends in
   `SdkError::SettlementTimeout` if the transaction never settles.
 
+## CLI operations
+
+`soroban-sas` prints RPC and transport failures as a short operator sentence
+(rate limits, unreachable endpoints, and other RPC errors) and keeps the
+original diagnostic in parentheses. Signing commands accept
+`--hardware-wallet ledger|trezor` with `--hd-account`. A hardware wallet
+never falls back to `--secret-key`; the device path is `SAS_LEDGER_DEVICE`
+or `SAS_TREZOR_DEVICE`. `soroban-sas man` writes a groff man page for the
+current command tree (`--path` selects a file).
 ## Mutation Testing
 
 The workspace has a mutation testing baseline measured with `cargo-mutants`.

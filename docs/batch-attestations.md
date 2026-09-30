@@ -12,8 +12,11 @@ it.
 
 For issuing attestations individually or in an on-chain batch, see the main
 [README](../README.md) and [Off-Chain Attestations](offchain-attestations.md)
-(for signed, unsubmitted single attestations). This document is specifically
-about the Merkle commitment primitives.
+(for signed, unsubmitted single attestations). To drive many *on-chain*
+issuances from a data file, see
+[Bulk Attestation Creation from CSV](bulk-csv-attestations.md), which covers
+the `attest bulk` subcommand. This document is specifically about the Merkle
+commitment primitives.
 
 ## `multi_attest` vs. Merkle batch commitments
 

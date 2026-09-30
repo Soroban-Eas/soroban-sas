@@ -62,6 +62,12 @@ impl AttestationRequestBuilder {
         self
     }
 
+    /// Sets the attestation payload using a typed schema struct generated via
+    /// [`schema_to_struct!`].
+    pub fn with_schema_data<T: crate::schema_macro::SchemaType>(self, env: &Env, data: &T) -> Self {
+        self.with_data(data.to_bytes(env))
+    }
+
     /// Sets the expiration time in Unix seconds. `0` (the default) means
     /// the attestation never expires.
     pub fn with_expiration(mut self, ts: u64) -> Self {

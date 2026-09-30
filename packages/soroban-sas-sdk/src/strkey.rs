@@ -9,10 +9,12 @@
 //! `Address::from_string`.
 
 use crate::errors::SdkError;
+use serde::{Deserialize, Serialize};
 use soroban_sdk::{Address, Env, String as SorobanString};
 
 /// The kind of Stellar address a given field accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AddressKind {
     /// An `G...` ed25519 account strkey only.
     Account,
