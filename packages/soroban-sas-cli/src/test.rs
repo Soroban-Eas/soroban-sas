@@ -537,7 +537,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
-None,
+            None,
             None,
             false,
         )
@@ -555,7 +555,7 @@ None,
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
-None,
+            None,
             None,
             false,
         )
@@ -589,9 +589,9 @@ None,
                 OutputFormat::Human,
                 None,
                 None,
-None,
-            None,
-            false,
+                None,
+                None,
+                false,
             )
             .unwrap_err();
             assert_eq!(error, "--amount must be greater than 0");
@@ -666,9 +666,9 @@ None,
                 OutputFormat::Human,
                 None,
                 None,
-None,
-            None,
-            false,
+                None,
+                None,
+                false,
             )
             .unwrap_err();
             assert_eq!(error, "--amount must be greater than 0");
@@ -1187,7 +1187,7 @@ mod online_verification_tests {
             crate::OutputFormat::Json,
             None,
             None,
-None,
+            None,
             None,
             true,
         );
@@ -1212,7 +1212,7 @@ None,
             crate::OutputFormat::Human,
             None,
             None,
-None,
+            None,
             None,
             true,
         );
@@ -1566,7 +1566,7 @@ mod schema_withdraw_fees_tests {
             OutputFormat::Json,
             None,
             None,
-None,
+            None,
             None,
             true,
         );

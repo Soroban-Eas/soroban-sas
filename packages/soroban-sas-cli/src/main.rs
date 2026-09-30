@@ -1214,7 +1214,7 @@ fn main() {
     // Taken before matching on `cli.command`, which moves it.
     let network = cli.network;
     let identity = cli.identity;
-let timeout = cli.timeout;
+    let timeout = cli.timeout;
     let no_cache = cli.no_cache;
     let hardware = cli.hardware_wallet.map(|kind| hardware::HardwareWallet {
         kind,
@@ -1224,15 +1224,15 @@ let timeout = cli.timeout;
         Some(Commands::Offchain { action }) => {
             run_offchain(action, output, network, identity, timeout, hardware)
         }
-        Some(Commands::Schema { action }) => {
-            run_schema(action, output, network, identity, timeout, hardware, no_cache)
-        }
+        Some(Commands::Schema { action }) => run_schema(
+            action, output, network, identity, timeout, hardware, no_cache,
+        ),
         Some(Commands::Attest { action }) => {
             run_attest(action, output, network, identity, timeout, hardware)
         }
-        Some(Commands::Sas { action }) => {
-            run_sas(action, output, network, identity, timeout, hardware, no_cache)
-        }
+        Some(Commands::Sas { action }) => run_sas(
+            action, output, network, identity, timeout, hardware, no_cache,
+        ),
         Some(Commands::Query { action }) => run_query(action, output, network, timeout),
         Some(Commands::Delegate { action }) => {
             run_delegate(action, output, network, identity, timeout, hardware)
@@ -1289,7 +1289,7 @@ fn run_sas(
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-let (human_msg, json_val) =
+            let (human_msg, json_val) =
                 cache::cached_or(&["sas-get-fee", &rpc_url, &contract_id], no_cache, || {
                     let rpc = build_rpc(rpc_url.clone(), timeout);
                     let client = soroban_sas_sdk::client::SASClient::new(contract_id.clone());
@@ -2475,7 +2475,7 @@ fn run_schema(
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid_bytes = parse_uid(&uid)?;
-let (human, json_val) = cache::cached_or(
+            let (human, json_val) = cache::cached_or(
                 &["schema-get", &rpc_url, &registry_contract_id, &uid],
                 no_cache,
                 || {
@@ -2520,7 +2520,7 @@ let (human, json_val) = cache::cached_or(
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-let revocable_str = revocable.to_string();
+            let revocable_str = revocable.to_string();
             let (human, json_val) = cache::cached_or(
                 &[
                     "schema-get-by-content",
@@ -2781,7 +2781,7 @@ let revocable_str = revocable.to_string();
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-let (human, json_val) = cache::cached_or(
+            let (human, json_val) = cache::cached_or(
                 &["schema-get-fee", &rpc_url, &registry_contract_id],
                 no_cache,
                 || {
@@ -2816,7 +2816,7 @@ let (human, json_val) = cache::cached_or(
             rpc_url,
         } => {
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-let (human, json_val) = cache::cached_or(
+            let (human, json_val) = cache::cached_or(
                 &["schema-get-treasury", &rpc_url, &registry_contract_id],
                 no_cache,
                 || {
