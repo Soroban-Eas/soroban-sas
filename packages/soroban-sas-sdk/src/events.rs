@@ -96,8 +96,11 @@ pub enum SasEvent {
     IndexerStrictUpdated(IndexerStrictUpdated),
 }
 
+use serde::Serialize;
+
 /// Why an event could not be decoded as a SAS event.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventParseError {
     /// The event's first topic is not one of the SAS topics.
     NotSasEvent,
@@ -317,7 +320,8 @@ impl TrustedContracts {
 
 /// Whether a decoded event actually came from the contract bound to its
 /// protocol role.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventTrust {
     /// The emitting contract ID matches the allowlisted ID for this event's
     /// role.

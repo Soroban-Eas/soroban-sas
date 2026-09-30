@@ -1,7 +1,9 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
+mod hardware;
 mod identity;
 mod io_safety;
+mod manpage;
 mod network;
 mod offchain;
 
@@ -43,7 +45,14 @@ fn resolve_network_passphrase(
 /// `SAS_SECRET_KEY` by clap) against the global `--identity` shorthand
 /// (issue #174): an explicit flag always wins; `--identity` looks the key up
 /// from the local identity store only when the flag is entirely absent.
-fn resolve_secret_key(explicit: Option<String>, identity: Option<&str>) -> Result<String, String> {
+fn resolve_secret_key(
+    explicit: Option<String>,
+    identity: Option<&str>,
+    hardware: Option<hardware::HardwareWallet>,
+) -> Result<String, String> {
+    if let Some(wallet) = hardware {
+        return Err(wallet.signing_error());
+    }
     if let Some(secret) = explicit {
         eprintln!(
             "warning: --secret-key / SAS_SECRET_KEY is deprecated and will be removed \
@@ -56,7 +65,8 @@ fn resolve_secret_key(explicit: Option<String>, identity: Option<&str>) -> Resul
     match identity {
         Some(name) => identity::resolve_identity_secret(name),
         None => Err(
-            "missing --secret-key: pass it directly, set SAS_SECRET_KEY, or pass --identity"
+            "missing --secret-key: pass it directly, set SAS_SECRET_KEY, pass --identity, \
+             or pass --hardware-wallet"
                 .to_string(),
         ),
     }
@@ -99,10 +109,56 @@ fn emit_ok(
     Ok(())
 }
 
+/// Rewrites raw RPC and transport failures into a short operator message
+/// (issue #327). Messages that are not RPC failures are returned unchanged.
+fn humanize_rpc_failure(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    let rpc_failure = lower.starts_with("rpc error:")
+        || lower.starts_with("network error:")
+        || lower.contains("jsonrpc")
+        || lower.contains("too many requests")
+        || lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("error sending request")
+        || lower.contains("failed to lookup")
+        || lower.contains("name or service not known")
+        || lower.contains("rpc response");
+    if !rpc_failure {
+        return message.to_string();
+    }
+    if lower.contains("429") || lower.contains("too many requests") || lower.contains("rate limit")
+    {
+        return format!(
+            "the Soroban RPC endpoint is rate-limiting requests. Wait and retry, or pass a \
+             different --rpc-url. ({message})"
+        );
+    }
+    if lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("error sending request")
+        || lower.contains("failed to lookup")
+        || lower.contains("name or service not known")
+        || lower.starts_with("network error:")
+    {
+        return format!(
+            "could not reach the Soroban RPC endpoint. Check --rpc-url or --network, and \
+             confirm the node is online. ({message})"
+        );
+    }
+    format!(
+        "the Soroban RPC call failed. Confirm the endpoint, contract id, and network \
+         passphrase, then retry. ({message})"
+    )
+}
+
 /// Prints a failure in the requested format: `error: <msg>` on stderr for
 /// `--output human`, or a `{"status":"error","message":"<msg>"}` envelope on
-/// stdout for `--output json`.
+/// stdout for `--output json`. RPC failures are rewritten by
+/// [`humanize_rpc_failure`] before they are printed.
 fn emit_error(output: OutputFormat, message: &str) {
+    let message = humanize_rpc_failure(message);
     match output {
         OutputFormat::Human => eprintln!("error: {message}"),
         OutputFormat::Json => {
@@ -278,6 +334,25 @@ struct Cli {
         long,
         global = true,
         value_enum,
+        help = "Sign with a hardware wallet instead of --secret-key or --identity. \
+                Requires the device path in SAS_LEDGER_DEVICE or SAS_TREZOR_DEVICE. \
+                Signing commands fail closed and never fall back to a software key \
+                (issue #328)."
+    )]
+    hardware_wallet: Option<hardware::HardwareWalletKind>,
+
+    #[arg(
+        long,
+        global = true,
+        default_value_t = 0,
+        help = "BIP-44 account index used with --hardware-wallet (issue #328)."
+    )]
+    hd_account: u32,
+
+    #[arg(
+        long,
+        global = true,
+        value_enum,
         default_value = "human",
         help = "Output format for all subcommands. `json` emits \
                 {\"status\":\"ok\",\"data\":…} on success and \
@@ -321,6 +396,12 @@ enum Commands {
     Offchain {
         #[command(subcommand)]
         action: OffchainCommands,
+    },
+    /// Write a groff man page for soroban-sas (issue #330)
+    Man {
+        /// Write the page to this file instead of stdout
+        #[arg(long, help = "Write the man page to this file instead of stdout")]
+        path: Option<std::path::PathBuf>,
     },
 }
 
@@ -1011,13 +1092,26 @@ fn main() {
     // Taken before matching on `cli.command`, which moves it.
     let network = cli.network;
     let identity = cli.identity;
+    let hardware = cli.hardware_wallet.map(|kind| hardware::HardwareWallet {
+        kind,
+        account: cli.hd_account,
+    });
     let result = match cli.command {
-        Some(Commands::Offchain { action }) => run_offchain(action, output, network, identity),
-        Some(Commands::Schema { action }) => run_schema(action, output, network, identity),
-        Some(Commands::Attest { action }) => run_attest(action, output, network, identity),
-        Some(Commands::Sas { action }) => run_sas(action, output, network, identity),
+        Some(Commands::Offchain { action }) => {
+            run_offchain(action, output, network, identity, hardware)
+        }
+        Some(Commands::Schema { action }) => {
+            run_schema(action, output, network, identity, hardware)
+        }
+        Some(Commands::Attest { action }) => {
+            run_attest(action, output, network, identity, hardware)
+        }
+        Some(Commands::Sas { action }) => run_sas(action, output, network, identity, hardware),
         Some(Commands::Query { action }) => run_query(action, output, network),
-        Some(Commands::Delegate { action }) => run_delegate(action, output, network, identity),
+        Some(Commands::Delegate { action }) => {
+            run_delegate(action, output, network, identity, hardware)
+        }
+        Some(Commands::Man { path }) => manpage::write_man_page(&Cli::command(), path.as_deref()),
         _ => emit_ok(
             output,
             || println!("CLI initialized"),
@@ -1058,6 +1152,7 @@ fn run_sas(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1083,7 +1178,7 @@ fn run_sas(
             rpc_url,
         } => {
             validate_fee_amount(amount)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -1101,7 +1196,7 @@ fn run_sas(
             contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -1170,6 +1265,7 @@ fn run_attest(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1186,7 +1282,7 @@ fn run_attest(
             allow_local_time,
             max_ledger_skew,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -1274,7 +1370,7 @@ fn run_attest(
             contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -1309,7 +1405,7 @@ fn run_attest(
             contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -1354,7 +1450,7 @@ fn run_attest(
             contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -1761,6 +1857,7 @@ fn run_delegate(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1773,7 +1870,7 @@ fn run_delegate(
             secret_key,
             output: output_file,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
@@ -1809,7 +1906,7 @@ fn run_delegate(
             secret_key,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw = io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedOffchainAttestation = serde_json::from_str(&raw)
@@ -1842,7 +1939,7 @@ fn run_delegate(
             secret_key,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let raw = io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let signed: offchain::SignedDelegatedRevocation = serde_json::from_str(&raw)
@@ -1876,6 +1973,7 @@ fn run_schema(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
@@ -1892,7 +1990,7 @@ fn run_schema(
             // or oversized schema exits 1 with a clear message and never pays
             // for a simulation.
             validate_schema_syntax(&schema)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -2024,7 +2122,7 @@ fn run_schema(
             rpc_url,
         } => {
             validate_schema_syntax(&schema)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -2056,7 +2154,7 @@ fn run_schema(
             registry_contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -2082,7 +2180,7 @@ fn run_schema(
             registry_contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -2107,7 +2205,7 @@ fn run_schema(
             registry_contract_id,
             rpc_url,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -2134,7 +2232,7 @@ fn run_schema(
             rpc_url,
         } => {
             validate_fee_amount(amount)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
@@ -2230,6 +2328,7 @@ fn run_offchain(
     output: OutputFormat,
     network: Option<String>,
     identity: Option<String>,
+    hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
     match action {
         OffchainCommands::Sign {
@@ -2240,7 +2339,7 @@ fn run_offchain(
             contract_id,
             out_file,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;

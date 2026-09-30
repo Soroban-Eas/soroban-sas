@@ -865,7 +865,8 @@ pub struct LedgerClock {
 }
 
 /// Why the network ledger time could not be used as-is for issuance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum IssuanceTimeError {
     /// The ledger close time is more than `max_skew_secs` behind the local
     /// clock — the RPC node is lagging, or the local clock jumped forward.
