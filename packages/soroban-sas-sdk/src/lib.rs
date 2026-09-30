@@ -19,9 +19,17 @@ pub mod simulate;
 pub mod strkey;
 pub mod transaction;
 
+pub mod chaos;
 pub mod errors;
 pub mod events;
-pub use rpc::RateLimitPolicy;
+pub mod schema_macro;
+pub use attestation_builder::AttestationRequestBuilder;
+pub use rpc::{RateLimitPolicy, RpcBackend};
 pub use schema_builder::SchemaBuilder;
+pub use schema_macro::SchemaType;
+pub use simulate::{
+    build_invoke_transaction, build_simulate_transaction_xdr, decode_result, encode_arg,
+    sign_transaction, unsigned_envelope_xdr, validate_simulated_transaction,
+};
 #[cfg(test)]
 mod test;

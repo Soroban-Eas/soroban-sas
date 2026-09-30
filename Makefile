@@ -1,5 +1,12 @@
-.PHONY: all build build-contracts build-native test bench smoke-local clean print-contract-artifacts \
-	fmt lint install-hooks localnet localnet-down deploy-local
+SHELL := /usr/bin/env bash
+.SHELLFLAGS := -eu -o pipefail -c
+
+CARGO ?= cargo
+DOCKER ?= docker
+MAKE ?= make
+
+# Auto-detect Docker Compose v2 (docker compose) vs v1 (docker-compose)
+DOCKER_COMPOSE ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then echo "$(DOCKER) compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "$(DOCKER) compose"; fi)
 
 CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer
 WASM_TARGET := wasm32-unknown-unknown
@@ -9,16 +16,35 @@ CONTRACT_WASM := \
 	$(RELEASE_DIR)/sas.wasm \
 	$(RELEASE_DIR)/soroban_sas_indexer.wasm
 
+.PHONY: all help build build-contracts build-native test bench smoke-local clean print-contract-artifacts \
+	fmt lint install-hooks localnet localnet-down deploy-local
+
 all: build test
+
+help:
+	@echo "Available targets:"
+	@echo "  build              Build all release contract WASM artifacts"
+	@echo "  build-contracts    Build contract WASMs using $(CARGO)"
+	@echo "  build-native       Build native workspace binaries"
+	@echo "  test               Run cargo test across workspace"
+	@echo "  bench              Run cargo benchmarks"
+	@echo "  fmt                Format code across workspace"
+	@echo "  lint               Run formatting check and clippy linter"
+	@echo "  install-hooks      Install git hooks into .git/hooks"
+	@echo "  localnet           Start localnet Quickstart node and wait for readiness"
+	@echo "  localnet-down      Stop localnet containers"
+	@echo "  deploy-local       Deploy contracts to local network"
+	@echo "  smoke-local        Run local smoke test in docker"
+	@echo "  clean              Clean build artifacts"
 
 build: build-contracts
 
 build-contracts:
-	cargo build --release --target $(WASM_TARGET) $(foreach package,$(CONTRACT_PACKAGES),--package $(package))
+	$(CARGO) build --release --target $(WASM_TARGET) $(foreach package,$(CONTRACT_PACKAGES),--package $(package))
 	@$(MAKE) --no-print-directory print-contract-artifacts
 
 build-native:
-	cargo build --workspace
+	$(CARGO) build --workspace
 
 print-contract-artifacts:
 	@echo "Expected contract artifacts:"
@@ -32,35 +58,37 @@ print-contract-artifacts:
 	done
 
 test:
-	cargo test --workspace
+	$(CARGO) test --workspace
 
 smoke-local:
 	bash ./scripts/docker_smoke_test.sh
 
 fmt:
-	cargo fmt --all
+	$(CARGO) fmt --all
 
 # Same gates as CI's Formatting and Clippy jobs (and the pre-push hook).
 lint:
-	cargo fmt --all -- --check
-	cargo clippy --workspace --all-targets -- -D warnings
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
 install-hooks:
-	./scripts/install_hooks.sh
+	bash ./scripts/install_hooks.sh
 
 # Standalone node from docker-compose.yml; see docs/local-development.md.
 localnet:
-	docker compose up -d stellar-quickstart
-	./scripts/wait_for_localnet.sh
+	@./scripts/docker_preflight.sh
+	@echo "Starting Stellar Quickstart..."
+	$(DOCKER_COMPOSE) up -d stellar-quickstart
+	bash ./scripts/wait_for_localnet.sh
 
 localnet-down:
-	docker compose down
+	$(DOCKER_COMPOSE) down -v --remove-orphans
 
 deploy-local:
-	./scripts/deploy.sh --network local
+	bash ./scripts/deploy.sh --network local
 
 bench:
-	cargo bench
+	$(CARGO) bench
 
 clean:
-	cargo clean
+	$(CARGO) clean

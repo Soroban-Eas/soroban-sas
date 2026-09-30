@@ -1,7 +1,8 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 use soroban_sas_common::{
-    events::CONTRACT_UPGRADED, ContractUpgradedEvent, SASError, LEDGERS_IN_ONE_YEAR, UID,
+    events::{CONTRACT_UPGRADED, INDEXING_PROGRESS},
+    ContractUpgradedEvent, IndexingProgressEvent, SASError, LEDGERS_IN_ONE_YEAR, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env,
@@ -562,6 +563,21 @@ impl Indexer {
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
+
+        // Progress for off-chain consumers (issue #315). Emitted only on the
+        // first successful index of this UID, after the counters have moved.
+        let recipient_total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
+        let schema_total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
+        let attester_total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
+        env.events().publish(
+            (INDEXING_PROGRESS, recipient),
+            IndexingProgressEvent {
+                uid,
+                recipient_total,
+                schema_total,
+                attester_total,
+            },
+        );
         extend_instance_ttl(&env);
     }
 

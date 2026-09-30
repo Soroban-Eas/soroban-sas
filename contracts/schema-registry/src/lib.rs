@@ -1423,6 +1423,8 @@ impl SchemaRegistry {
 }
 
 #[cfg(test)]
+mod authorization_test;
+#[cfg(test)]
 mod owner_multisig_test;
 #[cfg(test)]
 mod test;
