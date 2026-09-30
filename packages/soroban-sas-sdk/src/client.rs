@@ -3653,8 +3653,14 @@ mod tests {
         let account_xdr = LedgerEntryData::Account(account_entry)
             .to_xdr_base64(Limits::none())
             .unwrap();
+        // Build the real XDR-encoded LedgerKey::Account so it matches
+        // what fetch_sequence_numbers looks up in the response map.
+        let ledger_key = soroban_sdk::xdr::LedgerKey::Account(soroban_sdk::xdr::LedgerKeyAccount {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(public_key))),
+        });
+        let ledger_key_b64 = ledger_key.to_xdr_base64(Limits::none()).unwrap();
         let ledger_entries_body = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"result":{{"latestLedger":100,"entries":[{{"key":"AAAAAQ==","xdr":"{account_xdr}","lastModifiedLedgerSeq":100}}]}}}}"#
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"latestLedger":100,"entries":[{{"key":"{ledger_key_b64}","xdr":"{account_xdr}","lastModifiedLedgerSeq":100}}]}}}}"#
         );
 
         // 3. simulateTransaction for RestoreFootprintOp
@@ -3709,8 +3715,16 @@ mod tests {
         let entry_xdr = LedgerEntryData::Account(entry)
             .to_xdr_base64(Limits::none())
             .unwrap();
+        // Generate the real XDR-encoded LedgerKey::Account so it matches
+        // what fetch_sequence_numbers looks up in the response map.
+        let key = soroban_sdk::xdr::LedgerKey::Account(soroban_sdk::xdr::LedgerKeyAccount {
+            account_id: AccountId(soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(Uint256(
+                public_key,
+            ))),
+        });
+        let key_b64 = key.to_xdr_base64(Limits::none()).unwrap();
         format!(
-            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"entries":[{{"key":"AAAAAQ==","xdr":"{entry_xdr}","lastModifiedLedgerSeq":100}}]}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"entries":[{{"key":"{key_b64}","xdr":"{entry_xdr}","lastModifiedLedgerSeq":100}}]}}}}"#
         )
     }
 
