@@ -123,6 +123,14 @@ cargo run -p soroban-sas-cli -- --output json query by-attester \
 # One page (1-100 UIDs) of a large history; follow `next_cursor` until it is null
 cargo run -p soroban-sas-cli -- --output json query by-schema \
   --uid UID... --contract-id C... --rpc-url URL --cursor 0 --limit 50
+# Preview a whole CSV batch without submitting anything
+cargo run -p soroban-sas-cli -- --output json attest bulk \
+  --csv-file attestations.csv --contract-id C... --rpc-url URL --dry-run
+# Issue it for real
+cargo run -p soroban-sas-cli -- --output json attest bulk \
+  --csv-file attestations.csv --secret-key S... \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --contract-id C... --rpc-url URL
 ```
 
 Without `--cursor`/`--limit`, `query by-*` returns the complete history as
@@ -301,6 +309,9 @@ TMPDIR=/tmp cargo test --workspace
 - [Batch Attestations (Merkle Commitments)](docs/batch-attestations.md):
   when to use off-chain Merkle batching instead of on-chain `multi_attest`,
   the normative leaf/node hashing rules, and a selective-disclosure example.
+- [Bulk Attestation Creation from CSV](docs/bulk-csv-attestations.md): the
+  `attest bulk` CSV format, the validate-everything-before-submitting
+  guarantee, `--dry-run`, and when to prefer Merkle batching instead.
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
