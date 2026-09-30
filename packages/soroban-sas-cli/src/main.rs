@@ -1298,7 +1298,7 @@ fn run_sas(
             dry_run,
         } => {
             validate_fee_amount(amount)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -1323,7 +1323,7 @@ fn run_sas(
             rpc_url,
             dry_run,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -1633,7 +1633,7 @@ fn run_attest(
             // all. The RPC endpoint and network passphrase are resolved
             // after the dry-run exit below, since nothing is signed or sent
             // before then.
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
 
             // Bounded read, same cap as every other file input (#176, #177).
             let raw = io_safety::read_bounded(&csv_file, io_safety::MAX_INPUT_FILE_BYTES)?;
@@ -2418,7 +2418,7 @@ fn run_schema(
             // or oversized schema exits 1 with a clear message and never pays
             // for a simulation.
             validate_schema_syntax(&schema)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -2576,7 +2576,7 @@ fn run_schema(
             dry_run,
         } => {
             validate_schema_syntax(&schema)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -2625,7 +2625,7 @@ fn run_schema(
             rpc_url,
             dry_run,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -2665,7 +2665,7 @@ fn run_schema(
             rpc_url,
             dry_run,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -2697,7 +2697,7 @@ fn run_schema(
             rpc_url,
             dry_run,
         } => {
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
@@ -2737,7 +2737,7 @@ fn run_schema(
             dry_run,
         } => {
             validate_fee_amount(amount)?;
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware.clone())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
