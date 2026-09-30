@@ -590,7 +590,7 @@ impl Indexer {
 
     /// Total number of UIDs indexed under `address` as a recipient, across
     /// every chunk. `0` if the key has never been indexed. A pure read: like
-    /// [`Indexer::index_total`], it renews the counter's TTL when found but
+    /// `index_total`, it renews the counter's TTL when found but
     /// creates no storage for a key that was never indexed. Lets callers
     /// compute pagination totals (`ceil(count / page_size)`) without
     /// fetching every UID just to learn how many there are (#220).
@@ -632,7 +632,7 @@ impl Indexer {
 
     /// Complete schema history, oldest first. See
     /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
-    /// and [`read_chunk`] for the read-path retention policy: every schema
+    /// and `read_chunk` for the read-path retention policy: every schema
     /// chunk this walks has its TTL renewed, and an empty lookup stays
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
@@ -648,7 +648,7 @@ impl Indexer {
 
     /// Complete attester history, oldest first. See
     /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
-    /// and [`read_chunk`] for the read-path retention policy: every attester
+    /// and `read_chunk` for the read-path retention policy: every attester
     /// chunk this walks has its TTL renewed, and an empty lookup stays
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {

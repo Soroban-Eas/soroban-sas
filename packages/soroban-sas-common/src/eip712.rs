@@ -184,7 +184,7 @@ impl FieldType {
     ///
     /// True for `bytes`, `string` and arrays. A struct reference is not
     /// "dynamic" in the EIP-712 sense: it is encoded as the 32-byte
-    /// `hashStruct` of that struct, which [`encode_field`] handles.
+    /// `hashStruct` of that struct, which `encode_field` handles.
     pub fn is_dynamic(&self) -> bool {
         matches!(
             self,

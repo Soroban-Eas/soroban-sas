@@ -1183,7 +1183,7 @@ impl SchemaRegistry {
 
     /// Returns the active [`SchemaRecord`] for a raw schema definition,
     /// deriving the content-addressed UID with exactly the same canonical
-    /// derivation [`register`](Self::register) uses.
+    /// derivation `register` uses.
     ///
     /// Off-chain callers that cannot reproduce the host's XDR hashing rules
     /// would otherwise have to hand-roll `schema_uid`, and a byte-encoding
@@ -1194,7 +1194,7 @@ impl SchemaRegistry {
     /// A malformed `schema` string panics with [`SASError::InvalidSchema`], the
     /// same error `register` raises, so a caller is told the definition is
     /// invalid rather than receiving a misleading `None`. Unknown or deprecated
-    /// content returns `None`, matching [`get_schema`](Self::get_schema).
+    /// content returns `None`, matching `get_schema`.
     pub fn get_schema_by_content(
         env: Env,
         schema: String,
@@ -1422,6 +1422,8 @@ impl SchemaRegistry {
     }
 }
 
+#[cfg(test)]
+mod authorization_test;
 #[cfg(test)]
 mod owner_multisig_test;
 #[cfg(test)]

@@ -63,7 +63,7 @@ impl AttestationRequestBuilder {
     }
 
     /// Sets the attestation payload using a typed schema struct generated via
-    /// [`schema_to_struct!`].
+    /// `schema_to_struct!`.
     pub fn with_schema_data<T: crate::schema_macro::SchemaType>(self, env: &Env, data: &T) -> Self {
         self.with_data(data.to_bytes(env))
     }

@@ -1654,6 +1654,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-sas-cross-chain-verifier"
+version = "0.1.0"
+dependencies = [
+ "soroban-sas-common",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "soroban-sas-indexer"
 version = "0.1.0"
 dependencies = [
