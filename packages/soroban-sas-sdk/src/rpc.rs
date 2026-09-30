@@ -498,7 +498,7 @@ impl RpcBackend for RpcClient {
     fn post_json(&self, body: &str) -> Result<String, SdkError> {
         let request: serde_json::Value = serde_json::from_str(body)
             .map_err(|e| SdkError::RpcError(format!("invalid JSON request: {e}")))?;
-        
+
         let mut attempt = 0;
         loop {
             let response = self.agent.post(&self.network_url).send_json(&request);
