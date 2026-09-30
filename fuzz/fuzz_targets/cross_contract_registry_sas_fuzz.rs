@@ -63,7 +63,8 @@ fn parse_case(data: &[u8]) -> Option<Case<'_>> {
         return None;
     }
     let flags = data[0];
-    let schema_len = (data[1] as usize) % MAX_SCHEMA_LEN.min(data.len().saturating_sub(2) + 1).max(1);
+    let schema_len =
+        (data[1] as usize) % MAX_SCHEMA_LEN.min(data.len().saturating_sub(2) + 1).max(1);
     let schema_len = schema_len.min(data.len().saturating_sub(2));
     let (schema_bytes, rest) = data[2..].split_at(schema_len);
     let data_len = rest.len().min(MAX_DATA_LEN);
@@ -164,13 +165,8 @@ fn run_case(data: &[u8]) {
     };
 
     let payload = Bytes::from_slice(&env, case.data);
-    let attestation_uid = soroban_sas_common::attestation_uid(
-        &env,
-        &attest_schema_uid,
-        &recipient,
-        &owner,
-        &payload,
-    );
+    let attestation_uid =
+        soroban_sas_common::attestation_uid(&env, &attest_schema_uid, &recipient, &owner, &payload);
     let attestation = Attestation {
         uid: attestation_uid.clone(),
         schema_uid: attest_schema_uid.clone(),

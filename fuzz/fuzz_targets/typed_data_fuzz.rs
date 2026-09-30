@@ -1,9 +1,10 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use soroban_sas_common::{
-    hash_attestation_struct, hash_delegated_revocation, hash_domain, Attestation, AttestationDomain, UID,
+    hash_attestation_struct, hash_delegated_revocation, hash_domain, Attestation,
+    AttestationDomain, UID,
 };
-use soroban_sdk::{Address, Bytes, BytesN, Env};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
 
 fuzz_target!(|data: &[u8]| {
     let env = Env::default();

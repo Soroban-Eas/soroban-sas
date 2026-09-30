@@ -2575,7 +2575,7 @@ fn run_schema(
             let mut lines = stdin.lock().lines();
             let (schema, resolver, revocable) = build_schema_interactively(&mut lines)?;
 
-            let secret_key = resolve_secret_key(secret_key, identity.as_deref())?;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;

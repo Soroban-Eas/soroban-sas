@@ -1747,8 +1747,7 @@ mod pagination_query_tests {
     #[test]
     fn build_schema_interactively_happy_path() {
         let mut lines = canned_lines(&["name string", "age uint32", "", "CRESOLVER", "y"]);
-        let (schema, resolver, revocable) =
-            crate::build_schema_interactively(&mut lines).unwrap();
+        let (schema, resolver, revocable) = crate::build_schema_interactively(&mut lines).unwrap();
         assert_eq!(schema, "name string, age uint32");
         assert_eq!(resolver, "CRESOLVER");
         assert!(revocable);
@@ -1757,8 +1756,7 @@ mod pagination_query_tests {
     #[test]
     fn build_schema_interactively_retries_an_invalid_field() {
         let mut lines = canned_lines(&["not a valid field!!", "name string", "", "CRESOLVER", "n"]);
-        let (schema, resolver, revocable) =
-            crate::build_schema_interactively(&mut lines).unwrap();
+        let (schema, resolver, revocable) = crate::build_schema_interactively(&mut lines).unwrap();
         assert_eq!(schema, "name string");
         assert_eq!(resolver, "CRESOLVER");
         assert!(!revocable);

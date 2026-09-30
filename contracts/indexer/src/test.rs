@@ -1438,7 +1438,12 @@ fn test_get_by_issuer_matches_get_by_attester_happy_path() {
         client.get_issuer_filtered(&issuer, &true),
         client.get_attester_filtered(&issuer, &true)
     );
-    assert_eq!(client.get_issuer_page_filtered(&issuer, &0, &3, &true).len(), 3);
+    assert_eq!(
+        client
+            .get_issuer_page_filtered(&issuer, &0, &3, &true)
+            .len(),
+        3
+    );
     assert_eq!(
         client.get_issuer_page_filtered(&issuer, &0, &3, &true),
         client.get_atts_by_issuer_paginated(&issuer, &0, &3)
@@ -1457,10 +1462,15 @@ fn test_get_by_issuer_unindexed_key_is_empty() {
 
     assert_eq!(client.get_count_by_issuer(&issuer), 0);
     assert_eq!(client.get_attestations_by_issuer(&issuer).len(), 0);
-    assert_eq!(client.get_atts_by_issuer_paginated(&issuer, &0, &10).len(), 0);
+    assert_eq!(
+        client.get_atts_by_issuer_paginated(&issuer, &0, &10).len(),
+        0
+    );
     assert_eq!(client.get_issuer_filtered(&issuer, &true).len(), 0);
     assert_eq!(
-        client.get_issuer_page_filtered(&issuer, &0, &10, &true).len(),
+        client
+            .get_issuer_page_filtered(&issuer, &0, &10, &true)
+            .len(),
         0
     );
 }
