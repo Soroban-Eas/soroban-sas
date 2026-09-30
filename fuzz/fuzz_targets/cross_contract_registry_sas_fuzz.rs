@@ -182,22 +182,20 @@ fn run_case(data: &[u8]) {
 
     let result = sas.try_attest(&attestation);
 
+    if case.self_attest {
+        assert_eq!(
+            result,
+            Err(Ok(SASError::InvalidRecipient.into())),
+            "self-attestation must be rejected with InvalidRecipient, not panic"
+        );
+        return;
+    }
+
     if !case.valid_schema_uid {
         assert_eq!(
             result,
             Err(Ok(SASError::InvalidSchema.into())),
             "attesting against an unregistered schema must fail with InvalidSchema, not panic"
-        );
-        return;
-    }
-
-    if case.self_attest {
-        // Whatever the exact rejection reason, a self-targeted attestation
-        // must fail gracefully rather than being silently accepted or
-        // trapping the host.
-        assert!(
-            result.is_err(),
-            "self-attestation must be rejected, not accepted"
         );
         return;
     }
