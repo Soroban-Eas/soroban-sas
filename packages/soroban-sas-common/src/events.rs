@@ -390,3 +390,22 @@ pub struct IndexerStrictUpdatedEvent {
 }
 
 pub const REINDEXED: Symbol = symbol_short!("REINDEXED");
+
+/// First topic of every indexer progress event (issue #315).
+pub const INDEXING_PROGRESS: Symbol = symbol_short!("IDXPROG");
+
+/// Payload of the `IndexingProgress` event.
+///
+/// Published with topics `(INDEXING_PROGRESS, recipient)` after a UID is
+/// recorded for the first time. Idempotent retries do not emit it. The three
+/// totals are the lengths of the recipient, schema, and attester indexes
+/// after the write, so an off-chain consumer can follow indexing progress
+/// without reading contract storage.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexingProgressEvent {
+    pub uid: UID,
+    pub recipient_total: u32,
+    pub schema_total: u32,
+    pub attester_total: u32,
+}

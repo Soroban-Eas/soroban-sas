@@ -8,6 +8,7 @@ use crate::signature;
 use crate::simulate;
 use crate::strkey::{parse_address, AddressKind};
 use crate::transaction::{SubmissionPolicy, TransactionSubmitter};
+use serde::{Deserialize, Serialize};
 use soroban_sas_common::{Attestation, SchemaRecord, UID};
 use soroban_sdk::xdr::{
     ContractDataDurability, ExtensionPoint, Hash, LedgerEntryData, LedgerKey,
@@ -40,7 +41,8 @@ pub enum AttestationResult {
 
 /// Restoration metadata for an archived attestation, surfaced so callers
 /// can budget and build a `restoreFootprint` transaction.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ArchivedInfo {
     pub uid: [u8; 32],
     pub message: String,
@@ -57,7 +59,8 @@ const BASE_FEE: u32 = 100;
 /// Ledger state or fee conditions can change between simulation and
 /// inclusion, so callers can apply a safety margin or cap to avoid
 /// insufficient-fee rejections.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FeePolicy {
     /// No margin — use the exact `BASE_FEE + minResourceFee` from simulation.
     #[default]

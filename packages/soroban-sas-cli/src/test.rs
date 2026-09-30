@@ -112,13 +112,14 @@ mod tests {
     #[test]
     fn resolve_secret_key_prefers_an_explicit_flag_over_identity() {
         let resolved =
-            crate::resolve_secret_key(Some("explicit-secret".to_string()), Some("alice")).unwrap();
+            crate::resolve_secret_key(Some("explicit-secret".to_string()), Some("alice"), None)
+                .unwrap();
         assert_eq!(resolved, "explicit-secret");
     }
 
     #[test]
     fn resolve_secret_key_errors_clearly_when_neither_is_given() {
-        let err = crate::resolve_secret_key(None, None).unwrap_err();
+        let err = crate::resolve_secret_key(None, None, None).unwrap_err();
         assert!(err.contains("--secret-key"));
         assert!(err.contains("--identity"));
     }
@@ -535,6 +536,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
+            None,
         )
         .unwrap_err();
         assert!(set_error.contains("invalid --identity"));
@@ -549,6 +551,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
+            None,
         )
         .unwrap_err();
         assert!(clear_error.contains("invalid --identity"));
@@ -577,6 +580,7 @@ mod tests {
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
                 },
                 OutputFormat::Human,
+                None,
                 None,
                 None,
             )
@@ -649,6 +653,7 @@ mod tests {
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
                 },
                 OutputFormat::Human,
+                None,
                 None,
                 None,
             )
@@ -1169,6 +1174,7 @@ mod online_verification_tests {
             crate::OutputFormat::Json,
             None,
             None,
+            None,
         );
         assert!(res.is_ok());
     }
@@ -1189,6 +1195,7 @@ mod online_verification_tests {
                 rpc_url: Some(url),
             },
             crate::OutputFormat::Human,
+            None,
             None,
             None,
         );
@@ -1538,6 +1545,7 @@ mod schema_withdraw_fees_tests {
                 rpc_url: Some(url),
             },
             OutputFormat::Json,
+            None,
             None,
             None,
         );

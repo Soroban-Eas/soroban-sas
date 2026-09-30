@@ -938,3 +938,146 @@ fn concurrent_reservations_via_the_manager_get_distinct_sequences() {
         "concurrent reservations collided or skipped a sequence number"
     );
 }
+
+#[test]
+fn test_consistent_enum_serialization() {
+    use crate::client::FeePolicy;
+    use crate::events::{EventParseError, EventTrust};
+    use crate::rpc::IssuanceTimeError;
+    use crate::strkey::AddressKind;
+    use crate::transaction::{Backoff, SubmissionMode};
+
+    // 1. SubmissionMode: snake_case string literals
+    assert_eq!(
+        serde_json::to_string(&SubmissionMode::Blocking).unwrap(),
+        "\"blocking\""
+    );
+    assert_eq!(
+        serde_json::to_string(&SubmissionMode::Async).unwrap(),
+        "\"async\""
+    );
+    assert_eq!(
+        serde_json::from_str::<SubmissionMode>("\"blocking\"").unwrap(),
+        SubmissionMode::Blocking
+    );
+    assert_eq!(
+        serde_json::from_str::<SubmissionMode>("\"async\"").unwrap(),
+        SubmissionMode::Async
+    );
+
+    // 2. Backoff: snake_case tags and fields
+    assert_eq!(serde_json::to_string(&Backoff::Fixed).unwrap(), "\"fixed\"");
+    assert_eq!(
+        serde_json::from_str::<Backoff>("\"fixed\"").unwrap(),
+        Backoff::Fixed
+    );
+    let exp = Backoff::Exponential {
+        factor: 2,
+        max_interval: Duration::from_secs(30),
+    };
+    let exp_json = serde_json::to_string(&exp).unwrap();
+    assert!(exp_json.contains("\"exponential\""));
+    assert_eq!(serde_json::from_str::<Backoff>(&exp_json).unwrap(), exp);
+
+    // 3. FeePolicy: snake_case tags and fields
+    assert_eq!(
+        serde_json::to_string(&FeePolicy::Default).unwrap(),
+        "\"default\""
+    );
+    assert_eq!(
+        serde_json::from_str::<FeePolicy>("\"default\"").unwrap(),
+        FeePolicy::Default
+    );
+
+    let fee_pct = FeePolicy::PercentageMargin { percent: 25 };
+    let fee_pct_json = serde_json::to_string(&fee_pct).unwrap();
+    assert_eq!(fee_pct_json, "{\"percentage_margin\":{\"percent\":25}}");
+    assert_eq!(
+        serde_json::from_str::<FeePolicy>(&fee_pct_json).unwrap(),
+        fee_pct
+    );
+
+    let fee_abs = FeePolicy::AbsoluteMargin { stroops: 500 };
+    let fee_abs_json = serde_json::to_string(&fee_abs).unwrap();
+    assert_eq!(fee_abs_json, "{\"absolute_margin\":{\"stroops\":500}}");
+    assert_eq!(
+        serde_json::from_str::<FeePolicy>(&fee_abs_json).unwrap(),
+        fee_abs
+    );
+
+    let fee_max = FeePolicy::MaxFee { max: 10000 };
+    let fee_max_json = serde_json::to_string(&fee_max).unwrap();
+    assert_eq!(fee_max_json, "{\"max_fee\":{\"max\":10000}}");
+    assert_eq!(
+        serde_json::from_str::<FeePolicy>(&fee_max_json).unwrap(),
+        fee_max
+    );
+
+    // 4. AddressKind: snake_case string literals
+    assert_eq!(
+        serde_json::to_string(&AddressKind::Account).unwrap(),
+        "\"account\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AddressKind::Contract).unwrap(),
+        "\"contract\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AddressKind::Either).unwrap(),
+        "\"either\""
+    );
+    assert_eq!(
+        serde_json::from_str::<AddressKind>("\"account\"").unwrap(),
+        AddressKind::Account
+    );
+    assert_eq!(
+        serde_json::from_str::<AddressKind>("\"contract\"").unwrap(),
+        AddressKind::Contract
+    );
+    assert_eq!(
+        serde_json::from_str::<AddressKind>("\"either\"").unwrap(),
+        AddressKind::Either
+    );
+
+    // 5. EventTrust: snake_case tags
+    assert_eq!(
+        serde_json::to_string(&EventTrust::Trusted).unwrap(),
+        "\"trusted\""
+    );
+    let untrusted = EventTrust::Untrusted {
+        expected_role: "sas",
+        contract_id: None,
+    };
+    let untrusted_json = serde_json::to_string(&untrusted).unwrap();
+    assert!(untrusted_json.contains("\"untrusted\""));
+    assert!(untrusted_json.contains("\"expected_role\":\"sas\""));
+
+    // 6. EventParseError: snake_case tags
+    assert_eq!(
+        serde_json::to_string(&EventParseError::NotSasEvent).unwrap(),
+        "\"not_sas_event\""
+    );
+    assert_eq!(
+        serde_json::to_string(&EventParseError::MissingTopic).unwrap(),
+        "\"missing_topic\""
+    );
+    let malformed = EventParseError::MalformedPayload("missing field");
+    let malformed_json = serde_json::to_string(&malformed).unwrap();
+    assert_eq!(malformed_json, "{\"malformed_payload\":\"missing field\"}");
+
+    // 7. IssuanceTimeError: snake_case tags and fields
+    let stale = IssuanceTimeError::LedgerStale {
+        close_time: 100,
+        local_time: 200,
+        max_skew_secs: 60,
+    };
+    let stale_json = serde_json::to_string(&stale).unwrap();
+    assert_eq!(
+        stale_json,
+        "{\"ledger_stale\":{\"close_time\":100,\"local_time\":200,\"max_skew_secs\":60}}"
+    );
+    assert_eq!(
+        serde_json::from_str::<IssuanceTimeError>(&stale_json).unwrap(),
+        stale
+    );
+}

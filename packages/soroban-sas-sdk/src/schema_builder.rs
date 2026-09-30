@@ -23,6 +23,12 @@ impl SchemaBuilder {
         self
     }
 
+    /// Sets the schema definition from a typed schema struct generated via
+    /// [`schema_to_struct!`].
+    pub fn with_schema_type<T: crate::schema_macro::SchemaType>(self) -> Self {
+        self.with_schema(T::schema())
+    }
+
     /// Sets the resolver contract address.
     pub fn with_resolver(mut self, addr: &str) -> Self {
         self.resolver = Some(addr.to_string());
