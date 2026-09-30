@@ -338,16 +338,34 @@ fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &
     let method = request["method"].as_str().unwrap_or_default();
     let id = request["id"].clone();
     let response = match method {
-        "getLedgerEntries" => serde_json::json!({
-            "jsonrpc": "2.0", "id": id, "result": {
-                "entries": [{
-                    "key": "AAAAAA==",
-                    "xdr": account_entry_xdr,
-                    "lastModifiedLedgerSeq": 1
-                }],
-                "latestLedger": 1
-            }
-        }),
+        "getLedgerEntries" => {
+            let entries: Vec<serde_json::Value> = request["params"]["keys"]
+                .as_array()
+                .map(|keys| {
+                    keys.iter()
+                        .map(|k| {
+                            serde_json::json!({
+                                "key": k.as_str().unwrap_or("AAAAAA=="),
+                                "xdr": &account_entry_xdr,
+                                "lastModifiedLedgerSeq": 1
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec![serde_json::json!({
+                        "key": "AAAAAA==",
+                        "xdr": &account_entry_xdr,
+                        "lastModifiedLedgerSeq": 1
+                    })]
+                });
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "result": {
+                    "entries": entries,
+                    "latestLedger": 1
+                }
+            })
+        }
         "simulateTransaction" => serde_json::json!({
             "jsonrpc": "2.0", "id": id, "result": {
                 "latestLedger": 1,
@@ -555,12 +573,34 @@ fn spawn_fee_pipeline_server(
             request_tx.send(request.clone()).unwrap();
             let id = request["id"].clone();
             let response = match request["method"].as_str().unwrap() {
-                "getLedgerEntries" => serde_json::json!({
-                    "jsonrpc": "2.0", "id": id, "result": {
-                        "entries": [{"key": "AAAAAA==", "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
-                        "latestLedger": 1
-                    }
-                }),
+                "getLedgerEntries" => {
+                    let entries: Vec<serde_json::Value> = request["params"]["keys"]
+                        .as_array()
+                        .map(|keys| {
+                            keys.iter()
+                                .map(|k| {
+                                    serde_json::json!({
+                                        "key": k.as_str().unwrap_or("AAAAAA=="),
+                                        "xdr": &account_xdr,
+                                        "lastModifiedLedgerSeq": 1
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|| {
+                            vec![serde_json::json!({
+                                "key": "AAAAAA==",
+                                "xdr": &account_xdr,
+                                "lastModifiedLedgerSeq": 1
+                            })]
+                        });
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "entries": entries,
+                            "latestLedger": 1
+                        }
+                    })
+                }
                 "simulateTransaction" => serde_json::json!({
                     "jsonrpc": "2.0", "id": id, "result": {
                         "latestLedger": 1,
@@ -700,9 +740,10 @@ fn sas_set_fee_surfaces_unauthorized_simulation_as_contract_error_301() {
             assert_eq!(request["method"], expected_method);
             let id = request["id"].clone();
             let response = if expected_method == "getLedgerEntries" {
+                let requested_key = request["params"]["keys"][0].as_str().unwrap_or("AAAAAA==");
                 serde_json::json!({
                     "jsonrpc": "2.0", "id": id, "result": {
-                        "entries": [{"key": "AAAAAA==", "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
+                        "entries": [{"key": requested_key, "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
                         "latestLedger": 1
                     }
                 })
@@ -849,9 +890,10 @@ fn schema_withdraw_fees_surfaces_unauthorized_simulation_as_contract_error_301()
             assert_eq!(request["method"], expected_method);
             let id = request["id"].clone();
             let response = if expected_method == "getLedgerEntries" {
+                let requested_key = request["params"]["keys"][0].as_str().unwrap_or("AAAAAA==");
                 serde_json::json!({
                     "jsonrpc": "2.0", "id": id, "result": {
-                        "entries": [{"key": "AAAAAA==", "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
+                        "entries": [{"key": requested_key, "xdr": account_xdr, "lastModifiedLedgerSeq": 1}],
                         "latestLedger": 1
                     }
                 })

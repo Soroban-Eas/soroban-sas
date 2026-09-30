@@ -1479,16 +1479,34 @@ mod schema_withdraw_fees_tests {
                 assert_eq!(request["method"], expected_method);
                 let id = request["id"].clone();
                 let response = match expected_method {
-                    "getLedgerEntries" => serde_json::json!({
-                        "jsonrpc": "2.0", "id": id, "result": {
-                            "entries": [{
-                                "key": "AAAAAA==",
-                                "xdr": account_entry_xdr,
-                                "lastModifiedLedgerSeq": 1
-                            }],
-                            "latestLedger": 1
-                        }
-                    }),
+                    "getLedgerEntries" => {
+                        let entries: Vec<serde_json::Value> = request["params"]["keys"]
+                            .as_array()
+                            .map(|keys| {
+                                keys.iter()
+                                    .map(|k| {
+                                        serde_json::json!({
+                                            "key": k.as_str().unwrap_or("AAAAAA=="),
+                                            "xdr": &account_entry_xdr,
+                                            "lastModifiedLedgerSeq": 1
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_else(|| {
+                                vec![serde_json::json!({
+                                    "key": "AAAAAA==",
+                                    "xdr": &account_entry_xdr,
+                                    "lastModifiedLedgerSeq": 1
+                                })]
+                            });
+                        serde_json::json!({
+                            "jsonrpc": "2.0", "id": id, "result": {
+                                "entries": entries,
+                                "latestLedger": 1
+                            }
+                        })
+                    }
                     "simulateTransaction" => serde_json::json!({
                         "jsonrpc": "2.0", "id": id, "result": {
                             "latestLedger": 1,
