@@ -8,12 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Contract WASM SHA-256 Checksums
-
 | Contract | File | SHA-256 Checksum |
 |---|---|---|
-| Schema Registry | `schema_registry.wasm` | `TRDD` |
+| Schema Registry | `schema_registry.wasm` | `TBD` |
 | Core SAS | `sas.wasm` | `TBD` |
-| Indexer | `soroban_sas_indexer.wasm` | `TRDD` |
+| Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
 - Indexer pagination for every lookup dimension:
@@ -103,13 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`("UPGRADED", authorizer)` with `old_wasm_hash`/`new_wasm_hash`) in addition
   to its versioned `UPGRADE` event, tracking the activated WASM hash in instance
   storage so later activations report the hash they replaced. The upgrade path
-  is split into `validate_upgrade`/`commit_upgrade`, dropping the previously
+  is split into `validate_upgrade`/`commit_upgrade`, dropping the previous
   test-only event helper, with coverage for validation rejections, the first
   activation, and hash history. (#283)
 - Fuzz target `indexer_idempotency_fuzz` and seed corpus verifying `Indexer::index_attestation` idempotency invariants across first calls, retries, and mutated triples (#235).
 - Fee payment lifecycle coverage in `scripts/smoke_test.sh` covering token deployment, `set_treasury`, `set_fee`, `attest_with_value`, balance assertions, `withdraw_tokens`, and zero-fee paths (#239).
-- Operational runbook `docs/reconciliation.md` documenting detection, enumeration,
-  CLI/SDK invocation, and health checks for `reindex_attestation` fail-open recovery (#238).
+- Operational runbook `docs/reconciliation.md` documenting detection, enumeration, CLI/SDK invocation, and health checks for `reindex_attestation` fail-open recovery (#238).
 - Typed `DelegationNonceKey` storage key wrapper in `soroban-sas-common` and `contracts/sas` reducing instance storage XDR serialization overhead (#237).
 - `SAS::admin()` and `SASClient::fetch_admin()` expose the initialized SAS
   administrator through stable contract and SDK APIs. (#241)
@@ -159,12 +157,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ed25519 verification utilities in `soroban-sas-common`, a
   `verify_offchain_attestation` entrypoint in the SAS contract, and
   `offchain sign` / `offchain verify` CLI commands.
-- `SASError::AlreadyInitialized` (code 1) and `SASError::InvalidValue` (code 403).
+- `SASError::AlreadyInitialized` (code 1) and `SASError::InvalidValue` (code 403).
 - `Indexer::init` now binds the indexer to an admin and a SAS contract
   address, with `Indexer::get_admin` / `Indexer::get_sas` accessors.
 - `SchemaBuilder` for constructing SDK `SchemaRecord` values and
   `SASClient::multi_attest` for submitting batch attestations.
-- `LEFGERS_IN_ONE_YEAR` common constant for persistent storage TTL bumps.
+- `LEDGERS_IN_ONE_YEAR` common constant for persistent storage TTL bumps.
 
 ### Changed
 - The workspace and fuzz harness now use `soroban-sdk` 21.7.7. The migration
@@ -172,20 +170,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UID/domain types and updates Stellar asset test registration to the v2 test
   helper. Dependency locks keep the SDK 21 graph compatible with the project's
   existing Rust 1.79 toolchain by resolving `ed25519-dalek` 2.1.1. (#230)
-- Migrated all contract code off deprecated Soroban environment host
-  functions. Replaced `bump_contract_data`/`bump_contract_instance` calls
-  with the `extend_ttl` storage accessor on `persistent`/`instance` entries,
-  switched ledger-timestamp reads to `soroban-sdk`'s `env.ledger().timestamp()`,
-  and replaced the deprecated `put_wasm_hash`/`update_current_contract_wasm`
-  pair with the `update_current_contract_wasm` family that takes a ledger
-  duration. Adds a `deprecated_host_functions` linguist gate to CI and a
-  `sorban-sas-common` unit test pinning the new TTL bump behaviour. (#371)
 - `soroban-sas-sdk`: a blocking write that never settles now returns
   `SdkError::SettlementTimeout { hash, last_status, polls }` instead of a
   generic `SdkError::RpcError`, and a `sendTransaction` rejection returns
   `SdkError::SubmissionRejected` — so timeout, RPC failure, and terminal
   on-chain failure are distinguishable. (#133)
-- All contract failure paths now panic with typed `SASErros` variants instead
+- All contract failure paths now panic with typed `SASError` variants instead
   of bare `panic!` strings, so callers can distinguish failures by error code.
 - `SAS::attest_with_value` now performs the SEP-41 token transfer from the
   attester to the contract before issuing the attestation, instead of
@@ -194,4 +184,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Persistent contract storage writes now extend TTL, and attestation reads
   refresh TTL for active state.
 - `SAS` can bind an `Indexer` and mirror newly issued attestations so
-  re
+  replacements are discoverable through indexer lookups.
+
+### Fixed
+- `SAS::set_indexer` and `SAS::attest` no longer trap when the contract has
+  not been initialized. Both now report `SASError::NotInitialized` through a
+  shared `require_admin` / `require_registry` guard, so SDK and CLI callers
+  get one stable error code for a missing `init` instead of an unclassified
+  host trap. `set_indexer` classifies the pre-init case before requiring
+  authorization; `attest` resolves the registry before payload validation so
+  a configuration failure is never masked by a payload complaint.
+  (#76, #77)
+- `Indexer::get_attestations_by_recipient` / `_by_schema` / `_by_attester`
+  now walk every chunk backing a lookup key instead of returning chunk 0
+  only, so a key with more than 100 UIDs is no longer silently truncated.
+  All three dimensions share the same cursor model as the paginated and
+  filtered reads. (#78)
+- Indexer chunk reads now extend the TTL of the entries they touch, so a
+  frequently queried but rarely updated index is not archived out from under
+  its callers. Reads of a missing chunk return empty without creating storage
+  or trapping. (#79)
+- `SchemaRegistry::deprecate` now requires authorization from the schema's
+  creator or the registry admin before writing the deprecation tombstone,
+  closing a privilege-escalation gap where any account could deprecate any
+  schema and invalidate every attestation issued under it. Emits a
+  `SchemaDeprecated { schema_uid, deprecated_by }` event on the first
+  successful deprecation; repeated calls stay idempotent and do not
+  re-publish the event. (#218)
+- `Indexer::get_count_by_recipient`, `get_count_by_schema`, and
+  `get_count_by_attester` return the total number of UIDs indexed under a
+  key without fetching any of them, letting callers compute pagination
+  totals (`ceil(count / page_size)`) up front. Backed by the same
+  persistent counter `index_total` derives chunk cursors from (see #219),
+  renewed on read, and unaffected by `Active` -> `Revoked`/`Replaced`
+  status transitions. Adds matching `IndexerClient::get_count_by_recipient`
+  / `get_count_by_schema` / `get_count_by_attester` helpers to
+  `soroban-sas-sdk`. (#220)
+- `validate_schema_syntax` now rejects a schema with more than
+  `MAX_SCHEMA_FIELDS` (64) comma-separated fields. `MAX_SCHEMA_LENGTH`
+  bounds the string's byte length but not its field count, so a string
+  packed with many tiny fields could pack up to 256 fields into the 1024
+  byte budget and impose unbounded per-decode iteration cost on schema
+  resolvers and off-chain SDK parsers. (#217)
+- `Indexer`'s per-key UID counters (`RCOUNT`/`SCOUNT`/`ACOUNT`) now live in
+  persistent storage instead of instance storage, on the same
+  `LEDGERS_IN_ONE_YEAR` renewal horizon as the chunk data they count. Instance
+  storage expires independently of persistent storage, so a counter left in
+  instance storage could silently reset to zero while its chunks survived —
+  the next `index_attestation` for that key would then recompute chunk 0 from
+  a stale cursor and duplicate a UID into it. (#219)
+
+### Known Issues
+- Off-chain delegated signatures are ed25519-only and must bind to a classic
+  Ed25519 account via the structural address check, or to a key registered
+  on-chain with `register_attester_key`. There is no off-chain key-registration
+  flow yet.

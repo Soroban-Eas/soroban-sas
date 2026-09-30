@@ -17,3 +17,55 @@ jobs:
         run: |
           chmod +x scripts/check_docs.sh
           ./scripts/check_docs.sh
+
+  publish-rustdoc:
+    name: Publish rustdoc to GitHub Pages
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-doc-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-doc-
+
+      - name: Build rustdoc
+        env:
+          RUSTDOCFLAGS: "-D warnings --cfg docsrs"
+        run: |
+          cargo doc --no-deps --all-features --workspace
+          echo '<meta http-equiv="refresh" content="0; url=soroban_sas_sdk/index.html">' > target/doc/index.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload rustdoc artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

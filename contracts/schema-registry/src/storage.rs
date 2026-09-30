@@ -57,7 +57,7 @@ pub const SCHEMA_OWNER_PROPOSED: Symbol = symbol_short!("OWNPROP");
 pub const SCHEMA_OWNER_APPROVED: Symbol = symbol_short!("OWNAPPR");
 
 /// First topic of the `(SCHEMA_OWNER_TRANSFER_CANCELLED, uid)` event published
-/// when an in-flight multi-signature ownership transfer is abandoned. Data ir
+/// when an in-flight multi-signature ownership transfer is abandoned. Data is
 /// the cancelling owner.
 pub const SCHEMA_OWNER_TRANSFER_CANCELLED: Symbol = symbol_short!("OWNCANC");
 

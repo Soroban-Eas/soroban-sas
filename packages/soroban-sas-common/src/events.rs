@@ -34,7 +34,7 @@ pub const SCHEMA_DELEGATE_REMOVED: Symbol = symbol_short!("DELREM");
 /// First topic of every `AdminTransferProposed` event.
 pub const ADMIN_TRANSFER_PROPOSED: Symbol = symbol_short!("ADMPROP");
 /// First topic of every `AdminTransferCompleted` event.
-pub const ADMIN_TRANSFER_COMPLETED: Symbol = symbol_short!("ADMPCOM");
+pub const ADMIN_TRANSFER_COMPLETED: Symbol = symbol_short!("ADMCOMP");
 /// First topic of every `SchemaOwnershipTransferred` event.
 pub const SCHEMA_OWNERSHIP_TRANSFERRED: Symbol = symbol_short!("SCHOWN");
 /// First topic of every `BatchAttested` event.
@@ -44,13 +44,13 @@ pub const BATCH_REVOKED: Symbol = symbol_short!("BATCHREV");
 /// First topic of every `IndexerStrictUpdated` event.
 pub const INDEXER_STRICT_UPDATED: Symbol = symbol_short!("IDXSTRUP");
 /// First topic of every `SchemaDeprecated` event.
-pub const SCHEMA_DEPRECATED: Symbol = symbol_short!("SCHDET");
+pub const SCHEMA_DEPRECATED: Symbol = symbol_short!("SCHDEP");
 /// First topic of every `ContractPaused` event.
 pub const CONTRACT_PAUSED: Symbol = symbol_short!("PAUSED");
 /// First topic of every `ContractUnpaused` event.
 pub const CONTRACT_UNPAUSED: Symbol = symbol_short!("UNPAUSED");
 /// First topic of every `AttestationRenewed` event.
-pub const ATTESTATION_RENEWED_TOPIC: Symbol = symbol_short!("ATSTRENEW");
+pub const ATTESTATION_RENEWED: Symbol = symbol_short!("ATSTRENEW");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -133,11 +133,11 @@ pub struct AttesterKeyRevokedEvent {
 }
 /// `Option<Address>`-equivalent for contract event payloads.
 ///
-/// `#[contracttype]`s generated `Option<T>` conversion requires a
+/// `#[contracttype]`'s generated `Option<T>` conversion requires a
 /// host-independent `From<T> for ScVal`, which `Address` does not provide
 /// (unlike primitives such as `i128`) — at this pinned SDK version that
 /// surfaces as a compile error specifically under the `testutils` cfg
-"/// (`cargo test`, `cargo clippy --all-targets`). A plain enum sidesteps it:
+/// (`cargo test`, `cargo clippy --all-targets`). A plain enum sidesteps it:
 /// enum-with-data conversions go through a different, unaffected codegen
 /// path.
 #[contracttype]
@@ -193,7 +193,8 @@ pub struct SchemaFeeUpdatedEvent {
 /// Payload of the `TreasuryUpdated` event.
 ///
 /// Published with topics `(TREASURY_UPDATED, authorizer)` on a successful
-/// `SchemaRegistry::set_treasury`. `old_treasury` is `PreviousAddress::None`"/// the first time a treasury address is set.
+/// `SchemaRegistry::set_treasury`. `old_treasury` is `PreviousAddress::None`
+/// the first time a treasury address is set.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryUpdatedEvent {
@@ -275,7 +276,7 @@ pub type SchemaOwnershipTransferred = SchemaOwnershipTransferredEvent;
 
 /// Payload of the `BatchAttested` event.
 ///
-/// Published with topics `(BATCH_ATTESTED,@)` as the **last** event of a
+/// Published with topics `(BATCH_ATTESTED,)` as the **last** event of a
 /// successful `SAS::multi_attest` call — after every per-item
 /// `AttestationIssued` event, so consumers see the batch's members before
 /// its summary. Not emitted at all if the batch call reverts (#213): a
@@ -306,12 +307,27 @@ pub struct BatchAttestedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemaDeprecatedEvent {
     pub schema_uid: UID,
-    pub authorizer: Address,
+    pub deprecated_by: Address,
+}
+
+/// Payload of the `BatchRevoked` event.
+///
+/// Published with topics `(BATCH_REVOKED,)` as the **last** event of a
+/// successful `SAS::multi_revoke` call, after every per-item
+/// `AttestationRevoked` event — the revocation counterpart to
+/// `BatchAttestedEvent`; see its doc comment for the field semantics and
+/// ordering/failure guarantees, which are identical here.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchRevokedEvent {
+    pub count: u32,
+    pub attester_count: u32,
 }
 
 /// Payload of the `ContractPaused` event.
 ///
-/// Published with topics `(CONTRACT_PAUSED, authorizer)`.
+/// Published with topics `(CONTRACT_PAUSED, authorizer)` when
+/// a contract is paused.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractPausedEvent {
@@ -320,7 +336,8 @@ pub struct ContractPausedEvent {
 
 /// Payload of the `ContractUnpaused` event.
 ///
-/// Published with topics `(CONTRACT_UNPAUSED, authorizer)`.
+/// Published with topics `(CONTRACT_UNPAUSED, authorizer)` when
+/// a contract is unpaused.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUnpausedEvent {
@@ -329,32 +346,66 @@ pub struct ContractUnpausedEvent {
 
 /// Payload of the `AttestationRenewed` event.
 ///
-/// Published with topics `(ATTESTATION_RENEWED_TOPIC, uid)`.
+/// Published with topics `(ATTESTATION_RENEWED, uid, attester)` when
+/// `SAS::renew_attestation` extends an attestation's expiration time.
+/// `new_expiration_time` is the new expiration time (0 = perpetual).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttestationRenewedEvent {
     pub uid: UID,
-    pub expiration: u64,
-    pub timestamp: u64,
+    pub attester: Address,
+    pub new_expiration_time: u64,
 }
 
-/// Payload of the `BatchRevoked` event.
-///
-/// Published with topics `(BATCH_REVOKED,)` as the **last** event of a
-/// successful `SAS::multi_revoke` call.
+/// First topic of a SAS `FeeConfigUpdated` event.
+pub const FEECFG_UPDATED: Symbol = symbol_short!("FEECFGUPD");
+
+/// Fee policy after an authorized `set_fee` or `clear_fee` storage write.
+/// Published with topics `(FEECFG_UPDATED, authorizer)`.
+/// Optional addresses use the SDK 20-compatible encoding described by
+/// [`PreviousAddress`]; amounts use native `Option<i128>`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BatchRevokedEvent {
-    pub count: u32,
-    pub attester_count: u32,
+pub struct FeeConfigUpdatedEvent {
+    pub old_token: PreviousAddress,
+    pub old_amount: Option<i128>,
+    pub new_token: PreviousAddress,
+    pub new_amount: Option<i128>,
+    pub authorizer: Address,
 }
 
 /// Payload of the `IndexerStrictUpdated` event.
 ///
-/// Published with topics `(INDEXER_STRICT_UPDATED, authorizer)`.
+/// Published with topics `(INDEXER_STRICT_UPDATED, admin)` on a successful
+/// `SAS::set_indexer_strict` (#251). `old_strict`/`new_strict` are `false`
+/// for fail-open (the default) and `true` for fail-closed, so an off-chain
+/// monitor can detect a toggle of the Indexer availability policy without
+/// polling `get_indexer_strict`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndexerStrictUpdatedEvent {
+    pub old_strict: bool,
+    pub new_strict: bool,
+    pub admin: Address,
+}
+
+pub const REINDEXED: Symbol = symbol_short!("REINDEXED");
+
+/// First topic of every indexer progress event (issue #315).
+pub const INDEXING_PROGRESS: Symbol = symbol_short!("IDXPROG");
+
+/// Payload of the `IndexingProgress` event.
+///
+/// Published with topics `(INDEXING_PROGRESS, recipient)` after a UID is
+/// recorded for the first time. Idempotent retries do not emit it. The three
+/// totals are the lengths of the recipient, schema, and attester indexes
+/// after the write, so an off-chain consumer can follow indexing progress
+/// without reading contract storage.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IndexerStrictUpdatedEvent {
-    pub strict: bool,
-    pub authorizer: Address,
+pub struct IndexingProgressEvent {
+    pub uid: UID,
+    pub recipient_total: u32,
+    pub schema_total: u32,
+    pub attester_total: u32,
 }

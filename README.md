@@ -16,7 +16,7 @@ The primary goal is to offer a seamless and intuitive user experience:
 ## Example Use Cases
 
 - **Decentralized Identity (DID)**: Issue proofs of personhood or identity verification.
-- **DeFi Compliance**: Attach KYC/AML attestations to accounts for permissioned liquidity pools.
+- `DeFi Compliance`**: Attach KYC/AML attestations to accounts for permissioned liquidity pools.
 - **DAO Governance**: Issue reputation scores or contribution attestations to weight voting power.
 - **Social Networks**: Create a web of trust with user-issued endorsements and social graphs.
 
@@ -28,10 +28,7 @@ For an in-depth look at how state is managed, the interactions between various s
 
 Details about our security perimeter, administrative capabilities, and known vulnerabilities can be found in the [Security Assumptions and Threat Model](docs/security.md) guide.
 
-SAS fee changes emit `FeeConfigUpdated` events with previous and new values;
-see [Contract Events](docs/events.md) for payloads and SDK parsing. Dependency
-security checks and indexer fuzzing commands are described in
-[Contributing](CONTRIBUTING.md).
+Dependency security checks and indexer fuzzing commands are described in [Contributing](CONTRIBUTING.md).
 
 ## Project Status
 
@@ -59,13 +56,20 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Associates individual attestations with their defining schemas.
   - Records the core attestation payload along with issuer and recipient details.
   - Applies rules surrounding revocation, expiration, and any associated fees.
-  - Facilitates off-chain verification processes, akin to EIP-712 standards.
+  - Facilitates off-chain verification processes, kin to EIP-712 standards.
 
 - `contracts/indexer`
   **Role**: Provides efficient lookup and query functionalities.
   **Duties**:
   - Maintains mappings from recipient addresses to their respective attestations.
   - Maintains mappings from schemas to all associated attestations.
+
+- `contracts/cross-chain-verifier`
+  **Role**: Verifies remote attestation status updates authenticated by an Axelar GMP gateway.
+  **Duties**:
+  - Binds one remote chain and source contract at deployment.
+  - Rejects unapproved, stale or expired updates and exposes short-lived remote verdicts.
+  - Documents its [wire format and trust limits](docs/cross-chain-verification.md).
 
 ### Rust Packages
 
@@ -77,6 +81,12 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   It includes builders such as `SchemaBuilder` and client helpers such as
   `SASClient::multi_attest` for batch attestation submission and
   `SASClient::fetch_admin` for deployment and governance verification.
+  API documentation is published to GitHub Pages at
+  https://soroban-sas.github.io/soroban-sas/soroban-sas_sdk/. To build it locally:
+  ```bash
+  cargo doc -p soroban-sas-sdk --no-deps
+  ```
+  The generated HTML lands in `target/doc/soroban-sas_sdk/index.html`.
 
 ### CLI and Operations
 
@@ -89,6 +99,9 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
 - `tools/schema-explorer`
   A prototype read-only web dashboard for browsing a Schema Registry and validating draft schemas.
   See the [Schema Explorer README](tools/schema-explorer/README.md).
+
+- `.github_workflows/docs.yml`
+  Builds the `soroban-sas-sdk` rustdoc and deploys it to GitHub Pages on every push to `main`.
 
 - `.githooks/`
   Opt-in `pre-commit` and `pre-push` hooks that run CI's formatting and lint checks locally.
@@ -116,6 +129,14 @@ cargo run -p soroban-sas-cli -- --output json query by-attester \
 # One page (1-100 UIDs) of a large history; follow `next_cursor` until it is null
 cargo run -p soroban-sas-cli -- --output json query by-schema \
   --uid UID... --contract-id C... --rpc-url URL --cursor 0 --limit 50
+# Preview a whole CSV batch without submitting anything
+cargo run -p soroban-sas-cli -- --output json attest bulk \
+  --csv-file attestations.csv --contract-id C... --rpc-url URL --dry-run
+# Issue it for real
+cargo run -p soroban-sas-cli -- --output json attest bulk \
+  --csv-file attestations.csv --secret-key S... \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --contract-id C... --rpc-url URL
 ```
 
 Without `--cursor`/`--limit`, `query by-*` returns the complete history as
@@ -294,6 +315,9 @@ TMPDIR=/tmp cargo test --workspace
 - [Batch Attestations (Merkle Commitments)](docs/batch-attestations.md):
   when to use off-chain Merkle batching instead of on-chain `multi_attest`,
   the normative leaf/node hashing rules, and a selective-disclosure example.
+- [Bulk Attestation Creation from CSV](docs/bulk-csv-attestations.md): the
+  `attest bulk` CSV format, the validate-everything-before-submitting
+  guarantee, `--dry-run`, and when to prefer Merkle batching instead.
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.

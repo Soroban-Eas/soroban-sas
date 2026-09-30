@@ -13,13 +13,6 @@ use soroban_sdk::{
     Symbol, TryFromVal, Val,
 };
 
-#[allow(deprecated)]
-fn extend_instance_ttl(env: &Env) {
-    env.storage()
-        .instance()
-        .extend_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
-}
-
 mod events;
 mod timestamp;
 
@@ -507,7 +500,7 @@ impl SAS {
 
     /// Issues a batch of off-chain-signed attestations in one relayed
     /// transaction. Companion to
-    /// [`attest_by_delegation`](Self::attest_by_delegation), mirroring how
+    /// `attest_by_delegation`, mirroring how
     /// `multi_attest` batches the direct path.
     ///
     /// `attestations`, `nonces`, `signatures`, and `public_keys` are parallel
@@ -959,7 +952,7 @@ impl SAS {
     }
 
     /// Revokes a batch of attestations using off-chain delegation signatures.
-    /// Companion to [`revoke_by_delegation`](Self::revoke_by_delegation),
+    /// Companion to `revoke_by_delegation`,
     /// mirroring how `multi_revoke` batches the direct path.
     ///
     /// `uids`, `nonces`, `signatures`, and `public_keys` are parallel vectors
@@ -1708,7 +1701,7 @@ impl SAS {
     /// Verify a batch of attestations in one call (#297).
     ///
     /// Returns exactly one boolean per input UID, in the same order as `uids`,
-    /// with the identical semantics of [`Self::verify_attestation`]: `true`
+    /// with the identical semantics of `verify_attestation`: `true`
     /// when the UID exists, is not revoked, and has not expired. Batching
     /// removes the per-call fixed cost (invocation, dispatch, instance TTL
     /// renewal) that dominates polling many UIDs one at a time, without
@@ -1734,7 +1727,7 @@ impl SAS {
 
     /// Returns `true` only when every UID in `uids` verifies (#297).
     ///
-    /// Equivalent to requiring every entry of [`Self::verify_attestations`] to
+    /// Equivalent to requiring every entry of `verify_attestations` to
     /// be `true`, but stops at the first failing UID, so a mostly-invalid batch
     /// costs a fraction of a full scan while reporting the same combined
     /// verdict. Bounded by [`MAX_VERIFY_BATCH`] like the rest of the batch API.

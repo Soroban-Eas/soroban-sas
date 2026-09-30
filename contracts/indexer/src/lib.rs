@@ -1,11 +1,12 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 use soroban_sas_common::{
-    events::CONTRACT_UPGRADED, SASError, LEDGERS_IN_ONE_YEAR, UID,
+    events::{CONTRACT_UPGRADED, INDEXING_PROGRESS},
+    ContractUpgradedEvent, IndexingProgressEvent, SASError, LEDGERS_IN_ONE_YEAR, UID,
 };
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    BytesN, Env, IntoVal, Symbol, TryFromVal, Val,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env,
+    IntoVal, Symbol, TryFromVal, Val,
 };
 
 // v1.0.0 Indexer logic frozen
@@ -562,6 +563,21 @@ impl Indexer {
         index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
+
+        // Progress for off-chain consumers (issue #315). Emitted only on the
+        // first successful index of this UID, after the counters have moved.
+        let recipient_total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
+        let schema_total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
+        let attester_total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
+        env.events().publish(
+            (INDEXING_PROGRESS, recipient),
+            IndexingProgressEvent {
+                uid,
+                recipient_total,
+                schema_total,
+                attester_total,
+            },
+        );
         extend_instance_ttl(&env);
     }
 
@@ -574,7 +590,7 @@ impl Indexer {
 
     /// Total number of UIDs indexed under `address` as a recipient, across
     /// every chunk. `0` if the key has never been indexed. A pure read: like
-    /// [`Indexer::index_total`], it renews the counter's TTL when found but
+    /// `index_total`, it renews the counter's TTL when found but
     /// creates no storage for a key that was never indexed. Lets callers
     /// compute pagination totals (`ceil(count / page_size)`) without
     /// fetching every UID just to learn how many there are (#220).
@@ -616,7 +632,7 @@ impl Indexer {
 
     /// Complete schema history, oldest first. See
     /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
-    /// and [`read_chunk`] for the read-path retention policy: every schema
+    /// and `read_chunk` for the read-path retention policy: every schema
     /// chunk this walks has its TTL renewed, and an empty lookup stays
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
@@ -632,7 +648,7 @@ impl Indexer {
 
     /// Complete attester history, oldest first. See
     /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
-    /// and [`read_chunk`] for the read-path retention policy: every attester
+    /// and `read_chunk` for the read-path retention policy: every attester
     /// chunk this walks has its TTL renewed, and an empty lookup stays
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {

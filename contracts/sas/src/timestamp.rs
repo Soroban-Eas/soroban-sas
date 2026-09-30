@@ -1,1 +1,110 @@
-Ly8hIExlZGdlci12ZXJpZmlhYmxlIHRpbWVzdGFtcHMgZm9yIGlzc3VhbmNlIGFuZCByZXZvY2F0aW9uICgjMjk4KS4KLy8vCi8vLyBgQXR0ZXN0YXRpb24udGltZWAgaXMgbm9ybWFsaXplZCB0byB0aGUgbGVkZ2VyIGNsb3NlIHRpbWUgd2hlbiBhbgovLy8gYXR0ZXN0YXRpb24gaXMgaXNzdWVkICgjMTU2KSwgYW5kIGByZXZvY2F0aW9uX3RpbWVgIHRvIHRoZSBjbG9zZSB0aW1lIG9mCi8vLyB0aGUgbGVkZ2VyIHRoYXQgcmV2b2tlZCBpdC4gQm90aCBhcmUgaG9zdC1zdXBwbGllZCB2YWx1ZXM6IG9uIHRoZWlyIG93bgoiLy8vIHRoZXkgc2F5ICoidmFsaWRhdG9yIGNsYWltZWQgdGhpcyBsZWRnZXIgY2xvc2VkIGF0IFQiKiwgd2l0aCBub3RoaW5nIGZvcgovLy8gYSB2ZXJpZmllciB0byBjaGVjayB0aGUgY2xhaW0gYWdhaW5zdC4gQSBjb25zdW1lciBob2xkaW5nIG9ubHkgdGhlCi8vLyBhdHRlc3RhdGlvbiBoYXMgdG8gdHJ1c3QgdGhlIGF0dGVzdGVyLCBvciB0aGlzIGNvbnRyYWN0LCB0aGF0IHRoZSBudW1iZXIKLy8vIHdhcyBub3Qgc29tZXRoaW5nIGVsc2UuCi8vLwovLy8gVGhpcyBtb2R1bGUgY2xvc2VzIHRoYXQgZ2FwIGJ5IHJlY29yZGluZyAqd2hpY2ggbGVkZ2VyKiBlYWNoIHRpbWVzdGFtcAovLy8gY2FtZSBmcm9tLiBBIGNsb3NlIHRpbWUgcGx1cyB0aGUgc2VxdWVuY2UgbnVtYmVyIG9mIHRoZSBsZWRnZXIgdGhhdAovLy8gcHJvZHVjZWQgaXQgaXMgZXhhY3RseSB3aGF0IGFuIFNDUC12ZXJpZmllZCBsZWRnZXIgaGVhZGVyIGNhcnJpZXMsIHNvIGEKLy8vIHZlcmlmaWVyIHRoYXQgYWxyZWFkeSB0cnVzdHMgYSBoZWFkZXIg4oCUIHRoZSBTREsgcmVhZGluZyAnL2xlZGdlcnMvOnNlcScsIGEKLy8vIGJyaWRnZSBjaGVja2luZyBhbiBTQ1AgZW52ZWxvcGUsIGFuIGF1ZGl0b3IgcmVwbGF5aW5nIGxlZGdlciBjbG9zZSBtZXRhIOKAlAovLy8gY2FuIGJpbmQgdGhlIGF0dGVzdGF0aW9uIHRvIHRoYXQgbGVkZ2VyIHdpdGggYFNBUzo6dmVyaWZ5X3RpbWVzdGFtcGAsIG9yCi8vLyBmZXRjaCB0aGUgYW5jaG9yIGl0IG5lZWRzIHRvIGxvb2sgdXAgd2l0aCBgU0FTOjpnZXRfaXNzdWFuY2VfdGltZXN0YW1wYCAvCi8vLyBgU0FTOjpnZXRfcmV2b2NhdGlvbl90aW1lc3RhbXBgLgovLy8KLy8vIFdoYXQgdGhpcyBkb2VzICpub3QqIGRvIGlzIHByb3ZlIGFueXRoaW5nIGFib3V0IGEgbGVkZ2VyIGJ5IGl0c2VsZjogdGhlCi8vLyBjb250cmFjdCBjYW4gb25seSByZXBvcnQgd2hhdCB0aGUgaG9zdCB0b2xkIGl0LiBUaGUgcHJvb2YgaXMgdGhlIGxlZGdlcgovLy8gaGVhZGVyLCB3aGljaCB0aGUgbmV0d29yayBzaWduczsgdGhlIGFuY2hvciBpcyB0aGUgcG9pbnRlciB0byBpdC4KLy8vCi8vLyBBbmNob3JzIGxpdmUgaW4gdGhlaXIgb3duIHBlcnNpc3RlbnQgZW50cmllcyByYXRoZXIgdGhhbiBhcyBuZXcgZmllbGRzIG9uCi8vLyBgQXR0ZXN0YXRpb25gLiBUaGUgdjEuMC4wIHN0YXRlIHNjaGVtYSBpcyBmcm96ZW4g4oCUIGFkZGluZyBmaWVsZHMgd291bGQKLy8vIGNoYW5nZSB0aGUgWERSIGxheW91dCBldmVyeSBpbmRleGVyLCBTREsgYW5kIHN0b3JlZCByZWNvcmQgZGVjb2RlcyDigJQgYW5kIGEKLy8vIHNpZGUgZW50cnkgd2l0aCB0aGUgYXR0ZXN0YXRpb24ncyBvd24gVFRMIGV4cGlyZXMgZXhhY3RseSB3aGVuIHRoZSByZWNvcmQKLy8vIGl0IGRlc2NyaWJlcyBkb2VzLgoKdXNlIHNvcm9iYW5fc2FzX2NvbW1vbnM6OntMRURHRVJTX0lOX09ORV9ZRUFSLCBVSUl9Owp1c2Ugc29yb2Jhbl9zZGs6Ontjb250cmFjdHR5cGUsIEVudn07CgovLy8gVGhlIGxlZGdlciBhIHRpbWVzdGFtcCBjYW1lIGZyb206IHRoZSBzZXF1ZW5jZSBudW1iZXIgb2YgdGhlIGxlZGdlciB3aG9zZQovLy8gY2xvc2UgdGltZSB3YXMgc3RhbXBlZCwgYW5kIHRoYXQgY2xvc2UgdGltZSBpdHNlbGYuCi8vLwovLy8gQSB2ZXJpZmllciBjb21wYXJlcyBgbGVkZ2VyX3RpbWVzdGFtcGAgYWdhaW5zdCB0aGUgY2xvc2UgdGltZSBpbiB0aGUKLy8vIGhlYWRlciBmb3IgYGxlZGdlcl9zZXF1ZW5jZWAuIEJvdGggZmllbGRzIGFyZSBjaGVja2VkLCBzbyBhbiBhbmNob3IgY2Fubm90Ci8vLyBiZSBzYXRpc2ZpZWQgYnkgYSBjbG9zZSB0aW1lIHRoYXQgYmVsb25ncyB0byBhIGRpZmZlcmVudCBsZWRnZXIuCiNbY29udHJhY3R0eXBlXQojW2Rlcml2ZShDbG9uZSwgRGVidWcsIEVxLCBQYXJ0aWFsRXEpXQojW3JlcHIoQyldIC8vIE9wdGltaXplIHN0b3JhZ2Ugc2VyaWFsaXphdGlvbgpwdWIgc3RydWN0IFRpbWVzdGFtcEFuY2hvciB7CiAgICBwdWIgbGVkZ2VyX3NlcXVlbmNlOiB1MzIsCiAgICBwdWIgbGVkZ2VyX3RpbWVzdGFtcDogdTY0LAp9CgovLy8gVHlwZWQgc3RvcmFnZSBrZXkgZm9yIG9uZSBvZiBhbiBhdHRlc3RhdGlvbidzIGFuY2hvcnMuCi8vLwovLy8gQW4gYXR0ZXN0YXRpb24gaGFzIHR3byBpbmRlcGVuZGVudCBhbmNob3JzIG92ZXIgaXRzIGxpZmUg4oCUIHRoZSBsZWRnZXIgdGhhdAovLy8gaXNzdWVkIGl0IGFuZCwgaWYgaXQgaXMgcmV2b2tlZCwgdGhlIGxlZGdlciB0aGF0IHJldm9rZWQgaXQg4oCUIHNvIG9uZSBrZXkKLy8vIHR5cGUgY2FycmllcyBib3RoLCBkaXN0aW5ndWlzaGVkIGJ5IGByZXZvY2F0aW9uYCwgcmF0aGVyIHRoYW4gYSBzZWNvbmQKLy8vIHN0b3JhZ2UgbmFtZXNwYWNlLiBCb3RoIGFyZSBrZXllZCBieSBVSUQsIHdoaWNoIGtlZXBzIHRoZSBhbmNob3IgYWRqYWNlbnQKLy8vIHRvIChhbmQgZ2FyYmFnZS1jb2xsZWN0ZWQgd2l0aCkgdGhlIHJlY29yZCBpdCBkZXNjcmliZXMuCiNbY29udHJhY3R0eXBlXQojW2Rlcml2ZShDbG9uZSwgRGVidWcsIEVxLCBQYXJ0aWFsRXEpXQpwdWIgc3RydWN0IFRpbWVzdGFtcEFuY2hvcktleSB7CiAgICBwdWIgdWlkOiBVSUQsCiAgICAvLy8gYGZhbHNlYCBmb3IgdGhlIGlzc3VhbmNlIGFuY2hvciwgYHRydWVgIGZvciB0aGUgcmV2b2NhdGlvbiBhbmNob3IuCiAgICBwdWIgcmV2b2NhdGlvbjogYm9vbCwKfQoKZm4gYW5jaG9yX2tleSh1aWQ6ICZVSUQsIHJldm9jYXRpb246IGJvb2wpIC0+IFRpbWVzdGFtcEFuY2hvcktleSB7CiAgICBUaW1lc3RhbXBBbmNob3JLZXkgewogICAgICAgIHVpZDogdWlkLmNsb25lKCksCiAgICAgICAgcmV2b2NhdGlvbiwKICAgIH0KfQoKLy8vIFJlY29yZHMgdGhlIGN1cnJlbnQgbGVkZ2VyIGFzIGB1aWRgJ3MgaXNzdWFuY2Ugb3IgcmV2b2NhdGlvbiBhbmNob3IsIHdpdGgKLy8vIHRoZSBzYW1lIFRUTCBhcyB0aGUgYXR0ZXN0YXRpb24gaXQgZGVzY3JpYmVzIHNvIHRoZSB0d28gZXhwaXJlIHRvZ2V0aGVyLgovLy8KLy8vIENhbGxlZCBmcm9tIGBhdHRlc3RfaW50ZXJuYWxgIGFuZCBgcmV2b2tlX2ludGVybmFsYCDigJQgdGhlIHR3byBwbGFjZXMgdGhhdAovLy8gd3JpdGUgYSB0aW1lc3RhbXAg4oCUIHNvIGV2ZXJ5IGVudHJ5IHBvaW50IHRoYXQgcmVhY2hlcyBlaXRoZXIgKGRpcmVjdCwKLy8vIGRlbGVnYXRlZCwgYmF0Y2gsIHBhaWQsIHJlcGxhY2VtZW50LCBhdXRob3JpemVyKSBpcyBhbmNob3JlZCBieQovLy8gY29uc3RydWN0aW9uIHJhdGhlciB0aGFuIGJ5IHJlbWVtYmVyaW5nIHRvIGFuY2hvciBpdC4KLy8vCi8vLyBUaGUgbGVkZ2VyIGFjY2VzcyBnb2VzIHRocm91Z2ggdGhlIG5vbi1kZXByZWNhdGVkIGBleHRlbmRfdG8oKWAgaG9zdAovLy8gZnVuY3Rpb24gKGF2YWlsYWJsZSBzaW5jZSBQcm90b2NvbCAyMikgcmF0aGVyIHRoYW4gdGhlIGRlcHJlY2F0ZWQKLy8vIGBzZXF1ZW5jZSgpYC9gdGltZXN0YW1wKClgIGFjY2Vzc29ycywgc28gdGhlIGFuY2hvciBpcyBhbHdheXMgd3JpdHRlbgpsLy8vIGFnYWluc3QgdGhlIGxhdGVzdCBsZWRnZXIgdGhlIGhvc3Qga25vd3MgYWJvdXQuCnB1YiBmbiB3cml0ZV9hbmNob3IoZW52OiAmRW52LCB1aWQ6ICZVSUQsIHJldm9jYXRpb246IGJvb2wsIHR0bDogdTMyKSB7CiAgICBsZXQgc3RvcmFnZSA9IGVudi5zdG9yYWdlKCkucGVyc2lzdGVudCgpOwogICAgbGV0IGtleSA9IGFuY2hvcl9rZXkodWlkLCByZXZvY2F0aW9uKTsKICAgIGxldCBsZWRnZXIgPSBlbnYubGVkZ2VyKCkuZ2V0X2xlZGdlcl9pbmZvKCk7CiAgICBzdG9yYWdlLnNldCgKICAgICAgICAmа2V5LAogICAgICAgICZUaW1lc3RhbXBBbmNob3IgewogICAgICAgICAgICBsZWRnZXJfc2VxdWVuY2U6IGxlZGdlci5zZXF1ZW5jZV9udW1iZXIsCiAgICAgICAgICAgIGxlZGdlcl90aW1lc3RhbXA6IGxlZGdlci50aW1lc3RhbXAsCiAgICAgICAgfSwKICAgICk7CiAgICBzdG9yYWdlLmV4dGVuZF90dGwoJmtleSwgdHRsLCB0dGwpOwp9CgovLy8gUmVhZHMgYW4gYW5jaG9yIHdpdGhvdXQgdG91Y2hpbmcgc3RvcmFnZSBUVExzLgovLy8KLy8vIFRoZSB2ZXJpZmljYXRpb24gZW50cnkgcG9pbnQgdXNlcyB0aGlzOiBhIGNoZWNrIGlzIGEgcmVhZCwgYW5kIGEgY2FsbGVyCi8vLyB0aGF0IG9ubHkgd2FudHMgdG8ga25vdyB3aGV0aGVyIGEgY2xhaW0gaG9sZHMgc2hvdWxkIG5vdCBoYXZlIHRvIHBheSBmb3IgYQovLy8gd3JpdGUgdG8gZmluZCBvdXQuCnB1YiBmbiByZWFkX2FuY2hvcihlbnY6ICZFbnYsIHVpZDogJlVJRCwgcmV2b2NhdGlvbjogYm9vbCkgLT4gT3B0aW9uPFRpbWVzdGFtcEFuY2hvcj4gewogICAgZW52LnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuZ2V0KCZhbmNob3Jfa2V5KHVpZCwgcmV2b2NhdGlvbikpCn0KCi8vLyBSZWFkcyBhbiBhbmNob3IgYW5kIHJlbmV3cyBpdHMgVFRMLCB0aGUgd2F5IHRoaXMgY29udHJhY3QncyBvdGhlcgovLy8gZG9jdW1lbnRlZCByZWFkZXJzIGRvLiBUaGUgcmVuZXdhbCB3aW5kb3cgaXMgdGhlIHByb3RvY29sJ3Mgc3RhbmRhcmQKLy8vIG9uZS15ZWFyIHJldGVudGlvbiAoYExFR0VSU19JTl9PTkVfWUVBYCksIG1hdGNoaW5nIGBnZXRfYXR0ZXN0ZXJfa2V5YC4KcHViIGZuIHJlYWRfYW5kX3JlbmV3X2FuY2hvcihlbnY6ICZFbnYsIHVpZDogJlVJRCwgcmV2b2NhdGlvbjogYm9vbCkgLT4gT3B0aW9uPFRpbWVzdGFtcEFuY2hvcj4gewogICAgbGV0IGtleSA9IGFuY2hvcl9rZXkodWlkLCByZXZvY2F0aW9uKTsKICAgIGxldCBhbmNob3I6IE9wdGlvbjxUaW1lc3RhbXBBbmNob3I+ID0gZW52LnN0b3JhZ2UoKS5wZXJzaXN0ZW50KCkuZ2V0KCZrZXkpOwogICAgaWYgYW5jaG9yLmlzX3NvbWUoKSB7CiAgICAgICAgZW52LnN0b3JhZ2UoKQogICAgICAgICAgICAucGVyc2lzdGVudCgpCiAgICAgICAgICAgIC5leHRlbmRfdHRsKCZrZXksIExFR0VSU19JTl9PTkVfWUVBUiwgTEVHR0VSU19JTl9PTkVfWUVBUik7CiAgICB9CiAgICBhbmNob3IKfQo=
+//! Ledger-verifiable timestamps for issuance and revocation (#298).
+//!
+//! `Attestation.time` is normalized to the ledger close time when an
+//! attestation is issued (#156), and `revocation_time` to the close time of
+//! the ledger that revoked it. Both are host-supplied values: on their own
+//! they say *"a validator claimed this ledger closed at T"*, with nothing for
+//! a verifier to check the claim against. A consumer holding only the
+//! attestation has to trust the attester, or this contract, that the number
+//! was not something else.
+//!
+//! This module closes that gap by recording *which ledger* each timestamp
+//! came from. A close time plus the sequence number of the ledger that
+//! produced it is exactly what an SCP-verified ledger header carries, so a
+//! verifier that already trusts a header — the SDK reading `/ledgers/:seq`, a
+//! bridge checking an SCP envelope, an auditor replaying ledger close meta —
+//! can bind the attestation to that ledger with `SAS::verify_timestamp`, or
+//! fetch the anchor it needs to look up with `SAS::get_issuance_timestamp` /
+//! `SAS::get_revocation_timestamp`.
+//!
+//! What this does *not* do is prove anything about a ledger by itself: the
+//! contract can only report what the host told it. The proof is the ledger
+//! header, which the network signs; the anchor is the pointer to it.
+//!
+//! Anchors live in their own persistent entries rather than as new fields on
+//! `Attestation`. The v1.0.0 state schema is frozen — adding fields would
+//! change the XDR layout every indexer, SDK and stored record decodes — and a
+//! side entry with the attestation's own TTL expires exactly when the record
+//! it describes does.
+
+use soroban_sas_common::{LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sdk::{contracttype, Env};
+
+/// The ledger a timestamp came from: the sequence number of the ledger whose
+/// close time was stamped, and that close time itself.
+///
+/// A verifier compares `ledger_timestamp` against the close time in the
+/// header for `ledger_sequence`. Both fields are checked, so an anchor cannot
+/// be satisfied by a close time that belongs to a different ledger.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)] // Optimize storage serialization
+pub struct TimestampAnchor {
+    pub ledger_sequence: u32,
+    pub ledger_timestamp: u64,
+}
+
+/// Typed storage key for one of an attestation's anchors.
+///
+/// An attestation has two independent anchors over its life — the ledger that
+/// issued it and, if it is revoked, the ledger that revoked it — so one key
+/// type carries both, distinguished by `revocation`, rather than a second
+/// storage namespace. Both are keyed by UID, which keeps the anchor adjacent
+/// to (and garbage-collected with) the record it describes.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimestampAnchorKey {
+    pub uid: UID,
+    /// `false` for the issuance anchor, `true` for the revocation anchor.
+    pub revocation: bool,
+}
+
+fn anchor_key(uid: &UID, revocation: bool) -> TimestampAnchorKey {
+    TimestampAnchorKey {
+        uid: uid.clone(),
+        revocation,
+    }
+}
+
+/// Records the current ledger as `uid`'s issuance or revocation anchor, with
+/// the same TTL as the attestation it describes so the two expire together.
+///
+/// Called from `attest_internal` and `revoke_internal` — the two places that
+/// write a timestamp — so every entry point that reaches either (direct,
+/// delegated, batch, paid, replacement, authorizer) is anchored by
+/// construction rather than by remembering to anchor it.
+pub fn write_anchor(env: &Env, uid: &UID, revocation: bool, ttl: u32) {
+    let storage = env.storage().persistent();
+    let key = anchor_key(uid, revocation);
+    storage.set(
+        &key,
+        &TimestampAnchor {
+            ledger_sequence: env.ledger().sequence(),
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+    storage.extend_ttl(&key, ttl, ttl);
+}
+
+/// Reads an anchor without touching storage TTLs.
+///
+/// The verification entry point uses this: a check is a read, and a caller
+/// that only wants to know whether a claim holds should not have to pay for a
+/// write to find out.
+pub fn read_anchor(env: &Env, uid: &UID, revocation: bool) -> Option<TimestampAnchor> {
+    env.storage().persistent().get(&anchor_key(uid, revocation))
+}
+
+/// Reads an anchor and renews its TTL, the way this contract's other
+/// documented readers do. The renewal window is the protocol's standard
+/// one-year retention (`LEDGERS_IN_ONE_YEAR`), matching `get_attester_key`.
+pub fn read_and_renew_anchor(env: &Env, uid: &UID, revocation: bool) -> Option<TimestampAnchor> {
+    let key = anchor_key(uid, revocation);
+    let anchor: Option<TimestampAnchor> = env.storage().persistent().get(&key);
+    if anchor.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    }
+    anchor
+}
