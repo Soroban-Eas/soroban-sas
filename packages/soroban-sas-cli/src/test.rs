@@ -112,13 +112,14 @@ mod tests {
     #[test]
     fn resolve_secret_key_prefers_an_explicit_flag_over_identity() {
         let resolved =
-            crate::resolve_secret_key(Some("explicit-secret".to_string()), Some("alice")).unwrap();
+            crate::resolve_secret_key(Some("explicit-secret".to_string()), Some("alice"), None)
+                .unwrap();
         assert_eq!(resolved, "explicit-secret");
     }
 
     #[test]
     fn resolve_secret_key_errors_clearly_when_neither_is_given() {
-        let err = crate::resolve_secret_key(None, None).unwrap_err();
+        let err = crate::resolve_secret_key(None, None, None).unwrap_err();
         assert!(err.contains("--secret-key"));
         assert!(err.contains("--identity"));
     }
@@ -242,6 +243,73 @@ mod tests {
         assert_eq!(parsed_recipient, recipient);
         assert_eq!(data, "deadbeef");
         assert_eq!(expiration, 0);
+    }
+
+    #[test]
+    fn parses_attest_bulk_flags_with_safe_defaults() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "attest",
+            "bulk",
+            "--csv-file",
+            "attestations.csv",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+
+        let Some(Commands::Attest {
+            action:
+                AttestCommands::Bulk {
+                    csv_file,
+                    dry_run,
+                    continue_on_error,
+                    max_ledger_skew,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected attest bulk command");
+        };
+        assert_eq!(csv_file, "attestations.csv");
+        // Issuing must be opt-in twice over: a batch is never submitted
+        // unless asked, and a failure stops the run unless asked otherwise.
+        assert!(!dry_run, "bulk must not submit by default");
+        assert!(
+            !continue_on_error,
+            "bulk must stop on first failure by default"
+        );
+        assert_eq!(max_ledger_skew, 300);
+    }
+
+    #[test]
+    fn attest_bulk_accepts_the_dry_run_and_continue_on_error_flags() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "attest",
+            "bulk",
+            "--csv-file",
+            "attestations.csv",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--dry-run",
+            "--continue-on-error",
+        ])
+        .unwrap();
+
+        let Some(Commands::Attest {
+            action:
+                AttestCommands::Bulk {
+                    dry_run,
+                    continue_on_error,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected attest bulk command");
+        };
+        assert!(dry_run);
+        assert!(continue_on_error);
     }
 
     #[test]
@@ -469,6 +537,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
+            None,
             false,
         )
         .unwrap_err();
@@ -485,6 +554,7 @@ mod tests {
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
+            None,
             false,
         )
         .unwrap_err();
@@ -515,6 +585,7 @@ mod tests {
                     dry_run: false,
                 },
                 OutputFormat::Human,
+                None,
                 None,
                 None,
                 false,
@@ -590,6 +661,7 @@ mod tests {
                     dry_run: false,
                 },
                 OutputFormat::Human,
+                None,
                 None,
                 None,
                 false,
@@ -1111,6 +1183,7 @@ mod online_verification_tests {
             crate::OutputFormat::Json,
             None,
             None,
+            None,
             true,
         );
         assert!(res.is_ok());
@@ -1132,6 +1205,7 @@ mod online_verification_tests {
                 rpc_url: Some(url),
             },
             crate::OutputFormat::Human,
+            None,
             None,
             None,
             true,
@@ -1483,6 +1557,7 @@ mod schema_withdraw_fees_tests {
                 dry_run: false,
             },
             OutputFormat::Json,
+            None,
             None,
             None,
             true,

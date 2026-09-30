@@ -17,6 +17,7 @@
 
 use crate::errors::SdkError;
 use crate::rpc::{GetTransactionResult, RpcClient};
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 const SETTLING_STATUSES: [&str; 2] = ["NOT_FOUND", "PENDING"];
@@ -27,7 +28,8 @@ pub const DEFAULT_MAX_POLLS: u32 = 10;
 
 /// Whether a submission blocks until the transaction settles or returns as
 /// soon as the network has accepted it for inclusion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SubmissionMode {
     /// Poll `getTransaction` until settlement, timeout, or RPC failure.
     #[default]
@@ -38,7 +40,8 @@ pub enum SubmissionMode {
 }
 
 /// How the delay between polls evolves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Backoff {
     /// Every wait is `poll_interval`.
     Fixed,
@@ -47,7 +50,8 @@ pub enum Backoff {
 }
 
 /// Tunables for how [`TransactionSubmitter`] waits for settlement.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct SubmissionPolicy {
     /// Delay before the first re-poll (and every poll under [`Backoff::Fixed`]).
     pub poll_interval: Duration,
@@ -60,6 +64,10 @@ pub struct SubmissionPolicy {
     pub backoff: Backoff,
     /// Blocking vs. asynchronous submission.
     pub mode: SubmissionMode,
+    /// Whether transient network/transport errors during polling should be retried
+    /// until `max_polls` or `deadline` expires.
+    #[serde(default)]
+    pub retry_transport_errors: bool,
 }
 
 impl Default for SubmissionPolicy {
@@ -70,6 +78,7 @@ impl Default for SubmissionPolicy {
             deadline: None,
             backoff: Backoff::Fixed,
             mode: SubmissionMode::Blocking,
+            retry_transport_errors: false,
         }
     }
 }
@@ -109,6 +118,12 @@ impl SubmissionPolicy {
     /// Builder-style setter for the backoff schedule.
     pub fn with_backoff(mut self, backoff: Backoff) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    /// Builder-style setter for retrying on transient transport errors.
+    pub fn with_retry_transport_errors(mut self, retry: bool) -> Self {
+        self.retry_transport_errors = retry;
         self
     }
 
@@ -240,8 +255,32 @@ impl TransactionSubmitter {
         F: FnMut() -> Result<GetTransactionResult, SdkError>,
     {
         let mut last_status = String::from("NOT_FOUND");
+        let mut last_transport_err = None;
         for poll in 0..policy.max_polls {
-            let mut result = fetch()?;
+            let mut result = match fetch() {
+                Ok(r) => {
+                    last_transport_err = None;
+                    r
+                }
+                Err(SdkError::TransportError(err)) if policy.retry_transport_errors => {
+                    last_transport_err = Some(err);
+                    if poll + 1 >= policy.max_polls {
+                        break;
+                    }
+                    if let Some(deadline) = policy.deadline {
+                        let elapsed = clock.now().duration_since(started);
+                        if elapsed >= deadline {
+                            break;
+                        }
+                        let wait = policy.delay_for(poll).min(deadline - elapsed);
+                        clock.sleep(wait);
+                    } else {
+                        clock.sleep(policy.delay_for(poll));
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             last_status.clone_from(&result.status);
             if result.status.eq_ignore_ascii_case("FAILED") {
                 return Err(SdkError::TransactionFailed {
@@ -266,6 +305,9 @@ impl TransactionSubmitter {
             } else {
                 clock.sleep(policy.delay_for(poll));
             }
+        }
+        if let Some(err) = last_transport_err {
+            return Err(SdkError::TransportError(err));
         }
         Err(SdkError::SettlementTimeout {
             hash: hash.to_string(),
