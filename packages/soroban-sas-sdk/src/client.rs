@@ -54,6 +54,25 @@ pub struct ArchivedInfo {
 /// simulation reports is added on top.
 const BASE_FEE: u32 = 100;
 
+/// Outcome of simulating a write call without signing or submitting it
+/// (issue #329's `--dry-run`): the resource footprint/fee a real submission
+/// would need to carry, obtained from the same `simulateTransaction` draft
+/// step [`SASClient::submit_write`] runs before it ever builds a signed
+/// envelope. No sequence number is consumed and no signature is produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DryRunResult {
+    /// The contract function that was simulated.
+    pub function_name: String,
+    /// Stroops the simulation reports as the resource fee — the amount a
+    /// real submission would add on top of [`BASE_FEE`].
+    pub min_resource_fee: i64,
+    /// `BASE_FEE + min_resource_fee`: the total fee a real submission of
+    /// this exact call would carry under [`FeePolicy::Default`].
+    pub total_fee: i64,
+    /// The ledger the simulation ran against.
+    pub latest_ledger: u32,
+}
+
 /// Configurable fee policy for simulated write transactions.
 ///
 /// Ledger state or fee conditions can change between simulation and
@@ -284,6 +303,32 @@ impl SASClient {
         )
     }
 
+    /// Like [`set_fee`](Self::set_fee) but only simulates the call (issue
+    /// #329's `--dry-run`): reports the resource fee a real submission
+    /// would carry and surfaces any on-chain rejection (e.g.
+    /// `Unauthorized`) without signing or submitting a transaction.
+    pub fn set_fee_dry_run(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        admin_secret_seed: &[u8; 32],
+        token: &str,
+        amount: i128,
+    ) -> Result<DryRunResult, SdkError> {
+        if amount <= 0 {
+            return Err(SdkError::InvalidInput(
+                "fee amount must be greater than 0".to_string(),
+            ));
+        }
+        let token = parse_address(env, token, AddressKind::Contract, "token")?;
+        let args = vec![
+            simulate::encode_arg(env, &token)?,
+            simulate::encode_arg(env, &amount)?,
+        ];
+        let public_key = signature::derive_public_key(admin_secret_seed);
+        dry_run_write(rpc, &self.contract_id, "set_fee", args, &public_key)
+    }
+
     /// Calls `SAS::clear_fee()` on this client's SAS contract, removing the
     /// payment requirement. Requires `admin_secret_seed`'s account to be the
     /// SAS administrator.
@@ -303,6 +348,17 @@ impl SASClient {
             "clear_fee",
             vec![],
         )
+    }
+
+    /// Like [`clear_fee`](Self::clear_fee) but only simulates the call
+    /// (issue #329's `--dry-run`).
+    pub fn clear_fee_dry_run(
+        &self,
+        rpc: &RpcClient,
+        admin_secret_seed: &[u8; 32],
+    ) -> Result<DryRunResult, SdkError> {
+        let public_key = signature::derive_public_key(admin_secret_seed);
+        dry_run_write(rpc, &self.contract_id, "clear_fee", vec![], &public_key)
     }
 
     /// Reads the highest delegation nonce consumed for `attester` via `simulateTransaction`
@@ -780,6 +836,42 @@ impl SASClient {
         )
     }
 
+    /// Like [`register_schema`](Self::register_schema) but only simulates
+    /// the call (issue #329's `--dry-run`): reports the resource fee a real
+    /// submission would carry and surfaces any on-chain rejection without
+    /// signing or submitting a transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_schema_dry_run(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema: &str,
+        resolver: &str,
+        revocable: bool,
+    ) -> Result<DryRunResult, SdkError> {
+        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
+        let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
+        let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
+        let schema = SorobanString::from_str(env, schema);
+
+        let args = vec![
+            simulate::encode_arg(env, &owner)?,
+            simulate::encode_arg(env, &schema)?,
+            simulate::encode_arg(env, &resolver)?,
+            simulate::encode_arg(env, &revocable)?,
+        ];
+        dry_run_write(
+            rpc,
+            registry_contract_id,
+            "register",
+            args,
+            &owner_public_key,
+        )
+    }
+
     /// Like [`register_schema`](Self::register_schema) but allows a
     /// [`FeePolicy`].
     #[allow(clippy::too_many_arguments)]
@@ -866,6 +958,45 @@ impl SASClient {
         )
     }
 
+    /// Like [`register_schema_with_value`](Self::register_schema_with_value)
+    /// but only simulates the call (issue #329's `--dry-run`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_schema_with_value_dry_run(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema: &str,
+        resolver: &str,
+        revocable: bool,
+        token: &str,
+        value: i128,
+    ) -> Result<DryRunResult, SdkError> {
+        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
+        let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
+        let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
+        let token = parse_address(env, token, AddressKind::Contract, "token")?;
+        let schema = SorobanString::from_str(env, schema);
+
+        let args = vec![
+            simulate::encode_arg(env, &owner)?,
+            simulate::encode_arg(env, &schema)?,
+            simulate::encode_arg(env, &resolver)?,
+            simulate::encode_arg(env, &revocable)?,
+            simulate::encode_arg(env, &token)?,
+            simulate::encode_arg(env, &value)?,
+        ];
+        dry_run_write(
+            rpc,
+            registry_contract_id,
+            "register_with_value",
+            args,
+            &owner_public_key,
+        )
+    }
+
     /// Calls `SchemaRegistry::set_fee(token, amount)`, pinning the asset and
     /// exact amount `register_schema_with_value` charges. Requires
     /// `admin_secret_seed`'s account to be the registry's admin.
@@ -896,6 +1027,27 @@ impl SASClient {
         )
     }
 
+    /// Like [`set_schema_fee`](Self::set_schema_fee) but only simulates the
+    /// call (issue #329's `--dry-run`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_schema_fee_dry_run(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        token: &str,
+        amount: i128,
+    ) -> Result<DryRunResult, SdkError> {
+        let token = parse_address(env, token, AddressKind::Contract, "token")?;
+        let args = vec![
+            simulate::encode_arg(env, &token)?,
+            simulate::encode_arg(env, &amount)?,
+        ];
+        let public_key = signature::derive_public_key(admin_secret_seed);
+        dry_run_write(rpc, registry_contract_id, "set_fee", args, &public_key)
+    }
+
     /// Calls `SchemaRegistry::clear_fee()`, removing the registration fee
     /// requirement so `register`/`register_with_value(value: 0)` are free
     /// again. Requires `admin_secret_seed`'s account to be the registry's
@@ -917,6 +1069,18 @@ impl SASClient {
             "clear_fee",
             vec![],
         )
+    }
+
+    /// Like [`clear_schema_fee`](Self::clear_schema_fee) but only simulates
+    /// the call (issue #329's `--dry-run`).
+    pub fn clear_schema_fee_dry_run(
+        &self,
+        rpc: &RpcClient,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+    ) -> Result<DryRunResult, SdkError> {
+        let public_key = signature::derive_public_key(admin_secret_seed);
+        dry_run_write(rpc, registry_contract_id, "clear_fee", vec![], &public_key)
     }
 
     /// Calls `SchemaRegistry::set_treasury(treasury)`, pinning the address
@@ -942,6 +1106,22 @@ impl SASClient {
             "set_treasury",
             args,
         )
+    }
+
+    /// Like [`set_schema_treasury`](Self::set_schema_treasury) but only
+    /// simulates the call (issue #329's `--dry-run`).
+    pub fn set_schema_treasury_dry_run(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        treasury: &str,
+    ) -> Result<DryRunResult, SdkError> {
+        let treasury = parse_address(env, treasury, AddressKind::Either, "treasury")?;
+        let args = vec![simulate::encode_arg(env, &treasury)?];
+        let public_key = signature::derive_public_key(admin_secret_seed);
+        dry_run_write(rpc, registry_contract_id, "set_treasury", args, &public_key)
     }
 
     /// Calls `SchemaRegistry::withdraw_fees(amount)`, withdrawing `amount`
@@ -977,6 +1157,32 @@ impl SASClient {
             registry_contract_id,
             "withdraw_fees",
             args,
+        )
+    }
+
+    /// Like [`withdraw_schema_fees`](Self::withdraw_schema_fees) but only
+    /// simulates the call (issue #329's `--dry-run`).
+    pub fn withdraw_schema_fees_dry_run(
+        &self,
+        env: &Env,
+        rpc: &RpcClient,
+        admin_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        amount: i128,
+    ) -> Result<DryRunResult, SdkError> {
+        if amount <= 0 {
+            return Err(SdkError::InvalidInput(
+                "withdraw amount must be greater than 0".to_string(),
+            ));
+        }
+        let args = vec![simulate::encode_arg(env, &amount)?];
+        let public_key = signature::derive_public_key(admin_secret_seed);
+        dry_run_write(
+            rpc,
+            registry_contract_id,
+            "withdraw_fees",
+            args,
+            &public_key,
         )
     }
 
@@ -2498,6 +2704,58 @@ impl SASClient {
     }
 }
 
+/// Simulates `function_name(args)` on `contract_id` without signing or
+/// submitting a transaction (issue #329's `--dry-run`): builds the same
+/// draft (`V0`, `BASE_FEE`) invocation [`build_signed_write_at_sequence`]
+/// simulates before it ever signs anything, and reports the resource
+/// fee/footprint a real submission would need to carry. `source_public_key`
+/// only supplies the transaction's source account for simulation purposes —
+/// no signature is produced and no sequence number is consumed on-chain.
+///
+/// A call that would fail on-chain (e.g. `Unauthorized`, a bad argument)
+/// surfaces the same `SdkError` here that the real submission would
+/// eventually return, so a doomed invocation can be caught before spending
+/// a signature or a submission fee.
+fn dry_run_write(
+    rpc: &RpcClient,
+    contract_id: &str,
+    function_name: &str,
+    args: Vec<ScVal>,
+    source_public_key: &[u8; 32],
+) -> Result<DryRunResult, SdkError> {
+    let next_seq = account::fetch_sequence_number(rpc, source_public_key)? + 1;
+    let draft_tx = simulate::build_invoke_transaction(
+        source_public_key,
+        next_seq,
+        BASE_FEE,
+        TransactionExt::V0,
+        contract_id,
+        function_name,
+        args,
+        VecM::default(),
+    )?;
+    let draft_xdr = simulate::unsigned_envelope_xdr(draft_tx)?;
+    let sim = rpc.simulate_transaction(&draft_xdr)?;
+    if let Some(error) = sim.error {
+        if let Some(code) = crate::errors::extract_contract_error_code(&error) {
+            return Err(SdkError::ContractError(code));
+        }
+        return Err(SdkError::SimulationError(error));
+    }
+    let min_resource_fee: i64 = sim
+        .min_resource_fee
+        .as_deref()
+        .unwrap_or("0")
+        .parse()
+        .map_err(|e| SdkError::RpcError(format!("invalid simulated minResourceFee: {e:?}")))?;
+    Ok(DryRunResult {
+        function_name: function_name.to_string(),
+        min_resource_fee,
+        total_fee: i64::from(BASE_FEE) + min_resource_fee,
+        latest_ledger: sim.latest_ledger,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3428,5 +3686,137 @@ mod tests {
         let res = client.restore_attestation([9u8; 32]).unwrap();
         assert_eq!(res.status, "SUCCESS");
         assert_eq!(res.hash.as_deref(), Some("restore_tx_hash_12345"));
+    }
+
+    /// Builds a `getLedgerEntries` mock response for `public_key`'s account
+    /// sitting at `seq_num`, matching what [`account::fetch_sequence_number`]
+    /// expects — the first RPC call every dry run makes.
+    fn account_entry_body(public_key: [u8; 32], seq_num: i64) -> String {
+        let entry = soroban_sdk::xdr::AccountEntry {
+            account_id: AccountId(soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(Uint256(
+                public_key,
+            ))),
+            balance: 100_000_000,
+            seq_num: SequenceNumber(seq_num),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: String32::default(),
+            thresholds: Thresholds([1, 0, 0, 0]),
+            signers: Default::default(),
+            ext: soroban_sdk::xdr::AccountEntryExt::V0,
+        };
+        let entry_xdr = LedgerEntryData::Account(entry)
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"latestLedger":100,"entries":[{{"key":"AAAAAQ==","xdr":"{entry_xdr}","lastModifiedLedgerSeq":100}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn dry_run_write_reports_fee_without_submitting() {
+        // Issue #329: `--dry-run` simulates a write and reports what it
+        // would cost, without ever calling sendTransaction. Only two RPC
+        // legs are queued (account lookup + simulate); if the code path
+        // tried to sign and submit, the third connection would be refused
+        // by the mock server and the test would fail with a transport error
+        // instead of asserting on the (wrong) fee.
+        let secret_seed = [3u8; 32];
+        let public_key = signature::derive_public_key(&secret_seed);
+        let contract_id = stellar_strkey::Contract([5u8; 32]).to_string();
+
+        let account_body = account_entry_body(public_key, 41);
+        let sim_body = r#"{"jsonrpc":"2.0","id":2,"result":{"latestLedger":200,"minResourceFee":"12345","transactionData":"AAAAAA==","results":[{"xdr":"AAAAAw=="}]}}"#.to_string();
+
+        let url = spawn_mock_rpc_server_multi(vec![account_body, sim_body]);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id);
+
+        let result = client.clear_fee_dry_run(&rpc, &secret_seed).unwrap();
+
+        assert_eq!(result.function_name, "clear_fee");
+        assert_eq!(result.min_resource_fee, 12345);
+        assert_eq!(result.total_fee, i64::from(BASE_FEE) + 12345);
+        assert_eq!(result.latest_ledger, 200);
+    }
+
+    #[test]
+    fn dry_run_write_surfaces_contract_error_without_submitting() {
+        // A call doomed to fail on-chain (e.g. Unauthorized) must surface
+        // the same structured error a real submission would return, so a
+        // dry run catches it before a signature or fee is ever spent.
+        let secret_seed = [4u8; 32];
+        let public_key = signature::derive_public_key(&secret_seed);
+        let contract_id = stellar_strkey::Contract([6u8; 32]).to_string();
+
+        let account_body = account_entry_body(public_key, 10);
+        let sim_error_body = r#"{"jsonrpc":"2.0","id":2,"result":{"latestLedger":200,"error":"HostError: Error(301, Unauthorized)"}}"#.to_string();
+
+        let url = spawn_mock_rpc_server_multi(vec![account_body, sim_error_body]);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(contract_id);
+
+        let err = client.clear_fee_dry_run(&rpc, &secret_seed).unwrap_err();
+        assert!(matches!(err, SdkError::ContractError(301)));
+    }
+
+    #[test]
+    fn set_fee_dry_run_rejects_non_positive_amount_before_any_rpc_call() {
+        // Mirrors `set_fee`'s client-side guard: a non-positive amount is
+        // rejected before touching the network, so no RPC call is ever
+        // attempted — verified here by pointing at a port nothing listens
+        // on and asserting the failure is the validation error, not a
+        // transport error.
+        let env = Env::default();
+        let secret_seed = [7u8; 32];
+        let contract_id = stellar_strkey::Contract([8u8; 32]).to_string();
+        let rpc = RpcClient::new("http://127.0.0.1:1".to_string());
+        let client = SASClient::new(contract_id);
+
+        let err = client
+            .set_fee_dry_run(
+                &env,
+                &rpc,
+                &secret_seed,
+                "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                0,
+            )
+            .unwrap_err();
+        assert!(matches!(err, SdkError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn register_schema_dry_run_reports_fee_for_registry_writes() {
+        // The dry-run mechanism is generic across contracts: it must work
+        // identically for Schema Registry writes, not just SAS ones.
+        let env = Env::default();
+        let secret_seed = [9u8; 32];
+        let public_key = signature::derive_public_key(&secret_seed);
+        let registry_contract_id = stellar_strkey::Contract([10u8; 32]).to_string();
+        let resolver = stellar_strkey::Contract([11u8; 32]).to_string();
+
+        let account_body = account_entry_body(public_key, 99);
+        let sim_body = r#"{"jsonrpc":"2.0","id":2,"result":{"latestLedger":300,"minResourceFee":"777","transactionData":"AAAAAA==","results":[{"xdr":"AAAAAw=="}]}}"#.to_string();
+
+        let url = spawn_mock_rpc_server_multi(vec![account_body, sim_body]);
+        let rpc = RpcClient::new(url);
+        let client = SASClient::new(registry_contract_id.clone());
+
+        let result = client
+            .register_schema_dry_run(
+                &env,
+                &rpc,
+                &secret_seed,
+                &registry_contract_id,
+                "name String, age U32",
+                &resolver,
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(result.function_name, "register");
+        assert_eq!(result.min_resource_fee, 777);
+        assert_eq!(result.total_fee, i64::from(BASE_FEE) + 777);
     }
 }

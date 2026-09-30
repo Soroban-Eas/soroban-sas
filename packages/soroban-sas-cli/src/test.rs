@@ -532,11 +532,14 @@ mod tests {
                 network_passphrase: None,
                 contract_id: contract_id.to_string(),
                 rpc_url: None,
+                dry_run: false,
             },
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
-            None, None
+None,
+            None,
+            false,
         )
         .unwrap_err();
         assert!(set_error.contains("invalid --identity"));
@@ -547,11 +550,14 @@ mod tests {
                 network_passphrase: None,
                 contract_id: contract_id.to_string(),
                 rpc_url: None,
+                dry_run: false,
             },
             OutputFormat::Human,
             Some("testnet".to_string()),
             Some("../invalid".to_string()),
-            None, None
+None,
+            None,
+            false,
         )
         .unwrap_err();
         assert!(clear_error.contains("invalid --identity"));
@@ -578,11 +584,14 @@ mod tests {
                     contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
                         .to_string(),
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
+                    dry_run: false,
                 },
                 OutputFormat::Human,
                 None,
                 None,
-                None, None
+None,
+            None,
+            false,
             )
             .unwrap_err();
             assert_eq!(error, "--amount must be greater than 0");
@@ -618,6 +627,7 @@ mod tests {
                     network_passphrase,
                     registry_contract_id,
                     rpc_url,
+                    dry_run: _,
                 },
         }) = cli.command
         else {
@@ -651,11 +661,14 @@ mod tests {
                     network_passphrase: None,
                     registry_contract_id: contract_id.to_string(),
                     rpc_url: Some("http://127.0.0.1:1".to_string()),
+                    dry_run: false,
                 },
                 OutputFormat::Human,
                 None,
                 None,
-                None, None
+None,
+            None,
+            false,
             )
             .unwrap_err();
             assert_eq!(error, "--amount must be greater than 0");
@@ -1174,7 +1187,9 @@ mod online_verification_tests {
             crate::OutputFormat::Json,
             None,
             None,
-            None, None
+None,
+            None,
+            true,
         );
         assert!(res.is_ok());
     }
@@ -1197,7 +1212,9 @@ mod online_verification_tests {
             crate::OutputFormat::Human,
             None,
             None,
-            None, None
+None,
+            None,
+            true,
         );
         assert!(res.is_ok());
     }
@@ -1544,11 +1561,14 @@ mod schema_withdraw_fees_tests {
                 network_passphrase: Some("Test SDF Network ; September 2015".to_string()),
                 registry_contract_id: stellar_strkey::Contract([62u8; 32]).to_string(),
                 rpc_url: Some(url),
+                dry_run: false,
             },
             OutputFormat::Json,
             None,
             None,
-            None, None
+None,
+            None,
+            true,
         );
         assert!(res.is_ok(), "withdraw-fees should settle: {res:?}");
     }
