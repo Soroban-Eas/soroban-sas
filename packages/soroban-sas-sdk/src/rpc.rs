@@ -14,6 +14,18 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use soroban_sdk::xdr::{ReadXdr, TransactionEnvelope};
 use ureq::{Agent, AgentBuilder};
 
+/// Trait for custom RPC backend implementations.
+///
+/// Allows advanced users to provide their own RPC implementations
+/// for testing, custom routing, or specialized network configurations.
+pub trait RpcBackend {
+    /// POST a JSON-RPC request and return the response body.
+    fn post_json(&self, body: &str) -> Result<String, SdkError>;
+
+    /// Get the network URL this backend targets.
+    fn network_url(&self) -> &str;
+}
+
 // ─── Rate-limit retry policy ─────────────────────────────────────────────────
 
 /// Default maximum number of retries on HTTP 429 responses.
@@ -181,7 +193,7 @@ impl RpcClient {
     }
 
     /// Overrides the largest response body this client will accept
-    /// ([`DEFAULT_MAX_RESPONSE_BYTES`](crate::limits::DEFAULT_MAX_RESPONSE_BYTES)
+    /// ([`crate::limits::DEFAULT_MAX_RESPONSE_BYTES`]
     /// by default). Raise it for endpoints that legitimately return very
     /// large `getLedgerEntries` / `simulateTransaction` payloads.
     pub fn with_max_response_bytes(mut self, max_response_bytes: usize) -> Self {
@@ -479,6 +491,43 @@ impl RpcClient {
                 Err(err) => return Err(SdkError::TransportError(err.to_string())),
             }
         }
+    }
+}
+
+impl RpcBackend for RpcClient {
+    fn post_json(&self, body: &str) -> Result<String, SdkError> {
+        let request: serde_json::Value = serde_json::from_str(body)
+            .map_err(|e| SdkError::RpcError(format!("invalid JSON request: {e}")))?;
+
+        let mut attempt = 0;
+        loop {
+            let response = self.agent.post(&self.network_url).send_json(&request);
+
+            match response {
+                Ok(resp) => return read_body_bounded(resp, self.max_response_bytes),
+                Err(ureq::Error::Status(429, resp)) => {
+                    let retry_after_dur = resp
+                        .header("Retry-After")
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                        .map(Duration::from_secs);
+
+                    if attempt < self.rate_limit_policy.max_retries {
+                        let delay = retry_after_dur
+                            .unwrap_or_else(|| self.rate_limit_policy.backoff_for_attempt(attempt));
+                        std::thread::sleep(delay);
+                        attempt += 1;
+                        continue;
+                    }
+
+                    return Err(SdkError::RateLimited { retries: attempt });
+                }
+                Err(err) => return Err(SdkError::TransportError(err.to_string())),
+            }
+        }
+    }
+
+    fn network_url(&self) -> &str {
+        &self.network_url
     }
 }
 
@@ -816,7 +865,8 @@ pub struct LedgerClock {
 }
 
 /// Why the network ledger time could not be used as-is for issuance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum IssuanceTimeError {
     /// The ledger close time is more than `max_skew_secs` behind the local
     /// clock — the RPC node is lagging, or the local clock jumped forward.

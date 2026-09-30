@@ -1021,3 +1021,188 @@ fn offchain_sign_reports_an_absent_recipient_field_without_panicking() {
     );
     assert!(!run.stderr.contains("panicked"), "{}", run.stderr);
 }
+
+// ---------------------------------------------------------------------------
+// Bulk CSV issuance
+// ---------------------------------------------------------------------------
+
+/// A well-formed two-row CSV over the fixture's schema and recipients.
+fn bulk_csv(ctx: &Ctx) -> String {
+    format!(
+        "schema_uid,recipient,data,revocable\n\
+         {schema},{r1},0x01,true\n\
+         {schema},{r2},0x02,false\n",
+        schema = ctx.f().schema_uid,
+        r1 = ctx.f().recipient,
+        r2 = ctx.f().other_recipient,
+    )
+}
+
+/// `--identity attester` is required even for a dry run: each UID is the
+/// content-addressed UID *for this attester*, so the preview is only
+/// meaningful with a key in hand.
+fn bulk_args<'a>(ctx: &'a Ctx, csv: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec![
+        "--output",
+        "json",
+        "--identity",
+        "attester",
+        "attest",
+        "bulk",
+        "--csv-file",
+        csv,
+        "--contract-id",
+        &ctx.f().sas_id,
+        "--rpc-url",
+        &ctx.host.url,
+    ];
+    args.extend_from_slice(extra);
+    args
+}
+
+#[test]
+fn bulk_dry_run_reports_every_row_without_touching_the_network() {
+    let ctx = Ctx::new();
+    let csv = ctx.dir.write("bulk.csv", &bulk_csv(&ctx));
+
+    let run = ctx.run(&bulk_args(&ctx, &csv, &["--dry-run"]));
+    let json = run.assert_ok().json();
+
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["data"]["dry_run"], true);
+    assert_eq!(json["data"]["total"], 2);
+
+    let results = json["data"]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    // Line numbers point back into the operator's file, not at row indices.
+    assert_eq!(results[0]["line"], 2);
+    assert_eq!(results[1]["line"], 3);
+    // Each UID is the content-addressed UID the single-row `attest attest`
+    // command derives for the same inputs, so a dry run is a real preview.
+    assert_eq!(results[0]["uid"].as_str().unwrap().len(), 64);
+    assert_ne!(results[0]["uid"], results[1]["uid"]);
+
+    // A dry run must not simulate, submit, or fetch the ledger clock.
+    assert!(
+        ctx.host.methods().is_empty(),
+        "dry run made RPC calls: {:?}",
+        ctx.host.methods()
+    );
+}
+
+#[test]
+fn bulk_rejects_a_malformed_file_before_any_rpc_call() {
+    let ctx = Ctx::new();
+
+    // Missing required column.
+    let missing = ctx.dir.write("missing.csv", "schema_uid\nabcd\n");
+    let json = ctx
+        .run(&bulk_args(&ctx, &missing, &["--dry-run"]))
+        .assert_failed()
+        .json();
+    assert!(json["message"]
+        .as_str()
+        .unwrap()
+        .contains("missing required column `recipient`"));
+
+    // A typo in an *optional* column must be reported rather than silently
+    // dropped, which would issue the attestation with a payload the operator
+    // never intended. (A typo in a required column is caught by the
+    // missing-column check first, which is the more useful message.)
+    let unknown = ctx.dir.write(
+        "unknown.csv",
+        &format!(
+            "schema_uid,recipient,recievable\n{},{},true\n",
+            ctx.f().schema_uid,
+            ctx.f().recipient
+        ),
+    );
+    let json = ctx
+        .run(&bulk_args(&ctx, &unknown, &["--dry-run"]))
+        .assert_failed()
+        .json();
+    assert!(json["message"]
+        .as_str()
+        .unwrap()
+        .contains("unknown column `recievable`"));
+
+    // A bad value in the *last* row still aborts the whole file, so a batch
+    // is never half-issued.
+    let bad_last = ctx.dir.write(
+        "badlast.csv",
+        &format!(
+            "schema_uid,recipient\n{schema},{ok}\nnothex,{other}\n",
+            schema = ctx.f().schema_uid,
+            ok = ctx.f().recipient,
+            other = ctx.f().other_recipient,
+        ),
+    );
+    let json = ctx
+        .run(&bulk_args(&ctx, &bad_last, &["--dry-run"]))
+        .assert_failed()
+        .json();
+    assert_eq!(json["status"], "error");
+    assert!(
+        json["message"].as_str().unwrap().contains("line 3"),
+        "{}",
+        json["message"]
+    );
+
+    assert!(ctx.host.methods().is_empty(), "no RPC call for a bad CSV");
+}
+
+#[test]
+fn bulk_rejects_a_recipient_the_contract_would_refuse() {
+    let ctx = Ctx::new();
+    // Attesting to yourself is rejected by SAS on-chain (#304); the CLI must
+    // refuse it locally, before spending a fee.
+    let csv = ctx.dir.write(
+        "self.csv",
+        &format!(
+            "schema_uid,recipient\n{schema},{attester}\n",
+            schema = ctx.f().schema_uid,
+            attester = ctx.f().attester,
+        ),
+    );
+
+    let json = ctx
+        .run(&bulk_args(&ctx, &csv, &["--dry-run"]))
+        .assert_failed()
+        .json();
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap()
+            .contains("recipient must differ"),
+        "{}",
+        json["message"]
+    );
+    assert!(
+        ctx.host.methods().is_empty(),
+        "no RPC call for a bad recipient"
+    );
+}
+
+#[test]
+fn bulk_missing_file_is_reported_without_a_panic() {
+    let ctx = Ctx::new();
+    let missing = ctx
+        .dir
+        .path()
+        .join("nope.csv")
+        .to_string_lossy()
+        .into_owned();
+
+    let run = ctx.run(&bulk_args(&ctx, &missing, &["--dry-run"]));
+    run.assert_failed();
+    // In `--output json` the error envelope goes to stdout, not stderr.
+    assert!(
+        run.json()["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot read"),
+        "{}",
+        run.stdout
+    );
+    assert!(!run.stderr.contains("panicked"), "{}", run.stderr);
+}

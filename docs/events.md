@@ -337,3 +337,14 @@ Both entrypoints require admin authorization. Unauthorized calls and nonpositive
 from the trusted SAS contract, the presence of this event is proof the change
 was authorized and durably applied. Use `parse_contract_event_verified` with the
 SAS contract allowlist to reject events spoofed by another contract.
+
+## IndexingProgress
+
+Emitted by the indexer after a UID is recorded for the first time.
+
+- Topics: `("IDXPROG", recipient: Address)`
+- Data: `IndexingProgressEvent { uid, recipient_total, schema_total, attester_total }`
+
+`recipient_total`, `schema_total`, and `attester_total` are the index lengths
+after the write. An identical retry does not emit the event. The call is
+still restricted to the bound SAS contract, same as `index_attestation`.

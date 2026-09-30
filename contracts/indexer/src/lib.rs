@@ -1,7 +1,8 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 use soroban_sas_common::{
-    events::CONTRACT_UPGRADED, ContractUpgradedEvent, SASError, LEDGERS_IN_ONE_YEAR, UID,
+    events::{CONTRACT_UPGRADED, INDEXING_PROGRESS},
+    ContractUpgradedEvent, IndexingProgressEvent, SASError, LEDGERS_IN_ONE_YEAR, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, BytesN, Env,
@@ -293,9 +294,11 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
 fn index_recipient_attestation(env: &Env, recipient: &Address, uid: &UID) {
     let mapping_key = (RECIPIENT_ATTESTATION, recipient.clone(), uid.clone());
     if env.storage().persistent().has(&mapping_key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&mapping_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        env.storage().persistent().extend_ttl(
+            &mapping_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
         return;
     }
     env.storage().persistent().set(&mapping_key, &true);
@@ -305,7 +308,9 @@ fn index_recipient_attestation(env: &Env, recipient: &Address, uid: &UID) {
 
     let count_key = (RECIPIENT_ATTESTATION_COUNT, recipient.clone());
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-    env.storage().persistent().set(&count_key, &count.saturating_add(1));
+    env.storage()
+        .persistent()
+        .set(&count_key, &count.saturating_add(1));
     env.storage()
         .persistent()
         .extend_ttl(&count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
@@ -600,6 +605,21 @@ impl Indexer {
         index_recipient_attestation(&env, &recipient, &uid);
         index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
         index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
+
+        // Progress for off-chain consumers (issue #315). Emitted only on the
+        // first successful index of this UID, after the counters have moved.
+        let recipient_total = index_total(&env, &(RECIPIENT_TOTAL, recipient.clone()));
+        let schema_total = index_total(&env, &(SCHEMA_TOTAL, schema_uid.clone()));
+        let attester_total = index_total(&env, &(ATTESTER_TOTAL, attester.clone()));
+        env.events().publish(
+            (INDEXING_PROGRESS, recipient),
+            IndexingProgressEvent {
+                uid,
+                recipient_total,
+                schema_total,
+                attester_total,
+            },
+        );
         extend_instance_ttl(&env);
     }
 
@@ -612,7 +632,7 @@ impl Indexer {
 
     /// Total number of UIDs indexed under `address` as a recipient, across
     /// every chunk. `0` if the key has never been indexed. A pure read: like
-    /// [`Indexer::index_total`], it renews the counter's TTL when found but
+    /// `index_total`, it renews the counter's TTL when found but
     /// creates no storage for a key that was never indexed. Lets callers
     /// compute pagination totals (`ceil(count / page_size)`) without
     /// fetching every UID just to learn how many there are (#220).
@@ -630,9 +650,11 @@ impl Indexer {
         let mapping_key = (RECIPIENT_ATTESTATION, recipient, uid);
         let present = env.storage().persistent().has(&mapping_key);
         if present {
-            env.storage()
-                .persistent()
-                .extend_ttl(&mapping_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            env.storage().persistent().extend_ttl(
+                &mapping_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
         }
         present
     }
@@ -645,9 +667,11 @@ impl Indexer {
         let count_key = (RECIPIENT_ATTESTATION_COUNT, address);
         let count: Option<u32> = env.storage().persistent().get(&count_key);
         if count.is_some() {
-            env.storage()
-                .persistent()
-                .extend_ttl(&count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            env.storage().persistent().extend_ttl(
+                &count_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
         }
         count.unwrap_or(0)
     }
@@ -685,7 +709,7 @@ impl Indexer {
 
     /// Complete schema history, oldest first. See
     /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
-    /// and [`read_chunk`] for the read-path retention policy: every schema
+    /// and `read_chunk` for the read-path retention policy: every schema
     /// chunk this walks has its TTL renewed, and an empty lookup stays
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_schema(env: Env, schema_uid: UID) -> soroban_sdk::Vec<UID> {
@@ -701,7 +725,7 @@ impl Indexer {
 
     /// Complete attester history, oldest first. See
     /// [`Indexer::get_attestations_by_recipient`] for the chunking contract
-    /// and [`read_chunk`] for the read-path retention policy: every attester
+    /// and `read_chunk` for the read-path retention policy: every attester
     /// chunk this walks has its TTL renewed, and an empty lookup stays
     /// read-only and returns an empty vector.
     pub fn get_attestations_by_attester(env: Env, attester: Address) -> soroban_sdk::Vec<UID> {
