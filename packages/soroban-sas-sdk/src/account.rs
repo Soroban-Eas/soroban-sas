@@ -10,9 +10,6 @@ use soroban_sdk::xdr::{
     WriteXdr,
 };
 
-                SdkError::DecodingError(format!(
-                    "failed to decode account ledger entry xdr: {e:?}"
-                ))
 /// `public_key`. The next valid transaction from this account uses
 /// `sequence_number + 1`.
 pub fn fetch_sequence_number(rpc: &RpcClient, public_key: &[u8; 32]) -> Result<i64, SdkError> {
@@ -95,12 +92,12 @@ fn account_ledger_key_base64_from_bytes(public_key: &[u8; 32]) -> Result<String,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Read, Write};
-    use std::net::TcpListener;
     use soroban_sdk::xdr::{
         AccountEntry, AccountEntryExt, AccountId, ContractDataDurability, Hash, PublicKey,
         ScAddress, ScVal, SequenceNumber, String32, Thresholds, Uint256,
     };
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
 
     /// Decodes a base64 `LedgerKey::Account` XDR and asserts its account id
     /// carries exactly `expected` as its Ed25519 public key.
@@ -145,10 +142,7 @@ mod tests {
             let mut content_length = 0usize;
             loop {
                 let mut line = String::new();
-                if reader.read_line(&mut line).unwrap() == 0
-                    || line == "\r\n"
-                    || line == "\n"
-                {
+                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" || line == "\n" {
                     break;
                 }
                 if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
@@ -281,7 +275,10 @@ mod tests {
     #[test]
     fn empty_sequence_batch_does_not_contact_rpc() {
         let rpc = RpcClient::new("http://127.0.0.1:1");
-        assert_eq!(fetch_sequence_numbers(&rpc, &[]).unwrap(), Vec::<i64>::new());
+        assert_eq!(
+            fetch_sequence_numbers(&rpc, &[]).unwrap(),
+            Vec::<i64>::new()
+        );
     }
 
     // Negative test cases for Issue #93: account ledger-entry response validation
