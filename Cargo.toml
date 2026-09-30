@@ -58,10 +58,6 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
-[dependencies.soroban-sdk]
-version = "21.7.7"
-default-features = false
-features = ["alloc"]
 
 [profile.release-with-logs]
 inherits = "release"
