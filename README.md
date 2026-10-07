@@ -351,6 +351,8 @@ TMPDIR=/tmp cargo test --workspace
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
 - [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
+- [Glossary of Terms](docs/glossary.md): authoritative protocol definitions for Attestation, Schema, Issuer, Resolver, UID, and lifecycle terms.
+
 ## Project Roadmap
 
 `soroban-sas` is under active development. Our roadmap to a production-ready release is structured as follows:
