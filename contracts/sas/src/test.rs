@@ -3830,3 +3830,61 @@ mod snapshot_tests {
         // Snapshot path: test_snapshots/ContractUnpaused.xdr
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read-only view functions (side-effect-free)
+// ─────────────────────────────────────────────────────────────────────────────
+
+mod view_functions {
+    use super::*;
+
+    fn setup() -> (Env, Address, Address, Address) {
+        let env = Env::default();
+        let registry_id = env.register_contract(None, mock1::MockRegistry);
+        let sas_id = env.register_contract(None, SAS);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        SASClient::new(&env, &sas_id).init(&admin, &registry_id);
+        (env, sas_id, admin, registry_id)
+    }
+
+    #[test]
+    fn get_attestation_view_returns_attestation() {
+        let (env, sas_id, _admin, _registry) = setup();
+        let client = SASClient::new(&env, &sas_id);
+
+        let attester = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let attestation = attestation_fixture(&env, &attester, &recipient, [200u8; 32]);
+        client.attest(&attestation);
+
+        let view_result = client.get_attestation_view(&attestation.uid);
+        assert!(view_result.is_some());
+        let fetched = view_result.unwrap();
+        assert_eq!(fetched.uid, attestation.uid);
+        assert_eq!(fetched.attester, attester);
+
+        let dummy_uid = UID(BytesN::from_array(&env, &[99u8; 32]));
+        assert!(client.get_attestation_view(&dummy_uid).is_none());
+    }
+
+    #[test]
+    fn verify_attestation_view_verifies_correctly() {
+        let (env, sas_id, _admin, _registry) = setup();
+        let client = SASClient::new(&env, &sas_id);
+
+        let attester = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let attestation = attestation_fixture(&env, &attester, &recipient, [201u8; 32]);
+        client.attest(&attestation);
+
+        assert!(client.verify_attestation_view(&attestation.uid));
+
+        env.ledger().with_mut(|li| li.timestamp = 1000);
+        client.revoke(&attestation.uid);
+        assert!(!client.verify_attestation_view(&attestation.uid));
+
+        let dummy_uid = UID(BytesN::from_array(&env, &[99u8; 32]));
+        assert!(!client.verify_attestation_view(&dummy_uid));
+    }
+}

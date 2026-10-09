@@ -1769,6 +1769,32 @@ impl SAS {
         }
     }
 
+    /// Pure read-only variant of [`SAS::get_attestation`] that does **not**
+    /// renew the entry's TTL. Unlike `get_attestation`, this performs no
+    /// storage writes, so it is safe to call from read-only simulation
+    /// contexts and from SDK async wrappers that poll many UIDs
+    /// concurrently without contending on the entry's rent.
+    ///
+    /// Returns `None` when the UID was never issued or has been
+    /// garbage-collected. Archived entries trap at the host layer exactly
+    /// as with `get_attestation`; callers should map that to `Archived`.
+    pub fn get_attestation_view(env: Env, uid: UID) -> Option<Attestation> {
+        env.storage().persistent().get::<_, Attestation>(&uid)
+    }
+
+    /// Pure read-only variant of [`SAS::verify_attestation`] that does
+    /// **not** renew the entry's TTL. Suitable for SDK async wrappers that
+    /// need a side-effect-free verdict.
+    pub fn verify_attestation_view(env: Env, uid: UID) -> bool {
+        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            return false;
+        };
+        if attestation.revocation_time != 0 {
+            return false;
+        }
+        validate_expiration(&env, attestation.expiration_time).is_ok()
+    }
+
     /// Returns the ledger that issued attestation `uid` — its sequence number
     /// and that ledger's close time — or `None` if the UID was never issued
     /// or its entries have been garbage-collected (#298).
