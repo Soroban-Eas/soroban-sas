@@ -1,0 +1,19 @@
+SAS has been deployed to the {{ .Release.Namespace }} namespace.
+
+1. Get the application URL by running these commands in your shell:
+
+{{- if contains "NodePort" .Values.service.type }}
+  export NODE_PORT={{ .Values.service.port }}
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.service.type }}
+  NOTE: It may take a few minutes for the LoadBalancer to get an external IP address.
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "sas.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo http://$SERVICE_IP:{{ .Values.service.port }}
+{{- else -}}
+  echo "SAS is available at http://{{ include "sas.fullname" . }}:{{ .Values.service.port }}"
+  kubectl port-forward {{ include "sas.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{- end }}
+
+2. Watch the pods come up:
+  kubectl get pods -l "app.kubernetes.io/instance={{ .Release.Name }}" -w --namespace {{ .Release.Namespace }}
