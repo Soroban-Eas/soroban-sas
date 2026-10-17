@@ -17,7 +17,7 @@ CONTRACT_WASM := \
 	$(RELEASE_DIR)/soroban_sas_indexer.wasm \
 	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
 
-.PHONY: all help build build-contracts build-native test bench smoke-local clean print-contract-artifacts \
+.PHONY: all help build build-contracts build-native test bench coverage smoke-local clean print-contract-artifacts \
 	fmt lint install-hooks localnet localnet-down deploy-local
 
 all: build test
@@ -29,6 +29,7 @@ help:
 	@echo "  build-native       Build native workspace binaries"
 	@echo "  test               Run cargo test across workspace"
 	@echo "  bench              Run cargo benchmarks"
+	@echo "  coverage           Run cargo-tarpaulin and open HTML report locally"
 	@echo "  fmt                Format code across workspace"
 	@echo "  lint               Run formatting check and clippy linter"
 	@echo "  install-hooks      Install git hooks into .git/hooks"
@@ -60,6 +61,16 @@ print-contract-artifacts:
 
 test:
 	$(CARGO) test --workspace
+
+# Generate an HTML + XML + JSON coverage report locally.
+# Requires cargo-tarpaulin: cargo install cargo-tarpaulin --locked
+# Open coverage-report/tarpaulin-report.html in a browser afterwards.
+coverage:
+	$(CARGO) tarpaulin \
+		--config .cargo/tarpaulin.toml \
+		--out xml html json \
+		--output-dir coverage-report \
+		--skip-clean
 
 smoke-local:
 	bash ./scripts/docker_smoke_test.sh
