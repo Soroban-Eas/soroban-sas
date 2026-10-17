@@ -1910,3 +1910,5 @@ mod test_round_trip;
 mod test_timestamp;
 #[cfg(test)]
 mod verify_batch_test;
+#[cfg(test)]
+mod gas_profile_test;

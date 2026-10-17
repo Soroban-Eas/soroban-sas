@@ -17,7 +17,7 @@ CONTRACT_WASM := \
 	$(RELEASE_DIR)/soroban_sas_indexer.wasm \
 	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
 
-.PHONY: all help build build-contracts build-native test bench smoke-local clean print-contract-artifacts \
+.PHONY: all help build build-contracts build-native test bench gas-profile gas-dashboard smoke-local clean print-contract-artifacts \
 	fmt lint install-hooks localnet localnet-down deploy-local
 
 all: build test
@@ -29,6 +29,8 @@ help:
 	@echo "  build-native       Build native workspace binaries"
 	@echo "  test               Run cargo test across workspace"
 	@echo "  bench              Run cargo benchmarks"
+	@echo "  gas-profile        Run gas profiling tests and write JSON snapshot to gas_profile_history/"
+	@echo "  gas-dashboard      Render the ASCII gas history dashboard from gas_profile_history/"
 	@echo "  fmt                Format code across workspace"
 	@echo "  lint               Run formatting check and clippy linter"
 	@echo "  install-hooks      Install git hooks into .git/hooks"
@@ -90,6 +92,15 @@ deploy-local:
 
 bench:
 	$(CARGO) bench
+
+# Run the in-process gas profiling tests and write a JSON snapshot.
+# Use --test-threads=1 so the flush test always runs last.
+gas-profile:
+	$(CARGO) test -p sas -- gas_profiling --nocapture --test-threads=1
+
+# Render the ASCII dashboard from the accumulated gas_profile_history/ snapshots.
+gas-dashboard:
+	bash tools/gas_dashboard.sh
 
 clean:
 	$(CARGO) clean
