@@ -2,24 +2,31 @@ name: Coverage
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  # Exclude generated/test-support code from coverage metrics.
+  TARPAULIN_CONFIG: .cargo/tarpaulin.toml
 
 jobs:
   coverage:
-    name: cargo-tarpaulin
+    name: Code Coverage (cargo-tarpaulin)
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.1.0
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.79.0
+          toolchain: 1.83.0
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
@@ -28,13 +35,77 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-tarpaulin-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install tarpaulin
-        uses: taiki-e/install-action@cargo-tarpaulin
+          restore-keys: |
+            ${{ runner.os }}-cargo-tarpaulin-
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-tarpaulin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin@0.31.2
+
+      # Run tarpaulin with all outputs. The --fail-under flag makes this step
+      # exit non-zero (and fail the job) when total coverage drops below 60%.
+      # --skip-clean avoids a full rebuild on cached runs.
       - name: Run cargo-tarpaulin
-        run: cargo tarpaulin --workspace --out xml
-      - name: Upload coverage report
+        run: |
+          cargo tarpaulin \
+            --config .cargo/tarpaulin.toml \
+            --workspace \
+            --out xml html json \
+            --output-dir coverage-report \
+            --fail-under 60 \
+            --skip-clean
+
+      # Emit a human-readable summary directly in the GitHub Actions job log.
+      - name: Write coverage summary
+        if: always()
+        run: |
+          if [ -f coverage-report/tarpaulin-report.json ]; then
+            COVERAGE=$(python3 -c "
+          import json, sys
+          data = json.load(open('coverage-report/tarpaulin-report.json'))
+          covered = data.get('covered', 0)
+          coverable = data.get('coverable', 0)
+          pct = (covered / coverable * 100) if coverable > 0 else 0
+          print(f'{pct:.2f}')
+          ")
+            echo "## Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| ------ | ----- |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Line coverage | **${COVERAGE}%** |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Threshold | **60%** |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            if python3 -c "import sys; sys.exit(0 if float('${COVERAGE}') >= 60 else 1)"; then
+              echo ":white_check_mark: Coverage is above the 60% threshold." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo ":x: Coverage is **below** the 60% threshold." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "## Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+            echo "Coverage report JSON not found; tarpaulin may have failed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Upload HTML report as a browsable artifact.
+      - name: Upload HTML coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: cobertura.xml
+          name: coverage-html-${{ github.run_id }}
+          path: coverage-report/
           if-no-files-found: warn
+          retention-days: 30
+
+      # Upload Cobertura XML for Codecov (requires CODECOV_TOKEN secret to be
+      # configured in repository settings; upload is skipped automatically if
+      # the token is absent, so this step is safe to leave in open forks).
+      - name: Upload to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage-report/cobertura.xml
+          flags: rust
+          name: soroban-sas
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

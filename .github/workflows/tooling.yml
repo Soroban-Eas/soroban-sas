@@ -39,3 +39,22 @@ jobs:
 
       - name: Type-check and build
         run: npm run build
+
+  helm-charts:
+    name: Helm charts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Lint charts
+        run: helm lint ./charts/*
+
+      - name: Render templates
+        run: |
+          for chart in ./charts/*; do
+            helm template "$(basename "$chart")" "$chart" > /dev/null
+          done

@@ -17,7 +17,7 @@ CONTRACT_WASM := \
 	$(RELEASE_DIR)/soroban_sas_indexer.wasm \
 	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
 
-.PHONY: all help build build-contracts build-native test bench gas-profile gas-dashboard smoke-local clean print-contract-artifacts \
+.PHONY: all help build build-contracts build-native test bench coverage gas-profile gas-dashboard smoke-local clean print-contract-artifacts \
 	fmt lint install-hooks localnet localnet-down deploy-local
 
 all: build test
@@ -29,6 +29,7 @@ help:
 	@echo "  build-native       Build native workspace binaries"
 	@echo "  test               Run cargo test across workspace"
 	@echo "  bench              Run cargo benchmarks"
+	@echo "  coverage           Run cargo-tarpaulin and open HTML report locally"
 	@echo "  gas-profile        Run gas profiling tests and write JSON snapshot to gas_profile_history/"
 	@echo "  gas-dashboard      Render the ASCII gas history dashboard from gas_profile_history/"
 	@echo "  fmt                Format code across workspace"
@@ -62,6 +63,17 @@ print-contract-artifacts:
 
 test:
 	$(CARGO) test --workspace
+
+# Generate an HTML + XML + JSON coverage report locally.
+# Requires cargo-tarpaulin: cargo install cargo-tarpaulin --locked
+# Open coverage-report/tarpaulin-report.html in a browser afterwards.
+coverage:
+	$(CARGO) tarpaulin \
+		--config .cargo/tarpaulin.toml \
+		--workspace \
+		--out xml html json \
+		--output-dir coverage-report \
+		--skip-clean
 
 smoke-local:
 	bash ./scripts/docker_smoke_test.sh
