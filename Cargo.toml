@@ -36,6 +36,10 @@ ureq = "2"
 name = "hashing_benchmark"
 harness = false
 
+[[bench]]
+name = "attestations_benchmark"
+harness = false
+
 [[test]]
 name = "integration"
 path = "tests/integration/e2e_node_test.rs"
