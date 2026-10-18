@@ -10,7 +10,7 @@ members = [
 "tools/prometheus-exporter",
 "contracts/cross-chain-verifier",
 ]
-exclude = ["fuzz"]
+exclude = ["fuzz", "tools/gas-profiler"]
 resolver = "2"
 
 [package]

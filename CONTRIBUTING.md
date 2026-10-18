@@ -102,6 +102,64 @@ but does not block merges yet. The goal is >=80% mutant kill rate on contract
 crates before Mainnet deployment — treat surviving mutants reported there as
 a signal to add or strengthen a test, not as noise to ignore.
 
+## Coverage reporting
+
+Line/branch coverage is measured with
+[`cargo-tarpaulin`](https://github.com/xd009642/tarpaulin) and enforced in CI
+on every push and pull request against `main`. The CI job fails if total line
+coverage falls below **60 %**; keep new code tested to prevent regressions.
+
+### Running coverage locally
+
+```sh
+cargo install cargo-tarpaulin --locked
+make coverage
+```
+
+This runs the workspace test suite under tarpaulin (config in
+`.cargo/tarpaulin.toml`) and writes three report formats to `coverage-report/`:
+
+| File | Purpose |
+|------|---------|
+| `tarpaulin-report.html` | Human-readable HTML, open in any browser |
+| `cobertura.xml` | Cobertura XML, consumed by Codecov and IDE plugins |
+| `tarpaulin-report.json` | JSON summary (used by the CI step summary) |
+
+The `coverage-report/` directory is gitignored; do not commit it.
+
+### Threshold and CI enforcement
+
+The Coverage workflow (`.github/workflows/coverage.yml`) runs
+`cargo tarpaulin --fail-under 60`, which exits non-zero when coverage is below
+the threshold. The job also:
+
+1. Writes a coverage percentage table to the GitHub Actions job summary
+   (visible on the workflow run page).
+2. Uploads the full HTML report as a downloadable artifact
+   (`coverage-html-<run-id>`, retained for 30 days).
+3. Uploads `cobertura.xml` to Codecov when the `CODECOV_TOKEN` repository
+   secret is configured (the step is a no-op in forks without the secret).
+
+The **Coverage** job must be added to `main`'s required branch protection
+status checks by a repository administrator (adding the workflow file alone
+does not enforce it).
+
+### Exclusions
+
+The following are excluded from measurement (see `.cargo/tarpaulin.toml`):
+
+- `fuzz/` crate — compiled with a pinned nightly, incompatible with tarpaulin.
+- `benches/` and `examples/` — harness code, not production logic.
+- `tests/integration/` — end-to-end tests that require a live Stellar node.
+
+### Increasing coverage
+
+When the CI job fails on your PR, look at the HTML report or the Codecov diff
+to find uncovered lines. Prefer writing unit tests for the specific logic
+rather than adding broad smoke tests just to hit the threshold. Surviving
+mutants (from `cargo-mutants`) are a stronger signal than raw line coverage;
+use both tools together.
+
 ## Indexer fuzzing
 
 ```sh

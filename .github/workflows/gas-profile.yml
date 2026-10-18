@@ -1,0 +1,126 @@
+name: Gas Profiling History
+
+# Collect per-entrypoint Soroban CPU / memory budget measurements on every
+# push to main and on pull requests targeting main.  The JSON snapshot is
+# archived as a GitHub Actions artifact so that the history accumulates and
+# the dashboard script (tools/gas_dashboard.sh) can compare consecutive runs.
+#
+# The job does NOT fail on regressions — that is intentional during the
+# bootstrapping period.  To enable regression-gating, change the
+# `continue-on-error` setting on the "Check for regressions" step to `false`.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Reproducible timestamps in snapshots.
+  SOURCE_DATE_EPOCH: "0"
+
+jobs:
+  gas-profile:
+    name: Gas Profile
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.0
+        with:
+          fetch-depth: 0 # needed so git rev-parse works inside the test
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.83.0
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-gas-profile-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gas-profile-
+
+      # -----------------------------------------------------------------------
+      # Download the most recent snapshot from a previous run so the dashboard
+      # script can compare old vs new.  If no previous artifact exists the
+      # download step is skipped gracefully.
+      # -----------------------------------------------------------------------
+      - name: Download previous gas profile artifact
+        uses: dawidd6/action-download-artifact@v9
+        with:
+          name: gas-profile-history
+          path: gas_profile_history/
+          if_no_artifact_found: warn
+          workflow: gas-profile.yml
+          branch: main
+        continue-on-error: true
+
+      # -----------------------------------------------------------------------
+      # Run the profiling tests.  --test-threads=1 ensures the `z_flush_*`
+      # test runs after all `profile_*` tests even in alphabetical order.
+      # -----------------------------------------------------------------------
+      - name: Run gas profiling tests
+        env:
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          cargo test -p sas \
+            --features '' \
+            -- \
+            gas_profiling \
+            --nocapture \
+            --test-threads=1
+
+      # -----------------------------------------------------------------------
+      # Render the dashboard and detect regressions.
+      # -----------------------------------------------------------------------
+      - name: Render gas dashboard (ASCII)
+        run: |
+          bash tools/gas_dashboard.sh \
+            --runs 5 \
+            --format ascii \
+            --threshold 10 \
+            --out gas_dashboard.txt || true
+          cat gas_dashboard.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          cat gas_dashboard.txt
+
+      - name: Render gas dashboard (Markdown)
+        run: |
+          bash tools/gas_dashboard.sh \
+            --runs 5 \
+            --format markdown \
+            --threshold 10 \
+            --out gas_dashboard.md || true
+
+      - name: Check for regressions (informational)
+        run: |
+          bash tools/gas_dashboard.sh \
+            --runs 2 \
+            --format json \
+            --threshold 10 \
+            --out /dev/null
+        # Set to false to gate CI on regressions.
+        continue-on-error: true
+
+      # -----------------------------------------------------------------------
+      # Persist the snapshot and the rendered report.
+      # -----------------------------------------------------------------------
+      - name: Upload gas profile artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-profile-history
+          path: |
+            gas_profile_history/
+            gas_dashboard.md
+            gas_dashboard.txt
+          retention-days: 90
+          if-no-files-found: warn

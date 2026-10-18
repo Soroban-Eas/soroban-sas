@@ -177,6 +177,37 @@ that new ID; an already initialized Indexer cannot be rebound by calling
 
 ## Required release checks
 
+### Backwards-compatibility rehearsal
+
+The ignored `wasm_upgrade_preserves_existing_data_and_new_writes` integration
+test deploys the registry, SAS, and Indexer to a disposable localnet, writes a
+schema and attestation, upgrades each contract in place, then verifies the old
+records, version numbers, bindings, and a new attestation/index lookup. The
+default candidate is the freshly built WASM with a harmless custom section,
+which gives it a distinct hash while preserving its executable code. This
+checks the full upload and swap path. For a release, point the test at the
+actual candidate binaries to check their compatibility with the baseline:
+
+Use Rust 1.84 or newer with the `wasm32v1-none` target for this test. The
+repository's Rust 1.83 `wasm32-unknown-unknown` build is sufficient for its
+build gate but emits reference types that the Soroban host cannot execute.
+The integration harness uses `stellar contract build` for deployable WASM.
+
+```bash
+rustup toolchain install 1.85.0 --target wasm32v1-none
+docker compose up -d stellar-quickstart
+./scripts/wait_for_localnet.sh
+export STELLAR_SECRET_KEY="YOUR_FUNDED_LOCALNET_SECRET"
+export UPGRADE_CANDIDATE_DIR="/path/to/candidate-wasm"
+RUSTUP_TOOLCHAIN=1.85.0 cargo test --test integration wasm_upgrade_preserves_existing_data_and_new_writes -- --ignored
+```
+
+Run this only against a disposable localnet. The candidate binaries must have
+different bytes from the baseline release artifacts and must retain the public
+methods and storage layouts exercised by the test. Preserve the candidate
+hashes and test output with the release manifest; review any migrations and
+other contract-specific behaviors separately.
+
 Run the contract-specific upgrade tests plus the complete repository gates:
 
 ```bash

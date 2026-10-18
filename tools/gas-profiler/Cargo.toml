@@ -1,0 +1,15 @@
+[package]
+name = "soroban-gas-profiler"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable gas profiling helpers for soroban-sas contract tests"
+publish = false
+
+# No workspace membership — this is a native-only helper crate that must not
+# be compiled for wasm32-unknown-unknown together with the contract crates.
+[workspace]
+
+[dependencies]
+# No runtime dependencies; everything is std-only.
+
+[dev-dependencies]

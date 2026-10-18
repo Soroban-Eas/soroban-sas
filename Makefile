@@ -1,7 +1,7 @@
 SHELL := /usr/bin/env bash
-.SHELFLAGS := -eu -o pipefail -c
+.SHELLFLAGS := -eu -o pipefail -c
 
-CARGO ;= cargo
+CARGO ?= cargo
 DOCKER ?= docker
 MAKE ?= make
 
@@ -12,32 +12,35 @@ CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer soroban-sas-cross-c
 WASM_TARGET := wasm32-unknown-unknown
 RELEASE_DIR := target/$(WASM_TARGET)/release
 CONTRACT_WASM := \
-	\_RELEASE_DIR)/schema_registry.wasm \
-	\_RELEASE_DIR)/sas.wasm \
-	\_RELEASE_DIR)/soroban_sas_indexer.wasm \
-	\_RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
+	$(RELEASE_DIR)/schema_registry.wasm \
+	$(RELEASE_DIR)/sas.wasm \
+	$(RELEASE_DIR)/soroban_sas_indexer.wasm \
+	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
 
-.PHONY: all help build build-contracts build-native test bench bench-attestations smoke-local clean print-contract-artifacts \
+.PHONY: all help build build-contracts build-native test bench bench-attestations coverage gas-profile gas-dashboard smoke-local clean print-contract-artifacts \
 	fmt lint install-hooks localnet localnet-down deploy-local
 
 all: build test
 
 help:
 	@echo "Available targets:"
-	@Echo "  build              Build all release contract WASM artifacts"
-	@Echo "  build-contracts    Build contract WASMs using $(CARGO)"
-	@Echo "  build-native       Build native workspace binaries"
+	@echo "  build              Build all release contract WASM artifacts"
+	@echo "  build-contracts    Build contract WASMs using $(CARGO)"
+	@echo "  build-native       Build native workspace binaries"
 	@echo "  test               Run cargo test across workspace"
-	@echo "  bench              Run cargo benchemarks"
-	@echo "  bench-attestations  Run 10k-attestation-per-ledger benchmarks"
-	@Echo "  fmt                Format code across workspace"
+	@echo "  bench              Run cargo benchmarks"
+	@echo "  bench-attestations Run 10k-attestation-per-ledger benchmarks"
+	@echo "  coverage           Run cargo-tarpaulin and open HTML report locally"
+	@echo "  gas-profile        Run gas profiling tests and write JSON snapshot to gas_profile_history/"
+	@echo "  gas-dashboard      Render the ASCII gas history dashboard from gas_profile_history/"
+	@echo "  fmt                Format code across workspace"
 	@echo "  lint               Run formatting check and clippy linter"
 	@echo "  install-hooks      Install git hooks into .git/hooks"
-	@Echo "  localnet           Start localnet Quickstart node and wait for readiness"
-	@Echo "  localnet-down      Stop localnet containers"
+	@echo "  localnet           Start localnet Quickstart node and wait for readiness"
+	@echo "  localnet-down      Stop localnet containers"
 	@echo "  deploy-local       Deploy contracts to local network"
 	@echo "  smoke-local        Run local smoke test in docker"
-	@Echo "  clean              Clean build artifacts"
+	@echo "  clean              Clean build artifacts"
 
 build: build-contracts
 
@@ -62,6 +65,17 @@ print-contract-artifacts:
 test:
 	$(CARGO) test --workspace
 
+# Generate an HTML + XML + JSON coverage report locally.
+# Requires cargo-tarpaulin: cargo install cargo-tarpaulin --locked
+# Open coverage-report/tarpaulin-report.html in a browser afterwards.
+coverage:
+	$(CARGO) tarpaulin \
+		--config .cargo/tarpaulin.toml \
+		--workspace \
+		--out xml html json \
+		--output-dir coverage-report \
+		--skip-clean
+
 smoke-local:
 	bash ./scripts/docker_smoke_test.sh
 
@@ -71,7 +85,7 @@ fmt:
 # Same gates as CI's Formatting and Clippy jobs (and the pre-push hook).
 lint:
 	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --workspace --all-targets - -D warnings
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
 install-hooks:
 	bash ./scripts/install_hooks.sh
@@ -93,10 +107,19 @@ bench:
 	$(CARGO) bench
 
 # Focused benchmark for the 10k-attestations-per-ledger performance target.
-# Runs the bench targets whose names match "attestations" (e.g. the attestations_per_ledger
-# benchmark in the schema-registry crate). Use BENCH_FILTER to narrow further.
+# Runs the bench targets whose names match "attestations" (e.g. attestations_benchmark).
+# Use BENCH_FILTER to narrow further.
 bench-attestations:
-	$(CARGO) bench --package schema-registry --bench attestations $(if $(BENCH_FILTER),-- $(BENCH_FILTER))
+	$(CARGO) bench --bench attestations_benchmark $(if $(BENCH_FILTER),-- $(BENCH_FILTER))
+
+# Run the in-process gas profiling tests and write a JSON snapshot.
+# Use --test-threads=1 so the flush test always runs last.
+gas-profile:
+	$(CARGO) test -p sas -- gas_profiling --nocapture --test-threads=1
+
+# Render the ASCII dashboard from the accumulated gas_profile_history/ snapshots.
+gas-dashboard:
+	bash tools/gas_dashboard.sh
 
 clean:
 	$(CARGO) clean

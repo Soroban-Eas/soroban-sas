@@ -156,6 +156,88 @@ fn invoke(
     run(dir, stellar_cli(), &args)
 }
 
+fn append_uleb128(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+/// A custom section changes the WASM hash without changing executable code.
+/// Release verification can instead supply genuinely new binaries in
+/// UPGRADE_CANDIDATE_DIR (schema_registry.wasm, sas.wasm, and
+/// soroban_sas_indexer.wasm).
+fn upgrade_candidate(name: &str, output_dir: &Path) -> PathBuf {
+    let root = workspace_root();
+    let original = root.join("target/wasm32v1-none/release").join(name);
+    let original_bytes = std::fs::read(&original).expect("baseline WASM must be built first");
+    assert!(original_bytes.starts_with(b"\0asm\x01\0\0\0"));
+
+    let candidate_bytes = if let Some(dir) = std::env::var_os("UPGRADE_CANDIDATE_DIR") {
+        std::fs::read(PathBuf::from(dir).join(name)).expect("candidate WASM must be readable")
+    } else {
+        let mut wasm = original_bytes.clone();
+        let section_name = b"compatibility-test";
+        let mut payload = Vec::new();
+        append_uleb128(section_name.len(), &mut payload);
+        payload.extend_from_slice(section_name);
+        payload.extend_from_slice(name.as_bytes());
+        wasm.push(0); // WASM custom-section id
+        append_uleb128(payload.len(), &mut wasm);
+        wasm.extend_from_slice(&payload);
+        wasm
+    };
+    assert!(candidate_bytes.starts_with(b"\0asm\x01\0\0\0"));
+    assert_ne!(
+        candidate_bytes, original_bytes,
+        "candidate must differ from baseline"
+    );
+    std::fs::create_dir_all(output_dir).expect("create upgrade candidate directory");
+    let candidate = output_dir.join(name);
+    std::fs::write(&candidate, candidate_bytes).expect("write upgrade candidate");
+    candidate
+}
+
+fn upload_candidate(path: &Path, identity: &str, rpc: &str, passphrase: &str) -> String {
+    let root = workspace_root();
+    let path_str = path.to_string_lossy();
+    let mut args = vec![
+        "contract",
+        "upload",
+        "--wasm",
+        path_str.as_ref(),
+        "--optimize=false",
+    ];
+    args.extend(net_args(identity, rpc, passphrase));
+    let output = run(&root, stellar_cli(), &args);
+    let hash = output
+        .split(|c: char| !c.is_ascii_hexdigit())
+        .find(|part| part.len() == 64)
+        .unwrap_or_else(|| panic!("upload did not return a 32-byte hash: {output}"));
+    hash.to_string()
+}
+
+fn contract_version(id: &str, identity: &str, rpc: &str, passphrase: &str) -> u32 {
+    invoke(
+        &workspace_root(),
+        id,
+        identity,
+        rpc,
+        passphrase,
+        &["get_version"],
+    )
+    .trim_matches('"')
+    .parse()
+    .expect("get_version must return a number")
+}
+
 /// Builds the three contracts' release WASM (skipped if already built),
 /// deploys fresh instances, and wires them together exactly like
 /// scripts/deploy.sh's own deploy/init sequence. Also deploys
@@ -173,26 +255,29 @@ fn deploy_stack(secret: &str) -> (String, String, String, String) {
     fund_account(&admin);
     let identity = register_identity(secret);
 
-    run(
-        &root,
-        "cargo",
-        &[
-            "build",
-            "--release",
-            "--target",
-            "wasm32-unknown-unknown",
-            "-p",
-            "schema-registry",
-            "-p",
-            "sas",
-            "-p",
-            "soroban-sas-indexer",
-            "-p",
-            "permissive-resolver",
-        ],
-    );
+    // Rust 1.82+ emits unsupported reference types for wasm32-unknown-unknown.
+    // Stellar CLI selects wasm32v1-none and the Soroban-compatible build flags.
+    for package in [
+        "schema-registry",
+        "sas",
+        "soroban-sas-indexer",
+        "permissive-resolver",
+    ] {
+        run(
+            &root,
+            stellar_cli(),
+            &[
+                "contract",
+                "build",
+                "--locked",
+                "--package",
+                package,
+                "--optimize=false",
+            ],
+        );
+    }
 
-    let wasm_dir = root.join("target/wasm32-unknown-unknown/release");
+    let wasm_dir = root.join("target/wasm32v1-none/release");
     let registry_id = deploy_contract(
         &root,
         &wasm_dir.join("schema_registry.wasm"),
@@ -348,6 +433,231 @@ async fn schema_registration_attest_revoke_and_indexer_lookup() {
         revoked.revocation_time, 0,
         "revoke must set a nonzero revocation_time"
     );
+}
+
+/// Performs an actual uploaded-WASM swap on all three versioned contracts.
+/// A changed hash alone is insufficient: old records and cross-contract
+/// bindings must remain readable, and a new attestation must still index.
+#[tokio::test]
+#[ignore]
+async fn wasm_upgrade_preserves_existing_data_and_new_writes() {
+    let secret_string = secret_key();
+    let (registry_id, sas_id, indexer_id, resolver_id) =
+        tokio::task::spawn_blocking(move || deploy_stack(&secret_string))
+            .await
+            .expect("deploy_stack panicked");
+    let root = workspace_root();
+    let rpc_url = rpc_url();
+    let passphrase = network_passphrase();
+    let secret_string = secret_key();
+    let secret = parse_secret_seed(&secret_string);
+    let identity = register_identity(&secret_string);
+    let admin = admin_address(&secret_string);
+    let rpc = RpcClient::new(rpc_url.clone());
+    let env = Env::default();
+    let sas_client = SASClient::new(sas_id.clone())
+        .with_submission_policy(SubmissionPolicy::default().with_max_polls(30));
+    let indexer_client = IndexerClient::new(indexer_id.clone());
+
+    sas_client
+        .register_schema(
+            &rpc,
+            &passphrase,
+            &secret,
+            &registry_id,
+            "bool upgrade_compatible",
+            &resolver_id,
+            true,
+        )
+        .expect("register baseline schema");
+    let resolver =
+        soroban_sdk::Address::from_string(&soroban_sdk::String::from_str(&env, &resolver_id));
+    let schema_uid = SASClient::compute_schema_uid("bool upgrade_compatible", &resolver, true);
+    let schema_before = sas_client
+        .get_schema(&rpc, &registry_id, &schema_uid.0.to_array())
+        .expect("read baseline schema")
+        .expect("baseline schema missing");
+    let recipient = stellar_strkey::ed25519::PublicKey(derive_public_key(&[1u8; 32])).to_string();
+    fund_account(&recipient);
+    let first = AttestationRequestBuilder::new()
+        .with_schema_uid(schema_uid.0.to_array())
+        .with_recipient(&recipient)
+        .with_attester(&admin)
+        .with_data(Bytes::from_slice(&env, b"before WASM upgrade"))
+        .build(&env)
+        .expect("build baseline attestation");
+    let first_uid = first.uid.0.to_array();
+    sas_client
+        .attest(&rpc, &passphrase, &secret, first)
+        .expect("issue baseline attestation");
+    let attestation_before = sas_client
+        .get_attestation(&rpc, &first_uid)
+        .expect("read baseline attestation")
+        .expect("baseline attestation missing");
+    assert!(sas_client
+        .verify_attestation(&rpc, &first_uid)
+        .expect("verify baseline attestation"));
+    assert!(indexer_client
+        .get_attestations_by_recipient(&rpc, &recipient)
+        .expect("baseline recipient index")
+        .iter()
+        .any(|uid| uid.0.to_array() == first_uid));
+    assert!(indexer_client
+        .get_attestations_by_schema(&rpc, &schema_uid.0.to_array())
+        .expect("baseline schema index")
+        .iter()
+        .any(|uid| uid.0.to_array() == first_uid));
+
+    let sas_binding_before = invoke(
+        &root,
+        &sas_id,
+        &identity,
+        &rpc_url,
+        &passphrase,
+        &["get_indexer"],
+    );
+    let indexer_binding_before = invoke(
+        &root,
+        &indexer_id,
+        &identity,
+        &rpc_url,
+        &passphrase,
+        &["get_sas"],
+    );
+    for contract in [&registry_id, &sas_id, &indexer_id] {
+        assert_eq!(
+            contract_version(contract, &identity, &rpc_url, &passphrase),
+            1
+        );
+    }
+
+    let candidate_dir = std::env::temp_dir().join(format!(
+        "soroban-sas-upgrade-compatibility-{}",
+        std::process::id()
+    ));
+    for (contract, artifact) in [
+        (&registry_id, "schema_registry.wasm"),
+        (&sas_id, "sas.wasm"),
+        (&indexer_id, "soroban_sas_indexer.wasm"),
+    ] {
+        let candidate = upgrade_candidate(artifact, &candidate_dir);
+        let hash = upload_candidate(&candidate, &identity, &rpc_url, &passphrase);
+        invoke(
+            &root,
+            contract,
+            &identity,
+            &rpc_url,
+            &passphrase,
+            &["upgrade", "--new-wasm-hash", &hash, "--new-version", "2"],
+        );
+        assert_eq!(
+            contract_version(contract, &identity, &rpc_url, &passphrase),
+            2
+        );
+    }
+
+    let schema_after = sas_client
+        .get_schema(&rpc, &registry_id, &schema_uid.0.to_array())
+        .expect("read schema after upgrade")
+        .expect("schema lost after upgrade");
+    assert_eq!(
+        schema_after.uid.0.to_array(),
+        schema_before.uid.0.to_array()
+    );
+    assert_eq!(
+        schema_after.schema.to_string(),
+        schema_before.schema.to_string()
+    );
+    assert_eq!(schema_after.revocable, schema_before.revocable);
+    assert_eq!(schema_after.deprecated, schema_before.deprecated);
+
+    let attestation_after = sas_client
+        .get_attestation(&rpc, &first_uid)
+        .expect("read attestation after upgrade")
+        .expect("attestation lost after upgrade");
+    assert_eq!(attestation_after.uid.0.to_array(), first_uid);
+    assert_eq!(
+        attestation_after.data.iter().collect::<Vec<_>>(),
+        attestation_before.data.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(attestation_after.revocation_time, 0);
+    assert!(sas_client
+        .verify_attestation(&rpc, &first_uid)
+        .expect("verify attestation after upgrade"));
+    assert!(indexer_client
+        .get_attestations_by_recipient(&rpc, &recipient)
+        .expect("recipient index after upgrade")
+        .iter()
+        .any(|uid| uid.0.to_array() == first_uid));
+    assert!(indexer_client
+        .get_attestations_by_schema(&rpc, &schema_uid.0.to_array())
+        .expect("schema index after upgrade")
+        .iter()
+        .any(|uid| uid.0.to_array() == first_uid));
+    assert_eq!(
+        invoke(
+            &root,
+            &sas_id,
+            &identity,
+            &rpc_url,
+            &passphrase,
+            &["get_indexer"]
+        ),
+        sas_binding_before
+    );
+    assert_eq!(
+        invoke(
+            &root,
+            &indexer_id,
+            &identity,
+            &rpc_url,
+            &passphrase,
+            &["get_sas"]
+        ),
+        indexer_binding_before
+    );
+
+    sas_client
+        .register_schema(
+            &rpc,
+            &passphrase,
+            &secret,
+            &registry_id,
+            "bool written_after_upgrade",
+            &resolver_id,
+            true,
+        )
+        .expect("register schema after upgrade");
+    let new_schema_uid =
+        SASClient::compute_schema_uid("bool written_after_upgrade", &resolver, true);
+    assert!(sas_client
+        .get_schema(&rpc, &registry_id, &new_schema_uid.0.to_array())
+        .expect("read schema written after upgrade")
+        .is_some());
+
+    let second = AttestationRequestBuilder::new()
+        .with_schema_uid(new_schema_uid.0.to_array())
+        .with_recipient(&recipient)
+        .with_attester(&admin)
+        .with_data(Bytes::from_slice(&env, b"after WASM upgrade"))
+        .build(&env)
+        .expect("build post-upgrade attestation");
+    let second_uid = second.uid.0.to_array();
+    assert_ne!(second_uid, first_uid);
+    sas_client
+        .attest(&rpc, &passphrase, &secret, second)
+        .expect("issue attestation after upgrade");
+    assert!(indexer_client
+        .get_attestations_by_recipient(&rpc, &recipient)
+        .expect("post-upgrade recipient index")
+        .iter()
+        .any(|uid| uid.0.to_array() == second_uid));
+    assert!(indexer_client
+        .get_attestations_by_schema(&rpc, &new_schema_uid.0.to_array())
+        .expect("post-upgrade schema index")
+        .iter()
+        .any(|uid| uid.0.to_array() == second_uid));
+    std::fs::remove_dir_all(candidate_dir).expect("remove temporary upgrade artifacts");
 }
 
 /// SAC fee deduction: configures a fee in the native XLM SAC, attests with
