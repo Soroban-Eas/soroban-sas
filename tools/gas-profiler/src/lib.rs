@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn test_unix_secs_to_iso() {
         // 2026-10-17T22:02:40Z
-        assert_eq!(unix_secs_to_iso(1_792_375_360), "2026-10-17T22:02:40Z");
+        assert_eq!(unix_secs_to_iso(1_792_274_560), "2026-10-17T22:02:40Z");
         // Epoch itself
         assert_eq!(unix_secs_to_iso(0), "1970-01-01T00:00:00Z");
     }

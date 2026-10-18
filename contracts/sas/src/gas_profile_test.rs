@@ -19,7 +19,7 @@
 //!    `SchemaRegistry` and `Indexer` test-utils registrations.
 //! 2. Calls `env.budget().reset_unlimited()` immediately before the
 //!    operation under measurement so that setup costs are excluded.
-//! 3. Reads `env.budget().cpu_insns()` and `env.budget().mem_bytes()` after
+//! 3. Reads `env.budget().cpu_instruction_cost()` and `env.budget().memory_bytes_cost()` after
 //!    the call.
 //! 4. Appends the reading to a shared in-process `GasProfiler` instance that
 //!    is flushed to disk when the last profiling test completes (or via the
@@ -74,6 +74,18 @@ mod gas_profiling {
     // Test stack helpers
     // -----------------------------------------------------------------------
 
+    mod permissive_resolver {
+        use super::*;
+        #[soroban_sdk::contract]
+        pub struct PermissiveResolver;
+
+        #[soroban_sdk::contractimpl]
+        impl PermissiveResolver {
+            pub fn on_attest(_env: Env, _attestation: Attestation) {}
+            pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+        }
+    }
+
     struct Stack {
         env: Env,
         registry: SchemaRegistryClient<'static>,
@@ -105,11 +117,13 @@ mod gas_profiling {
         indexer.init(&admin, &sas_id);
         sas.set_indexer(&indexer_id);
 
+        let resolver_id = env.register_contract(None, permissive_resolver::PermissiveResolver);
+
         // Register a benchmark schema once and reuse it across tests.
         let schema_uid = registry.register(
             &admin,
             &SorobanString::from_str(&env, "string name,bool verified"),
-            &admin, // resolver = admin (permissive)
+            &resolver_id,
             &true,
         );
 
@@ -164,8 +178,8 @@ mod gas_profiling {
             &s.admin,
             &true,
         );
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         record("schema_registry::register", cpu, mem, None);
     }
 
@@ -174,14 +188,14 @@ mod gas_profiling {
     fn profile_sas_attest_minimal() {
         let s = make_stack();
         let env = &s.env;
-        let attester = Address::generate(env);
+        let attester = s.admin.clone();
         let recipient = Address::generate(env);
         let att = mk_attestation(env, &s.schema_uid, &attester, &recipient, 0xAA);
 
         env.budget().reset_unlimited();
         s.sas.attest(&att);
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         record("sas::attest (minimal 32B)", cpu, mem, None);
     }
 
@@ -190,11 +204,12 @@ mod gas_profiling {
     fn profile_sas_attest_1kb() {
         let s = make_stack();
         let env = &s.env;
-        let attester = Address::generate(env);
+        let attester = s.admin.clone();
         let recipient = Address::generate(env);
 
         let data = Bytes::from_slice(env, &[0xABu8; 1024]);
-        let uid = soroban_sas_common::attestation_uid(env, &s.schema_uid, &recipient, &attester, &data);
+        let uid =
+            soroban_sas_common::attestation_uid(env, &s.schema_uid, &recipient, &attester, &data);
         let att = Attestation {
             uid,
             schema_uid: s.schema_uid.clone(),
@@ -210,8 +225,8 @@ mod gas_profiling {
 
         env.budget().reset_unlimited();
         s.sas.attest(&att);
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         record("sas::attest (1 KB payload)", cpu, mem, None);
     }
 
@@ -220,15 +235,15 @@ mod gas_profiling {
     fn profile_sas_revoke() {
         let s = make_stack();
         let env = &s.env;
-        let attester = Address::generate(env);
+        let attester = s.admin.clone();
         let recipient = Address::generate(env);
         let att = mk_attestation(env, &s.schema_uid, &attester, &recipient, 0xBB);
         let uid = s.sas.attest(&att);
 
         env.budget().reset_unlimited();
         s.sas.revoke(&uid);
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         record("sas::revoke", cpu, mem, None);
     }
 
@@ -237,15 +252,15 @@ mod gas_profiling {
     fn profile_sas_verify_attestation() {
         let s = make_stack();
         let env = &s.env;
-        let attester = Address::generate(env);
+        let attester = s.admin.clone();
         let recipient = Address::generate(env);
         let att = mk_attestation(env, &s.schema_uid, &attester, &recipient, 0xCC);
         let uid = s.sas.attest(&att);
 
         env.budget().reset_unlimited();
         s.sas.verify_attestation(&uid);
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         record("sas::verify_attestation", cpu, mem, None);
     }
 
@@ -254,15 +269,15 @@ mod gas_profiling {
     fn profile_sas_get_attestation() {
         let s = make_stack();
         let env = &s.env;
-        let attester = Address::generate(env);
+        let attester = s.admin.clone();
         let recipient = Address::generate(env);
         let att = mk_attestation(env, &s.schema_uid, &attester, &recipient, 0xDD);
         let uid = s.sas.attest(&att);
 
         env.budget().reset_unlimited();
         s.sas.get_attestation(&uid);
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         record("sas::get_attestation", cpu, mem, None);
     }
 
@@ -270,7 +285,7 @@ mod gas_profiling {
     fn profile_multi_attest_n(n: usize) {
         let s = make_stack();
         let env = &s.env;
-        let attester = Address::generate(env);
+        let attester = s.admin.clone();
 
         let mut attestations = soroban_sdk::Vec::new(env);
         for i in 0..n {
@@ -281,8 +296,8 @@ mod gas_profiling {
 
         env.budget().reset_unlimited();
         s.sas.multi_attest(&attestations);
-        let cpu = env.budget().cpu_insns();
-        let mem = env.budget().mem_bytes();
+        let cpu = env.budget().cpu_instruction_cost();
+        let mem = env.budget().memory_bytes_cost();
         let tag = format!("n={n}");
         record("sas::multi_attest", cpu, mem, Some(&tag));
     }
@@ -437,7 +452,10 @@ mod gas_profiling {
         let days = secs / 86400;
 
         let (year, month, day) = days_to_ymd(days);
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, h, m, s)
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            year, month, day, h, m, s
+        )
     }
 
     fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
