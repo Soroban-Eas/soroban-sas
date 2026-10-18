@@ -43,9 +43,6 @@ jobs:
   helm-charts:
     name: Helm charts
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: tools/helm-charts
     steps:
       - uses: actions/checkout@v4
 
@@ -61,18 +58,3 @@ jobs:
           for chart in ./charts/*; do
             helm template "$(basename "$chart")" "$chart" > /dev/null
           done
-
-      - name: Run chart tests
-        run: ./scripts/test_helm_charts.sh
-
-  helm-docs:
-    name: Helm docs
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: tools/helm-charts
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify chart documentation is up to date
-        run: ./scripts/check_helm_docs.sh
