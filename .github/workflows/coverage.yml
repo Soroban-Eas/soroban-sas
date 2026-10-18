@@ -51,6 +51,7 @@ jobs:
         run: |
           cargo tarpaulin \
             --config .cargo/tarpaulin.toml \
+            --workspace \
             --out xml html json \
             --output-dir coverage-report \
             --fail-under 60 \

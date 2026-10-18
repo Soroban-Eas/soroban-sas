@@ -68,6 +68,7 @@ test:
 coverage:
 	$(CARGO) tarpaulin \
 		--config .cargo/tarpaulin.toml \
+		--workspace \
 		--out xml html json \
 		--output-dir coverage-report \
 		--skip-clean

@@ -2,6 +2,7 @@
 # Run locally: cargo tarpaulin --config .cargo/tarpaulin.toml
 # CI adds --out xml html json --output-dir coverage-report --fail-under 60
 
+[default]
 # Measure the entire workspace except the fuzz crate, which uses a separate
 # nightly toolchain and does not produce regular test binaries.
 workspace = true
