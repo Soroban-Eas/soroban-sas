@@ -1468,4 +1468,41 @@ mod snapshot_tests {
         // Note: This test may be in SAS contract test suite
         // Snapshot path: test_snapshots/AttesterKeyRecord.xdr
     }
+
+    #[test]
+    fn test_schema_registration_with_max_ttl() {
+        let (env, registry) = setup();
+        let admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let schema_str = String::from_str(&env, "bool kyc_verified");
+        let resolver = Address::generate(&env);
+
+        env.mock_all_auths();
+        let client = SchemaRegistryClient::new(&env, &registry);
+        client.init(&admin);
+
+        let max_ttl: u64 = 86400; // 24 hours
+        let uid = client.register_with_ttl(&owner, &schema_str, &resolver, &true, &max_ttl);
+
+        assert_eq!(client.get_max_ttl(&uid), max_ttl);
+        assert_eq!(client.get_schema_max_ttl(&uid), max_ttl);
+    }
+
+    #[test]
+    fn test_schema_registration_default_max_ttl_is_zero() {
+        let (env, registry) = setup();
+        let admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let schema_str = String::from_str(&env, "bool kyc_verified");
+        let resolver = Address::generate(&env);
+
+        env.mock_all_auths();
+        let client = SchemaRegistryClient::new(&env, &registry);
+        client.init(&admin);
+
+        let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+        assert_eq!(client.get_max_ttl(&uid), 0);
+        assert_eq!(client.get_schema_max_ttl(&uid), 0);
+    }
 }

@@ -8,6 +8,9 @@ pub const DEPRECATED: Symbol = symbol_short!("DEPRECATE");
 /// Maps a schema UID to the address that registered it. Kept separately from
 /// `SchemaRecord` so the record's serialized contract type remains stable.
 pub const SCHEMA_CREATOR: Symbol = symbol_short!("CREATOR");
+/// Configurable maximum expiration window limit (in seconds) per schema (#441).
+/// Stored under `(SCHEMA_MAX_TTL, uid) -> u64`. `0` or absent means no limit.
+pub const SCHEMA_MAX_TTL: Symbol = symbol_short!("MAXTTL");
 /// The WASM hash currently installed for this contract. Soroban does not
 /// expose a way to read a contract's own installed hash from within its
 /// own execution, so `commit_upgrade` tracks it here itself, letting

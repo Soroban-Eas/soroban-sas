@@ -400,6 +400,14 @@
                               }
                             ]
                           }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
                         }
                       ]
                     },
@@ -495,6 +503,14 @@
                                 "bytes": "3e9dfb107f66f73b87a56adfa1951b89dec2669ea1ce260081e3774eacdea053"
                               }
                             ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
                           }
                         }
                       ]
@@ -736,6 +752,14 @@
                                   }
                                 ]
                               }
+                            },
+                            {
+                              "key": {
+                                "symbol": "valid_from"
+                              },
+                              "val": {
+                                "u64": 0
+                              }
                             }
                           ]
                         },
@@ -831,6 +855,14 @@
                                     "bytes": "3e9dfb107f66f73b87a56adfa1951b89dec2669ea1ce260081e3774eacdea053"
                                   }
                                 ]
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "valid_from"
+                              },
+                              "val": {
+                                "u64": 0
                               }
                             }
                           ]

@@ -9,6 +9,7 @@ members = [
     "contracts/permissive-resolver",
 "tools/prometheus-exporter",
 "contracts/cross-chain-verifier",
+"contracts/zk-verifier",
 ]
 exclude = ["fuzz", "tools/gas-profiler"]
 resolver = "2"

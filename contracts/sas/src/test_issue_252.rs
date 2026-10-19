@@ -72,6 +72,7 @@ fn setup(old_exp: u64) -> Fixture {
         schema_uid,
         time: 1000,
         expiration_time: old_exp,
+        valid_from: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
         recipient: recipient.clone(),
@@ -116,6 +117,7 @@ impl Fixture {
             attester: self.attester.clone(),
             revocable: true,
             data,
+            valid_from: 0,
         }
     }
 }

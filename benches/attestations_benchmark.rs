@@ -24,6 +24,7 @@ fn make_test_attestation(
         schema_uid: schema_uid.clone(),
         time: 1_700_000_000,
         expiration_time: 0,
+        valid_from: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(env, &[0u8; 32])),
         recipient: recipient.clone(),

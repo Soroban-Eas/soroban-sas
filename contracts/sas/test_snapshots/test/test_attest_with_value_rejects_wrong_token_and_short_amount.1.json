@@ -1672,6 +1672,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 },
@@ -1893,6 +1901,14 @@
                               }
                             ]
                           }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
                         }
                       ]
                     },
@@ -2026,6 +2042,14 @@
                             "bytes": "f7e0c4bd676f68f4194416fc9d72804b9832a169d3ca7768e1d459a6bd9da49d"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     }
                   ]
@@ -2247,6 +2271,14 @@
                                 "bytes": "f7e0c4bd676f68f4194416fc9d72804b9832a169d3ca7768e1d459a6bd9da49d"
                               }
                             ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
                           }
                         }
                       ]

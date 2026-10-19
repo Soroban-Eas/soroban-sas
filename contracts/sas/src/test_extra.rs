@@ -80,6 +80,7 @@ fn test_verify_offchain_rejects_unknown_and_deprecated_schema() {
         schema_uid: schema_uid.clone(),
         time: 1000,
         expiration_time: 0,
+        valid_from: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
         recipient: recipient.clone(),
@@ -135,6 +136,7 @@ fn test_verify_offchain_rejects_unknown_and_deprecated_schema() {
         schema_uid: schema_uid.clone(),
         time: 1000,
         expiration_time: 0,
+        valid_from: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
         recipient: att2_recipient,
@@ -238,6 +240,7 @@ mod revocability {
             schema_uid: schema_uid.clone(),
             time: 1000,
             expiration_time: 0,
+            valid_from: 0,
             revocation_time: 0,
             ref_uid: UID(BytesN::from_array(&fx.env, &[0u8; 32])),
             recipient: fx.recipient.clone(),
@@ -659,6 +662,7 @@ mod resolver_semantics {
             schema_uid: schema_uid.clone(),
             time: 1000,
             expiration_time: 0,
+            valid_from: 0,
             revocation_time: 0,
             ref_uid: UID(BytesN::from_array(&fx.env, &[0u8; 32])),
             recipient: fx.recipient.clone(),
@@ -906,6 +910,7 @@ mod revoke_resolver_semantics {
             schema_uid,
             time: 1000,
             expiration_time: 0,
+            valid_from: 0,
             revocation_time: 0,
             ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
             recipient: recipient.clone(),
@@ -1039,6 +1044,7 @@ fn test_attest_before_init_returns_not_initialized() {
         schema_uid: UID(BytesN::from_array(&env, &[52u8; 32])),
         time: 1000,
         expiration_time: 0,
+        valid_from: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
         recipient: Address::generate(&env),
@@ -1056,6 +1062,7 @@ fn test_attest_before_init_returns_not_initialized() {
     let expired = Attestation {
         uid: UID(BytesN::from_array(&env, &[53u8; 32])),
         expiration_time: 1,
+        valid_from: 0,
         ..attestation
     };
     let res = sas_client.try_attest(&expired);

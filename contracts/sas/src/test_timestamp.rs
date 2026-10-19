@@ -108,6 +108,7 @@ impl Harness {
             schema_uid,
             time: 0, // the contract normalizes this to the ledger close time
             expiration_time: 0,
+            valid_from: 0,
             revocation_time: 0,
             ref_uid: UID(BytesN::from_array(&self.env, &[0u8; 32])),
             recipient: self.recipient.clone(),

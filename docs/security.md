@@ -166,3 +166,8 @@ AttestationDomain {
 
 See [offchain-attestations.md](offchain-attestations.md) for the full
 signing/hashing scheme.
+
+## Vulnerability Disclosure and Reporting
+
+For instructions on reporting security vulnerabilities, response SLAs, disclosure guidelines, and safe harbor terms, refer to our comprehensive [Security Policy and Vulnerability Disclosure Policy](../SECURITY.md).
+

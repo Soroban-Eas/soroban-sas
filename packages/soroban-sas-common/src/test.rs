@@ -292,6 +292,7 @@ fn sample_attestation(env: &Env, attester: Address) -> Attestation {
         attester,
         revocable: true,
         data: Bytes::from_slice(env, &[0xde, 0xad, 0xbe, 0xef]),
+        valid_from: 0,
     }
 }
 

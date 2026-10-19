@@ -787,6 +787,7 @@ mod offchain_tests {
             schema_uid: hex::encode([2u8; 32]),
             time: 1000,
             expiration_time: 0,
+            valid_from: 0,
             ref_uid: hex::encode([0u8; 32]),
             recipient,
             attester,
@@ -1070,6 +1071,7 @@ mod online_verification_tests {
             attester,
             revocable: true,
             data: "deadbeef".to_string(),
+            valid_from: 0,
         };
         sign_offchain_attestation(input, 7, NETWORK, contract_id, &seed).unwrap()
     }

@@ -1,6 +1,7 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 #![allow(unused_variables)]
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sas_common::{
     events::{
@@ -1023,7 +1024,32 @@ impl SchemaRegistry {
         // The owner must authorize the registration so the emitted event
         // carries a caller identity that off-chain indexers can trust.
         owner.require_auth();
-        Self::register_internal(env, owner, schema, resolver, revocable)
+        Self::register_internal(env, owner, schema, resolver, revocable, 0)
+    }
+
+    /// Registers a new schema with a configurable maximum expiration window limit (#441).
+    pub fn register_with_ttl(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        max_ttl: u64,
+    ) -> UID {
+        owner.require_auth();
+        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
+    }
+
+    /// Alias for `register_with_ttl` (#441).
+    pub fn register_with_max_ttl(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        max_ttl: u64,
+    ) -> UID {
+        Self::register_with_ttl(env, owner, schema, resolver, revocable, max_ttl)
     }
 
     /// Registers a new schema, paying the configured registration fee (#1).
@@ -1046,6 +1072,20 @@ impl SchemaRegistry {
         revocable: bool,
         token: Address,
         value: i128,
+    ) -> UID {
+        Self::register_with_value_and_ttl(env, owner, schema, resolver, revocable, token, value, 0)
+    }
+
+    /// Registers a new schema with both fee payment and a configurable maximum expiration window limit (#441).
+    pub fn register_with_value_and_ttl(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        token: Address,
+        value: i128,
+        max_ttl: u64,
     ) -> UID {
         if value < 0 {
             panic_with_error!(&env, SASError::InvalidValue);
@@ -1078,7 +1118,7 @@ impl SchemaRegistry {
             token::Client::new(&env, &token).transfer(&owner, &treasury, &value);
         }
 
-        Self::register_internal(env, owner, schema, resolver, revocable)
+        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
     }
 
     fn register_internal(
@@ -1087,6 +1127,7 @@ impl SchemaRegistry {
         schema: String,
         resolver: Address,
         revocable: bool,
+        max_ttl: u64,
     ) -> UID {
         extend_instance_ttl(&env);
         if let Err(err) = validate_schema_syntax(&env, &schema) {
@@ -1115,6 +1156,17 @@ impl SchemaRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+
+        if max_ttl > 0 {
+            let max_ttl_key = (SCHEMA_MAX_TTL, uid.clone());
+            env.storage().persistent().set(&max_ttl_key, &max_ttl);
+            env.storage().persistent().extend_ttl(
+                &max_ttl_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
+
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         env.storage().persistent().set(&creator_key, &owner);
         env.storage().persistent().extend_ttl(
@@ -1179,6 +1231,25 @@ impl SchemaRegistry {
             renew_schema_record(&env, &uid);
         }
         record
+    }
+
+    /// Returns the maximum expiration window limit (in seconds) declared for `uid` (#441).
+    /// Returns `0` if no max_ttl was set (perpetual and arbitrary expirations allowed).
+    pub fn get_max_ttl(env: Env, uid: UID) -> u64 {
+        extend_instance_ttl(&env);
+        let key = (SCHEMA_MAX_TTL, uid);
+        let max_ttl: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+        if max_ttl > 0 {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        max_ttl
+    }
+
+    /// Alias for `get_max_ttl` (#441).
+    pub fn get_schema_max_ttl(env: Env, uid: UID) -> u64 {
+        Self::get_max_ttl(env, uid)
     }
 
     /// Returns the active [`SchemaRecord`] for a raw schema definition,

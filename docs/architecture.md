@@ -6,6 +6,7 @@ The Soroban Attestation Service (SAS) is composed of three primary components:
 2. **SAS Core Contract**: Issues, revokes and verifies attestations based on registered schemas.
 3. **Indexer Contract**: Provides efficient off-chain and on-chain reverse lookups for recipients, schemas and attesters.
 4. **Cross-chain Verifier**: Tracks short-lived remote attestation verdicts delivered through an Axelar GMP gateway. It is deployed separately from the SAS v1 contract and binds one remote source contract and chain at initialization.
+5. **Zero-Knowledge Verifier**: Verifies zero-knowledge proofs for private attestations, enforcing nullifier anti-replay defense and time-locked activation constraints.
 
 ## Design Goals
 - High throughput via parallelized state access.

@@ -216,6 +216,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 }
@@ -749,6 +757,14 @@
                             "bytes": "2dd87ed5ac91ad787a2e60ca3961bc48ec3997f0a43749717c528c6e66e6ba16"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     }
                   ]
@@ -2362,6 +2378,14 @@
                       }
                     ]
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
                 }
               ]
             }
@@ -2391,7 +2415,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "c484644caf801c82c3a11e28d995c4f3627e6a588b18a573e02067ddb2fd966e"
+                  "bytes": "6d1b4a08ff8d45b3abf0c4761be6c27b9c17db53db009b2140ddf0addfbd4e83"
                 },
                 "void",
                 {
@@ -2501,6 +2525,14 @@
                                               "bytes": "2dd87ed5ac91ad787a2e60ca3961bc48ec3997f0a43749717c528c6e66e6ba16"
                                             }
                                           ]
+                                        }
+                                      },
+                                      {
+                                        "key": {
+                                          "symbol": "valid_from"
+                                        },
+                                        "val": {
+                                          "u64": 0
                                         }
                                       }
                                     ]
@@ -2650,6 +2682,59 @@
                   }
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "u64": 0
             }
           }
         }
@@ -2826,6 +2911,14 @@
                         "bytes": "2dd87ed5ac91ad787a2e60ca3961bc48ec3997f0a43749717c528c6e66e6ba16"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]
@@ -3268,6 +3361,14 @@
                         "bytes": "2dd87ed5ac91ad787a2e60ca3961bc48ec3997f0a43749717c528c6e66e6ba16"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]

@@ -8,14 +8,15 @@ MAKE ?= make
 # Auto-detect Docker Compose v2 (docker compose) vs v1 (docker-compose)
 DOCKER_COMPOSE ?= $(shell if $(DOCKER) compose version >/dev/null 2>&1; then echo "$(DOCKER) compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "$(DOCKER) compose"; fi)
 
-CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer soroban-sas-cross-chain-verifier
+CONTRACT_PACKAGES := schema-registry sas soroban-sas-indexer soroban-sas-cross-chain-verifier soroban-sas-zk-verifier
 WASM_TARGET := wasm32-unknown-unknown
 RELEASE_DIR := target/$(WASM_TARGET)/release
 CONTRACT_WASM := \
 	$(RELEASE_DIR)/schema_registry.wasm \
 	$(RELEASE_DIR)/sas.wasm \
 	$(RELEASE_DIR)/soroban_sas_indexer.wasm \
-	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm
+	$(RELEASE_DIR)/soroban_sas_cross_chain_verifier.wasm \
+	$(RELEASE_DIR)/soroban_sas_zk_verifier.wasm
 
 .PHONY: all help build build-contracts build-native test bench bench-attestations coverage gas-profile gas-dashboard smoke-local clean print-contract-artifacts \
 	fmt lint install-hooks localnet localnet-down deploy-local

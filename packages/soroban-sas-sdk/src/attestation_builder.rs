@@ -36,6 +36,8 @@ pub struct AttestationRequestBuilder {
     /// Attester address as a strkey (`G...`); must be the account whose
     /// secret seed signs the submission (see `SASClient::attest`).
     attester: Option<std::string::String>,
+    /// Activation timestamp in Unix seconds; `0` means valid immediately upon issuance (#439).
+    valid_from: u64,
 }
 
 impl AttestationRequestBuilder {
@@ -98,6 +100,13 @@ impl AttestationRequestBuilder {
         self
     }
 
+    /// Sets the activation timestamp in Unix seconds (#439). `0` (the default)
+    /// means the attestation becomes valid immediately upon issuance.
+    pub fn with_valid_from(mut self, ts: u64) -> Self {
+        self.valid_from = ts;
+        self
+    }
+
     /// Validates that every required field is set and returns the resulting
     /// `Attestation`, deriving its UID via
     /// [`soroban_sas_common::attestation_uid`] — the same content-addressing
@@ -153,6 +162,7 @@ impl AttestationRequestBuilder {
             attester,
             revocable: self.revocable,
             data,
+            valid_from: self.valid_from,
         })
     }
 }

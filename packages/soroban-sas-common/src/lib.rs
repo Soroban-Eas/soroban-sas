@@ -159,6 +159,7 @@ pub struct Attestation {
     pub attester: Address,
     pub revocable: bool,
     pub data: Bytes,
+    pub valid_from: u64,
 }
 
 /// Typed storage key for tracking per-attester delegation nonces (#237).

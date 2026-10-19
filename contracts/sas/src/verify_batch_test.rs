@@ -59,6 +59,7 @@ fn setup() -> Fixture {
 
     let admin = Address::generate(&env);
     env.mock_all_auths();
+    env.budget().reset_unlimited();
     sas_client.init(&admin, &registry_id);
 
     Fixture {
@@ -94,6 +95,7 @@ impl Fixture {
             attester: self.attester.clone(),
             revocable: true,
             data,
+            valid_from: 0,
         });
 
         uid

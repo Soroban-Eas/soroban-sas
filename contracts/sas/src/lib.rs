@@ -163,6 +163,9 @@ fn verify_attestation_record(env: &Env, uid: &UID) -> bool {
     if attestation.revocation_time != 0 {
         return false;
     }
+    if attestation.valid_from != 0 && env.ledger().timestamp() < attestation.valid_from {
+        return false;
+    }
     if validate_expiration(env, attestation.expiration_time).is_err() {
         return false;
     }
@@ -619,6 +622,14 @@ impl SAS {
             panic_with_error!(&env, err);
         }
 
+        // Time-locked attestation validation (#439):
+        // Ensure valid_from must be strictly less than expiration_time when expiration is non-zero.
+        // Invalid time ranges (valid_from >= expiration_time > 0) revert with InvalidTimeRange.
+        if attestation.expiration_time > 0 && attestation.valid_from >= attestation.expiration_time
+        {
+            panic_with_error!(&env, SASError::InvalidTimeRange);
+        }
+
         // Shared with the SDK/CLI pre-flight checks so a missing
         // ("no recipient" sentinel) or self-targeted recipient is rejected
         // with the same `InvalidRecipient` wherever it is caught (#304).
@@ -649,6 +660,27 @@ impl SAS {
         let Some(schema) = schema_opt else {
             panic_with_error!(&env, SASError::InvalidSchema);
         };
+
+        // Maximum expiration window limit per schema (#441):
+        let max_ttl: u64 = match env.try_invoke_contract::<u64, soroban_sdk::Error>(
+            &registry,
+            &Symbol::new(&env, "get_max_ttl"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        ) {
+            Ok(Ok(ttl)) => ttl,
+            _ => 0,
+        };
+        if max_ttl > 0 {
+            if attestation.expiration_time == 0 {
+                panic_with_error!(&env, SASError::InvalidExpirationTime);
+            }
+            let current_time = env.ledger().timestamp();
+            if attestation.expiration_time > current_time
+                && attestation.expiration_time - current_time > max_ttl
+            {
+                panic_with_error!(&env, SASError::InvalidExpirationTime);
+            }
+        }
 
         // Verify attester authorization: attester must be either the original
         // schema owner or an authorized delegate in the registry allow-list (#7).
@@ -756,6 +788,17 @@ impl SAS {
     /// detect the gap and repair it with `reindex_attestation` (#161).
     fn notify_indexer_of_issuance(env: &Env, indexer: &Address, attestation: &Attestation) {
         if Self::push_to_indexer(env, indexer, attestation) {
+            if attestation.valid_from > 0 {
+                let _ = env.try_invoke_contract::<(), soroban_sdk::Error>(
+                    indexer,
+                    &Symbol::new(env, "set_valid_from"),
+                    soroban_sdk::vec![
+                        env,
+                        attestation.uid.clone().into_val(env),
+                        attestation.valid_from.into_val(env),
+                    ],
+                );
+            }
             return;
         }
         if env
@@ -1244,6 +1287,32 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidTTL);
         }
 
+        // Time-locked attestation validation (#439):
+        // Ensure valid_from must be strictly less than expiration_time when expiration is non-zero.
+        if new_expiration_time > 0 && attestation.valid_from >= new_expiration_time {
+            panic_with_error!(&env, SASError::InvalidTimeRange);
+        }
+
+        // Maximum expiration window limit per schema (#441):
+        let registry = require_registry(&env);
+        let max_ttl: u64 = match env.try_invoke_contract::<u64, soroban_sdk::Error>(
+            &registry,
+            &Symbol::new(&env, "get_max_ttl"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        ) {
+            Ok(Ok(ttl)) => ttl,
+            _ => 0,
+        };
+        if max_ttl > 0 {
+            if new_expiration_time == 0 {
+                panic_with_error!(&env, SASError::InvalidExpirationTime);
+            }
+            let current_time = env.ledger().timestamp();
+            if new_expiration_time > current_time && new_expiration_time - current_time > max_ttl {
+                panic_with_error!(&env, SASError::InvalidExpirationTime);
+            }
+        }
+
         // Validate the new expiration time is not already in the past
         if let Err(err) = validate_expiration(&env, new_expiration_time) {
             panic_with_error!(&env, err);
@@ -1645,6 +1714,9 @@ impl SAS {
         if attestation.revocation_time != 0 {
             panic_with_error!(&env, SASError::AlreadyRevoked);
         }
+        if attestation.valid_from != 0 && env.ledger().timestamp() < attestation.valid_from {
+            return false;
+        }
         if let Err(err) = validate_expiration(&env, attestation.expiration_time) {
             panic_with_error!(&env, err);
         }
@@ -1792,7 +1864,21 @@ impl SAS {
         if attestation.revocation_time != 0 {
             return false;
         }
+        if attestation.valid_from != 0 && env.ledger().timestamp() < attestation.valid_from {
+            return false;
+        }
         validate_expiration(&env, attestation.expiration_time).is_ok()
+    }
+
+    /// Exposes the `valid_from` activation timestamp for an attestation (#439).
+    pub fn get_valid_from(env: Env, uid: UID) -> u64 {
+        extend_instance_ttl(&env);
+        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            return 0;
+        };
+        let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
+        env.storage().persistent().extend_ttl(&uid, ttl, ttl);
+        attestation.valid_from
     }
 
     /// Returns the ledger that issued attestation `uid` — its sequence number

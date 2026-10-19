@@ -2757,6 +2757,7 @@ mod tests {
             attester,
             revocable: true,
             data: Bytes::new(env),
+            valid_from: 0,
         }
     }
 
