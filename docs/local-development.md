@@ -283,7 +283,7 @@ check a schema string before you register it.
 | Git hook behaviour | `./scripts/test_git_hooks.sh` | runs in CI as *Developer Tooling* |
 | Dependency advisories and licenses | `cargo deny` / `cargo audit` | [CONTRIBUTING.md § Dependency security](../CONTRIBUTING.md#dependency-security) |
 | Mutation testing | `cargo mutants` | [CONTRIBUTING.md § Mutation testing](../CONTRIBUTING.md#mutation-testing) |
-| Fuzzing | `cargo +nightly-2024-06-13 fuzz run ...` | [CONTRIBUTING.md § Indexer fuzzing](../CONTRIBUTING.md#indexer-fuzzing) |
+| Fuzzing | `cargo +nightly-2024-06-13 fuzz run ...` | [CONTRIBUTING.md § Fuzzing](../CONTRIBUTING.md#fuzzing) |
 
 ## 10. Make targets
 

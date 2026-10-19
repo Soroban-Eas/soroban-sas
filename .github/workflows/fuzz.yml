@@ -1,4 +1,4 @@
-name: Indexer Fuzzing
+name: Fuzzing
 
 on:
   pull_request:
@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
   schedule:
+    # Weekly at 02:00 UTC on Sunday — triggers the full campaign jobs below.
     - cron: '0 2 * * 0'
   workflow_dispatch:
 
@@ -15,8 +16,19 @@ permissions:
 env:
   RUSTUP_TOOLCHAIN: nightly-2024-06-13
 
+# ── Shared setup ──────────────────────────────────────────────────────────────
+# Each job repeats the checkout + toolchain install because GitHub Actions
+# doesn't support job-level reuse without composite actions.  The install
+# steps are fast (toolchain is cached by dtolnay/rust-toolchain).
+
 jobs:
-  indexer-smoke:
+  # ── Smoke tests (every PR and push to main) ────────────────────────────────
+  # Each smoke job builds one target and runs it for a small number of
+  # executions.  The goal is to catch obvious panics or compilation failures
+  # before a PR lands, not to find new bugs (that's the campaign's job).
+
+  indexer-chunking-smoke:
+    name: Smoke · indexer_chunking_fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -30,6 +42,7 @@ jobs:
       - run: cargo fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400 -rss_limit_mb=4096
 
   cross-contract-smoke:
+    name: Smoke · cross_contract_registry_sas_fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,10 +55,188 @@ jobs:
       - run: cargo fuzz build cross_contract_registry_sas_fuzz
       - run: cargo fuzz run cross_contract_registry_sas_fuzz -- -runs=2000 -max_len=300 -rss_limit_mb=4096
 
-  # One hundred shards total ten million executions. Keep the expensive
-  # campaign scheduled/manual, while every PR replays seeds and runs a smoke test.
+  indexer-idempotency-smoke:
+    name: Smoke · indexer_idempotency_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build indexer_idempotency_fuzz
+      - run: cargo fuzz run indexer_idempotency_fuzz -- -runs=500 -max_len=832 -rss_limit_mb=4096
+
+  schema-smoke:
+    name: Smoke · schema_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build schema_fuzz
+      - run: cargo fuzz run schema_fuzz -- -runs=2000 -max_len=1024 -rss_limit_mb=4096
+
+  typed-data-smoke:
+    name: Smoke · typed_data_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build typed_data_fuzz
+      - run: cargo fuzz run typed_data_fuzz -- -runs=1000 -max_len=512 -rss_limit_mb=4096
+
+  eip712-encode-smoke:
+    name: Smoke · eip712_encode_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build eip712_encode_fuzz
+      - run: cargo fuzz run eip712_encode_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
+
+  xdr-decode-smoke:
+    name: Smoke · xdr_decode_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build xdr_decode_fuzz
+      - run: cargo fuzz run xdr_decode_fuzz -- -runs=5000 -max_len=4096 -rss_limit_mb=4096
+
+  cli-json-smoke:
+    name: Smoke · cli_json_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build cli_json_fuzz
+      - run: cargo fuzz run cli_json_fuzz -- -runs=5000 -max_len=4096 -rss_limit_mb=4096
+
+  # ── New targets (added alongside OSS-Fuzz integration) ─────────────────────
+
+  validation-smoke:
+    name: Smoke · validation_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build validation_fuzz
+      - run: cargo fuzz run validation_fuzz -- -runs=2000 -max_len=128 -rss_limit_mb=4096
+
+  merkle-smoke:
+    name: Smoke · merkle_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build merkle_fuzz
+      - run: cargo fuzz run merkle_fuzz -- -runs=2000 -max_len=256 -rss_limit_mb=4096
+
+  csv-bulk-smoke:
+    name: Smoke · csv_bulk_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build csv_bulk_fuzz
+      - run: cargo fuzz run csv_bulk_fuzz -- -runs=5000 -max_len=8192 -rss_limit_mb=4096
+
+  strkey-smoke:
+    name: Smoke · strkey_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build strkey_fuzz
+      - run: cargo fuzz run strkey_fuzz -- -runs=5000 -max_len=128 -rss_limit_mb=4096
+
+  schema-builder-smoke:
+    name: Smoke · schema_builder_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build schema_builder_fuzz
+      - run: cargo fuzz run schema_builder_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
+
+  attestation-builder-smoke:
+    name: Smoke · attestation_builder_fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build attestation_builder_fuzz
+      - run: cargo fuzz run attestation_builder_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
+
+  # ── Full campaigns (scheduled / manual only) ───────────────────────────────
+  # Campaign jobs run on a weekly schedule and on manual dispatch.  They run
+  # the fuzz target for a large number of executions (typically 100k–500k),
+  # optionally sharded for parallelism, and upload crash artifacts on failure.
+  #
+  # Every PR still replays the committed seed corpus via the smoke test above
+  # (smoke builds the target and runs the seed corpus in -runs=N mode).
+
+  # ── indexer_chunking_fuzz: 100 shards × 100,000 = 10 M executions ──────────
   indexer-campaign:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · indexer_chunking_fuzz (${{ matrix.group }}-${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -67,4 +258,191 @@ jobs:
         with:
           name: indexer-crashes-${{ matrix.group }}-${{ matrix.shard }}
           path: fuzz/artifacts/indexer_chunking_fuzz/
+          if-no-files-found: ignore
+
+  # ── validation_fuzz: 5 shards × 500,000 = 2.5 M executions ─────────────────
+  validation-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · validation_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run validation_fuzz -- -runs=500000 -seed=${{ matrix.shard }} -max_len=128 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: validation-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/validation_fuzz/
+          if-no-files-found: ignore
+
+  # ── merkle_fuzz: 5 shards × 200,000 = 1 M executions ───────────────────────
+  merkle-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · merkle_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run merkle_fuzz -- -runs=200000 -seed=${{ matrix.shard }} -max_len=256 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: merkle-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/merkle_fuzz/
+          if-no-files-found: ignore
+
+  # ── cross_contract_registry_sas_fuzz: 5 shards × 200,000 = 1 M executions ──
+  # This target exercises the real schema-registry → SAS cross-contract
+  # boundary with full contract state, making it the most security-critical
+  # campaign after the indexer.
+  cross-contract-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · cross_contract_registry_sas_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run cross_contract_registry_sas_fuzz -- -runs=200000 -seed=${{ matrix.shard }} -max_len=300 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cross-contract-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/cross_contract_registry_sas_fuzz/
+          if-no-files-found: ignore
+
+  # ── schema_fuzz: 5 shards × 300,000 = 1.5 M executions ─────────────────────
+  schema-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · schema_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run schema_fuzz -- -runs=300000 -seed=${{ matrix.shard }} -max_len=1024 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: schema-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/schema_fuzz/
+          if-no-files-found: ignore
+
+  # ── strkey_fuzz: 5 shards × 500,000 = 2.5 M executions ─────────────────────
+  # `validate_strkey` is the gatekeeper that prevents malformed input from
+  # reaching `Address::from_string` (which traps the host on bad input).
+  strkey-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · strkey_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run strkey_fuzz -- -runs=500000 -seed=${{ matrix.shard }} -max_len=128 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: strkey-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/strkey_fuzz/
+          if-no-files-found: ignore
+
+  # ── attestation_builder_fuzz: 5 shards × 200,000 = 1 M executions ───────────
+  attestation-builder-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · attestation_builder_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run attestation_builder_fuzz -- -runs=200000 -seed=${{ matrix.shard }} -max_len=512 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: attestation-builder-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/attestation_builder_fuzz/
+          if-no-files-found: ignore
+
+  # ── csv_bulk_fuzz: 5 shards × 100,000 = 500 K executions ───────────────────
+  csv-bulk-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · csv_bulk_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run csv_bulk_fuzz -- -runs=100000 -seed=${{ matrix.shard }} -max_len=8192 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: csv-bulk-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/csv_bulk_fuzz/
           if-no-files-found: ignore

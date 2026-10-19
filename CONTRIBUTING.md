@@ -102,40 +102,154 @@ but does not block merges yet. The goal is >=80% mutant kill rate on contract
 crates before Mainnet deployment — treat surviving mutants reported there as
 a signal to add or strengthen a test, not as noise to ignore.
 
-## Indexer fuzzing
+## Fuzzing
+
+Fuzz targets live in the `fuzz/` workspace-excluded crate and are built with
+[cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz). All targets require a
+pinned nightly toolchain; `cargo-fuzz` itself is installed with stable.
+
+### Prerequisites
 
 ```sh
 rustup toolchain install nightly-2024-06-13 --profile minimal
 cargo +stable install cargo-fuzz --version 0.13.2 --locked
-cargo +nightly-2024-06-13 fuzz build indexer_chunking_fuzz
-cargo +nightly-2024-06-13 fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400
 ```
 
-Fuzz compilation uses a pinned nightly compatible with Soroban 20's exact
-`ethnum = 1.5.0` dependency (the latest nightly changes the layout of a standard
-library error type assumed by that crate). The cargo-fuzz executable itself is
-installed with current stable Rust.
+Fuzz compilation uses a pinned nightly because Soroban's `ethnum = 1.5.0`
+dependency relies on a stable-library layout that the latest nightly can change.
+The `cargo-fuzz` executable itself is installed with current stable Rust.
+
+### Running a fuzz target
+
+```sh
+# Build one target
+cargo +nightly-2024-06-13 fuzz build <target>
+
+# Run it (Ctrl-C to stop; add -runs=N for a finite run)
+cargo +nightly-2024-06-13 fuzz run <target>
+
+# Short smoke-test (useful before pushing)
+cargo +nightly-2024-06-13 fuzz run <target> -- -runs=1000 -max_len=4096
+```
+
+### Available targets
+
+| Target | What it fuzzes |
+|---|---|
+| `schema_fuzz` | `validate_schema_syntax` — schema string parser |
+| `typed_data_fuzz` | `hash_attestation_struct`, `hash_domain`, `hash_delegated_revocation` |
+| `eip712_encode_fuzz` | EIP-712 `encode_data`, `hash_struct`, `hash_typed_data` determinism |
+| `xdr_decode_fuzz` | Soroban XDR `ScVal::from_xdr_base64` |
+| `cli_json_fuzz` | `serde_json` Value parsing |
+| `indexer_chunking_fuzz` | Indexer chunk writer/reader round-trips and boundary transitions |
+| `indexer_idempotency_fuzz` | `index_attestation` idempotency and duplicate-rejection invariants |
+| `cross_contract_registry_sas_fuzz` | Schema-registry → SAS cross-contract boundary |
+| `validation_fuzz` | `validate_attestation_parties`, `validate_ttl`, `validate_recipient` |
+| `merkle_fuzz` | `merkle_root` + `verify_proof` round-trip and non-membership |
+| `csv_bulk_fuzz` | `parse_bulk_csv` — `attest bulk` CSV parser |
+| `strkey_fuzz` | `validate_strkey` — off-host Stellar address validator |
+| `schema_builder_fuzz` | `SchemaBuilder::build` — SDK schema builder |
+| `attestation_builder_fuzz` | `AttestationRequestBuilder::build` — SDK attestation builder |
+
+### Indexer chunking target — corpus and seed details
 
 Inputs contain 36-byte records: a four-byte key and a 32-byte UID seed. The
 harness salts each UID with its insertion position, limiting inputs to 400
 insertions, and checks both address and schema chunk writers against an
-independent per-key sequence. The current indexer has no public count getter;
-the oracle reads the same stored counters used by its queries. Assertions
-cover complete reads, counts, physical chunk lengths, and transitions at
-99/100/101, 200/201, and 300/301. Committed seeds include 0, 1, 100, 101, 200,
-201, 300, and 301 insertions. The zero seed is one incomplete record.
+independent per-key sequence. Committed seeds cover 0, 1, 100, 101, 200, 201,
+300, and 301 insertions. The zero seed is one incomplete record.
 
-Every PR runs a 1,000-execution smoke test. Scheduled/manual CI runs 100
-100,000-execution shards (ten million total), with at most ten running at once, and uploads crash artifacts
-on failure. Campaign completion must be confirmed in Actions; configuration
-alone is not evidence that ten million executions passed.
+```sh
+cargo +nightly-2024-06-13 fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400
+```
 
-On Apple Silicon, AddressSanitizer can fail during linking due to a
+### CI and campaigns
+
+Every PR runs a smoke test (1,000–5,000 executions) of **all 14 fuzz targets**
+via `.github/workflows/fuzz.yml`. Each smoke job builds the target and replays
+the committed seed corpus before the PR is merged.
+
+Long campaigns run on the weekly schedule (Sunday 02:00 UTC) and on
+`workflow_dispatch`. Nine targets have a sharded campaign job:
+
+| Target | Campaign shards | Total executions |
+|---|---|---|
+| `indexer_chunking_fuzz` | 100 (10 groups × 10 shards) | 10,000,000 |
+| `validation_fuzz` | 5 | 2,500,000 |
+| `strkey_fuzz` | 5 | 2,500,000 |
+| `cross_contract_registry_sas_fuzz` | 5 | 1,000,000 |
+| `schema_fuzz` | 5 | 1,500,000 |
+| `merkle_fuzz` | 5 | 1,000,000 |
+| `attestation_builder_fuzz` | 5 | 1,000,000 |
+| `csv_bulk_fuzz` | 5 | 500,000 |
+
+Crash artifacts are uploaded as GitHub Actions artifacts on failure; each
+shard is named `<target>-crashes-<shard>` for easy retrieval.
+
+### Apple Silicon note
+
+AddressSanitizer can fail during linking on Apple Silicon due to a
 [known Soroban SDK limitation](https://github.com/stellar/stellar-docs/issues/2238).
 Use the thread sanitizer locally; Linux CI retains AddressSanitizer:
 
 ```sh
-cargo +nightly-2024-06-13 fuzz run --sanitizer thread --codegen-units 16 indexer_chunking_fuzz -- -runs=1000 -max_len=14400
+cargo +nightly-2024-06-13 fuzz run --sanitizer thread --codegen-units 16 \
+    indexer_chunking_fuzz -- -runs=1000 -max_len=14400
+```
+
+### Adding a new fuzz target
+
+1. Create `fuzz/fuzz_targets/<name>.rs` with `#![no_main]` and a
+   `fuzz_target!(|data: &[u8]| { … })` body.
+2. Add a `[[bin]]` entry to `fuzz/Cargo.toml`.
+3. Add a smoke-test step to `.github/workflows/fuzz.yml`.
+4. Add seed inputs under `fuzz/corpus/<name>/` if known-interesting inputs exist.
+
+**Important safety rules for fuzz targets:**
+- Never call `Address::from_string` (or `SorobanString::from_str` for an
+  address) on a fuzz-derived string without first validating it with
+  `soroban_sas_sdk::strkey::validate_strkey`. A malformed strkey traps the
+  Soroban host and panics the fuzzer process rather than returning an error.
+- Use `Env::default()` for pure-function targets and
+  `env.mock_all_auths(); env.budget().reset_unlimited();` for contract targets.
+- Every property assertion must come after confirming the input is well-formed
+  enough to reach that branch; guard early with `if data.len() < N { return; }`.
+
+### OSS-Fuzz continuous fuzzing
+
+The `oss-fuzz/` directory contains the three files needed to register this
+project with [OSS-Fuzz](https://github.com/google/oss-fuzz) for continuous,
+infrastructure-backed fuzzing:
+
+| File | Purpose |
+|---|---|
+| `oss-fuzz/project.yaml` | Project metadata, language (`rust`), sanitizer (`address`), engine (`libfuzzer`) |
+| `oss-fuzz/Dockerfile` | Builder image (extends `base-builder-rust`); installs the pinned nightly toolchain |
+| `oss-fuzz/build.sh` | Compiles all 14 targets with `cargo fuzz build -O --debug-assertions` and packages seed corpora |
+
+**Constraints from the OSS-Fuzz Rust integration guide
+([reference](https://google.github.io/oss-fuzz/getting-started/new-project-guide/rust-lang/)):**
+- Only `libfuzzer` and `address` sanitizer are supported for Rust projects.
+- The `base-builder-rust` image ships with `cargo-fuzz` and the latest nightly; `build.sh` installs our pinned version (`0.13.2`) to ensure reproducibility.
+
+To integrate with OSS-Fuzz:
+1. Fork the [oss-fuzz repository](https://github.com/google/oss-fuzz).
+2. Copy `oss-fuzz/` contents into `projects/soroban-sas/` in your fork.
+3. Open a pull request against the OSS-Fuzz repository.
+4. After merge, OSS-Fuzz builds and runs targets continuously and reports
+   crashes to the security contact in `project.yaml`.
+
+To test the OSS-Fuzz build locally (requires Docker):
+
+```sh
+git clone https://github.com/google/oss-fuzz
+cd oss-fuzz
+python3 infra/helper.py build_image soroban-sas
+python3 infra/helper.py build_fuzzers --sanitizer address soroban-sas
+# Run one target interactively
+python3 infra/helper.py run_fuzzer soroban-sas validation_fuzz
+# Reproduce a crash from a crash artifact
+python3 infra/helper.py reproduce soroban-sas validation_fuzz /path/to/crash-input
 ```
 
 ## Snapshot Testing for XDR Event Payloads (#256)
