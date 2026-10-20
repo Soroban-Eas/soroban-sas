@@ -40,6 +40,7 @@ pub const ATTESTER_KEY: Symbol = symbol_short!("ATTKEY");
 /// protection with one `instance` entry per attester (bounded growth) whose
 /// lifetime tracks contract liveness via `extend_instance_ttl`.
 pub const DELEGATION_NONCE: Symbol = symbol_short!("DELNONCE");
+pub const VALID_FROM: Symbol = symbol_short!("V_FROM");
 /// Monotonic contract version. Missing on legacy initialized deployments,
 /// which are treated as genesis version 1.
 pub const SAS_VERSION: Symbol = symbol_short!("VERSION");
@@ -148,24 +149,30 @@ fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError
 /// storage layout ([`CompactAttestation`]) and legacy full [`Attestation`] records (#438).
 fn read_attestation(env: &Env, uid: &UID) -> Option<Attestation> {
     let compact_key = CompactAttestationKey { uid: uid.clone() };
-    if let Some(compact) = env
+    let mut attestation = if let Some(compact) = env
         .storage()
         .persistent()
         .get::<_, CompactAttestation>(&compact_key)
     {
-        return Some(compact.to_attestation(env, uid));
-    }
-
-    if let Some(val) = env.storage().persistent().get::<_, Val>(uid) {
+        Some(compact.to_attestation(env, uid))
+    } else if let Some(val) = env.storage().persistent().get::<_, Val>(uid) {
         if let Ok(compact) = CompactAttestation::try_from_val(env, &val) {
-            return Some(compact.to_attestation(env, uid));
+            Some(compact.to_attestation(env, uid))
+        } else if let Ok(legacy) = Attestation::try_from_val(env, &val) {
+            Some(legacy)
+        } else {
+            None
         }
-        if let Ok(legacy) = Attestation::try_from_val(env, &val) {
-            return Some(legacy);
-        }
+    } else {
+        None
+    }?;
+
+    let v_key = (VALID_FROM, uid.clone());
+    if let Some(valid_from) = env.storage().persistent().get(&v_key) {
+        attestation.valid_from = valid_from;
     }
 
-    None
+    Some(attestation)
 }
 
 /// Checks whether an attestation exists under either the compact or legacy key.
@@ -191,6 +198,15 @@ fn write_attestation(env: &Env, attestation: &Attestation, ttl: u32) {
             .persistent()
             .extend_ttl(&attestation.uid, ttl, ttl);
     }
+    let v_key = (VALID_FROM, attestation.uid.clone());
+    if attestation.valid_from != 0 {
+        env.storage()
+            .persistent()
+            .set(&v_key, &attestation.valid_from);
+        env.storage().persistent().extend_ttl(&v_key, ttl, ttl);
+    } else if env.storage().persistent().has(&v_key) {
+        env.storage().persistent().remove(&v_key);
+    }
 }
 
 /// Extends the storage TTL for an attestation across its storage key.
@@ -203,6 +219,10 @@ fn extend_attestation_ttl(env: &Env, uid: &UID, ttl: u32) {
     }
     if env.storage().persistent().has(uid) {
         env.storage().persistent().extend_ttl(uid, ttl, ttl);
+    }
+    let v_key = (VALID_FROM, uid.clone());
+    if env.storage().persistent().has(&v_key) {
+        env.storage().persistent().extend_ttl(&v_key, ttl, ttl);
     }
 }
 
@@ -2037,6 +2057,11 @@ impl SAS {
                 let ttl = Self::compute_storage_ttl(&env, legacy.expiration_time);
                 env.storage().persistent().set(&uid, &compact);
                 env.storage().persistent().extend_ttl(&uid, ttl, ttl);
+                if legacy.valid_from != 0 {
+                    let v_key = (VALID_FROM, uid.clone());
+                    env.storage().persistent().set(&v_key, &legacy.valid_from);
+                    env.storage().persistent().extend_ttl(&v_key, ttl, ttl);
+                }
                 return true;
             }
         }
