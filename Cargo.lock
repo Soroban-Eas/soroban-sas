@@ -1923,6 +1923,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-sas-schema-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "soroban-sas-sdk"
 version = "0.1.0"
 dependencies = [
@@ -1932,6 +1941,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "soroban-sas-common",
+ "soroban-sas-schema-macro",
  "soroban-sdk",
  "stellar-strkey",
  "tokio",

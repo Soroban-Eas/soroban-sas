@@ -5,6 +5,7 @@ members = [
     "contracts/sas",
     "contracts/indexer",
     "packages/soroban-sas-sdk",
+    "packages/soroban-sas-schema-macro",
     "packages/soroban-sas-cli",
     "contracts/permissive-resolver",
 "tools/prometheus-exporter",

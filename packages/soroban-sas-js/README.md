@@ -43,6 +43,37 @@ const attestationUid = computeAttestationUid(
 const digest = hashTypedData(attestation, domain);
 ```
 
+## Typed schema payloads
+
+`parseSchema` validates supported SAS schema fields and returns an encoder and
+decoder for the Soroban `contracttype` ScVal-map XDR payload. Literal schema
+strings infer object types automatically. The registry's `name Type` order and
+the SDK's `Type name` order are both accepted. `uint64` decodes to `bigint`;
+`bytes` and `BytesN<N>` use `Uint8Array`; addresses use Stellar strkeys.
+Nested `Vec<T>` and `Option<T>` are supported.
+
+```ts
+import { parseSchema } from "@soroban-sas/sdk";
+
+const claim = parseSchema("bool verified, uint64 score, string id");
+const data = claim.encode({ verified: true, score: 42n, id: "alice" });
+const decoded = claim.decode(data); // { verified: boolean; score: bigint; id: string }
+```
+
+For Rust, `#[derive_schema("...")]` generates an SDK `SchemaType` from an
+empty struct declaration. The generated fields use Soroban SDK types for
+`String`, `Bytes`, and `Address` so the payload bytes match the JS codec.
+
+```rust
+use soroban_sas_sdk::derive_schema;
+
+#[derive_schema("bool verified, uint64 score, string id")]
+pub struct Claim {}
+```
+
+The registry validates schema syntax but does not enforce payload field types
+on-chain. Both codecs validate their supported types before encoding.
+
 ## Delegated attestations
 
 `signDelegatedAttestation` signs `hashTypedData(attestation, domain)` with
