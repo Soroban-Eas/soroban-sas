@@ -538,3 +538,156 @@ fn test_delegation_nonce_key_xdr_smaller_than_tuple() {
         tuple_xdr.len()
     );
 }
+
+#[test]
+fn test_compact_attestation_pack_unpack_meta() {
+    let env = Env::default();
+    let time = 1_700_000_000u64;
+    let expiration_time = 1_750_000_000u64;
+    let revocation_time = 1_710_000_000u64;
+
+    // Test all flag permutations
+    for revocable in [true, false] {
+        for deprecated in [true, false] {
+            let meta = crate::CompactAttestation::pack_meta(
+                time,
+                expiration_time,
+                revocation_time,
+                revocable,
+                deprecated,
+            );
+            assert_eq!(meta.len(), 25);
+
+            let compact = crate::CompactAttestation {
+                schema_uid: UID(BytesN::from_array(&env, &[1u8; 32])),
+                ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+                recipient: Address::generate(&env),
+                attester: Address::generate(&env),
+                packed_meta: BytesN::from_array(&env, &meta),
+                data: soroban_sdk::Bytes::from_slice(&env, &[1, 2, 3]),
+            };
+
+            let (t, exp, rev, is_revocable, is_revoked, is_dep) = compact.unpack_meta();
+            assert_eq!(t, time);
+            assert_eq!(exp, expiration_time);
+            assert_eq!(rev, revocation_time);
+            assert_eq!(is_revocable, revocable);
+            assert!(is_revoked); // revocation_time > 0
+            assert_eq!(is_dep, deprecated);
+
+            assert_eq!(compact.time(), time);
+            assert_eq!(compact.expiration_time(), expiration_time);
+            assert_eq!(compact.revocation_time(), revocation_time);
+            assert_eq!(compact.is_revocable(), revocable);
+            assert!(compact.is_revoked());
+            assert_eq!(compact.is_deprecated(), deprecated);
+        }
+    }
+
+    // Zero revocation time => is_revoked == false
+    let meta_active = crate::CompactAttestation::pack_meta(time, expiration_time, 0, true, false);
+    let mut compact_active = crate::CompactAttestation {
+        schema_uid: UID(BytesN::from_array(&env, &[1u8; 32])),
+        ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+        recipient: Address::generate(&env),
+        attester: Address::generate(&env),
+        packed_meta: BytesN::from_array(&env, &meta_active),
+        data: soroban_sdk::Bytes::new(&env),
+    };
+    assert!(!compact_active.is_revoked());
+    assert_eq!(compact_active.revocation_time(), 0);
+
+    // Test setters
+    compact_active.set_revocation_time(&env, 1_720_000_000);
+    assert_eq!(compact_active.revocation_time(), 1_720_000_000);
+    assert!(compact_active.is_revoked());
+
+    compact_active.set_time(&env, 1_800_000_000);
+    assert_eq!(compact_active.time(), 1_800_000_000);
+
+    compact_active.set_deprecated(&env, true);
+    assert!(compact_active.is_deprecated());
+}
+
+#[test]
+fn test_compact_attestation_roundtrip() {
+    let env = Env::default();
+    let uid = UID(BytesN::from_array(&env, &[42u8; 32]));
+    let schema_uid = UID(BytesN::from_array(&env, &[7u8; 32]));
+    let ref_uid = UID(BytesN::from_array(&env, &[9u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let data = soroban_sdk::Bytes::from_slice(&env, &[10, 20, 30, 40]);
+
+    let original = crate::Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1_680_000_000,
+        expiration_time: 1_720_000_000,
+        revocation_time: 0,
+        ref_uid: ref_uid.clone(),
+        recipient: recipient.clone(),
+        attester: attester.clone(),
+        revocable: true,
+        data: data.clone(),
+    };
+
+    let compact = crate::CompactAttestation::from_attestation(&env, &original);
+    let reconstructed = compact.to_attestation(&env, &uid);
+
+    assert_eq!(reconstructed.uid, original.uid);
+    assert_eq!(reconstructed.schema_uid, original.schema_uid);
+    assert_eq!(reconstructed.time, original.time);
+    assert_eq!(reconstructed.expiration_time, original.expiration_time);
+    assert_eq!(reconstructed.revocation_time, original.revocation_time);
+    assert_eq!(reconstructed.ref_uid, original.ref_uid);
+    assert_eq!(reconstructed.recipient, original.recipient);
+    assert_eq!(reconstructed.attester, original.attester);
+    assert_eq!(reconstructed.revocable, original.revocable);
+    assert_eq!(reconstructed.data, original.data);
+    assert_eq!(reconstructed, original);
+}
+
+#[test]
+fn test_compact_attestation_storage_footprint_reduction_exceeds_15_percent() {
+    use soroban_sdk::xdr::ToXdr;
+    let env = Env::default();
+    let uid = UID(BytesN::from_array(&env, &[1u8; 32]));
+    let schema_uid = UID(BytesN::from_array(&env, &[2u8; 32]));
+    let ref_uid = UID(BytesN::from_array(&env, &[0u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let data = soroban_sdk::Bytes::from_slice(&env, &[0xAA; 32]);
+
+    let original = crate::Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1_700_000_000,
+        expiration_time: 1_800_000_000,
+        revocation_time: 0,
+        ref_uid: ref_uid.clone(),
+        recipient: recipient.clone(),
+        attester: attester.clone(),
+        revocable: true,
+        data: data.clone(),
+    };
+
+    let compact = crate::CompactAttestation::from_attestation(&env, &original);
+
+    let original_xdr = original.to_xdr(&env);
+    let compact_xdr = compact.to_xdr(&env);
+
+    let original_len = original_xdr.len();
+    let compact_len = compact_xdr.len();
+
+    let saved_bytes = original_len.saturating_sub(compact_len);
+    let reduction_percentage = (saved_bytes as f64 / original_len as f64) * 100.0;
+
+    assert!(
+        reduction_percentage >= 15.0,
+        "Storage footprint reduction must be at least 15%, achieved: {:.2}% ({} bytes -> {} bytes)",
+        reduction_percentage,
+        original_len,
+        compact_len
+    );
+}

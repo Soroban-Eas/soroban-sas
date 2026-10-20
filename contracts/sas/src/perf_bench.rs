@@ -235,4 +235,80 @@ mod tests {
             elapsed
         );
     }
+
+    #[test]
+    fn test_compact_attestation_storage_and_rent_savings_10k() {
+        use soroban_sas_common::CompactAttestation;
+        use soroban_sdk::xdr::ToXdr;
+
+        let env = Env::default();
+        env.budget().reset_unlimited();
+        let schema_uid = UID(BytesN::from_array(&env, &[1u8; 32]));
+        let attester = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let count = 10_000;
+        let mut total_legacy_bytes = 0usize;
+        let mut total_compact_bytes = 0usize;
+
+        for i in 0..count {
+            let mut payload = [0u8; 32];
+            payload[..4].copy_from_slice(&(i as u32).to_be_bytes());
+            let data = Bytes::from_slice(&env, &payload);
+            let uid = soroban_sas_common::attestation_uid(
+                &env,
+                &schema_uid,
+                &recipient,
+                &attester,
+                &data,
+            );
+
+            let legacy = Attestation {
+                uid: uid.clone(),
+                schema_uid: schema_uid.clone(),
+                time: 1_700_000_000 + i as u64,
+                expiration_time: 1_800_000_000 + i as u64,
+                revocation_time: 0,
+                ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+                recipient: recipient.clone(),
+                attester: attester.clone(),
+                revocable: (i % 2) == 0,
+                data,
+            };
+
+            let compact = CompactAttestation::from_attestation(&env, &legacy);
+
+            let legacy_xdr = legacy.clone().to_xdr(&env);
+            let compact_xdr = compact.clone().to_xdr(&env);
+
+            total_legacy_bytes += legacy_xdr.len() as usize;
+            total_compact_bytes += compact_xdr.len() as usize;
+
+            // Verify perfect roundtrip fidelity
+            let reconstructed = compact.to_attestation(&env, &uid);
+            assert_eq!(reconstructed.uid, legacy.uid);
+            assert_eq!(reconstructed.revocable, legacy.revocable);
+            assert_eq!(reconstructed.time, legacy.time);
+            assert_eq!(reconstructed.expiration_time, legacy.expiration_time);
+        }
+
+        let saved_bytes = total_legacy_bytes - total_compact_bytes;
+        let percentage_saved = (saved_bytes as f64 / total_legacy_bytes as f64) * 100.0;
+
+        println!(
+            "10,000 Attestation Storage Footprint Benchmark:\n  Legacy Total: {} bytes (avg {} B/attestation)\n  Compact Total: {} bytes (avg {} B/attestation)\n  Saved: {} bytes ({:.2}% reduction)",
+            total_legacy_bytes,
+            total_legacy_bytes / count,
+            total_compact_bytes,
+            total_compact_bytes / count,
+            saved_bytes,
+            percentage_saved
+        );
+
+        assert!(
+            percentage_saved >= 15.0,
+            "Storage footprint reduction must be at least 15%, got {:.2}%",
+            percentage_saved
+        );
+    }
 }

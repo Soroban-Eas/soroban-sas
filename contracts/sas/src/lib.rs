@@ -5,8 +5,8 @@
 extern crate alloc;
 
 use soroban_sas_common::{
-    Attestation, ContractUpgradedEvent, DelegationNonceKey, SASError, LEDGERS_IN_ONE_YEAR,
-    MAX_ATTESTATION_DATA_BYTES, UID,
+    Attestation, CompactAttestation, CompactAttestationKey, ContractUpgradedEvent,
+    DelegationNonceKey, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, BytesN, Env, IntoVal,
@@ -144,6 +144,68 @@ fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError
     Address::try_from_val(env, &raw).map_err(|_| SASError::IncompatibleDependency)
 }
 
+/// Reads an attestation record by UID, seamlessly supporting both the compact internal
+/// storage layout ([`CompactAttestation`]) and legacy full [`Attestation`] records (#438).
+fn read_attestation(env: &Env, uid: &UID) -> Option<Attestation> {
+    let compact_key = CompactAttestationKey { uid: uid.clone() };
+    if let Some(compact) = env
+        .storage()
+        .persistent()
+        .get::<_, CompactAttestation>(&compact_key)
+    {
+        return Some(compact.to_attestation(env, uid));
+    }
+
+    if let Some(val) = env.storage().persistent().get::<_, Val>(uid) {
+        if let Ok(compact) = CompactAttestation::try_from_val(env, &val) {
+            return Some(compact.to_attestation(env, uid));
+        }
+        if let Ok(legacy) = Attestation::try_from_val(env, &val) {
+            return Some(legacy);
+        }
+    }
+
+    None
+}
+
+/// Checks whether an attestation exists under either the compact or legacy key.
+fn has_attestation(env: &Env, uid: &UID) -> bool {
+    let compact_key = CompactAttestationKey { uid: uid.clone() };
+    env.storage().persistent().has(&compact_key) || env.storage().persistent().has(uid)
+}
+
+/// Writes an attestation in the optimized [`CompactAttestation`] storage layout (#438).
+fn write_attestation(env: &Env, attestation: &Attestation, ttl: u32) {
+    let compact = CompactAttestation::from_attestation(env, attestation);
+    let compact_key = CompactAttestationKey {
+        uid: attestation.uid.clone(),
+    };
+    if env.storage().persistent().has(&compact_key) {
+        env.storage().persistent().set(&compact_key, &compact);
+        env.storage()
+            .persistent()
+            .extend_ttl(&compact_key, ttl, ttl);
+    } else {
+        env.storage().persistent().set(&attestation.uid, &compact);
+        env.storage()
+            .persistent()
+            .extend_ttl(&attestation.uid, ttl, ttl);
+    }
+}
+
+/// Extends the storage TTL for an attestation across its storage key.
+fn extend_attestation_ttl(env: &Env, uid: &UID, ttl: u32) {
+    let compact_key = CompactAttestationKey { uid: uid.clone() };
+    if env.storage().persistent().has(&compact_key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&compact_key, ttl, ttl);
+    }
+    if env.storage().persistent().has(uid) {
+        env.storage().persistent().extend_ttl(uid, ttl, ttl);
+    }
+}
+
 /// Shared verdict for a single attestation UID (#297).
 ///
 /// Both the single-UID entrypoint ([`SAS::verify_attestation`]) and the batch
@@ -153,12 +215,12 @@ fn required_upgrade_address(env: &Env, key: &Symbol) -> Result<Address, SASError
 /// renewed on every check, exactly as the single-UID path always did; a
 /// missing or archived UID is simply `false` and writes nothing.
 fn verify_attestation_record(env: &Env, uid: &UID) -> bool {
-    let Some(attestation) = env.storage().persistent().get::<_, Attestation>(uid) else {
+    let Some(attestation) = read_attestation(env, uid) else {
         return false;
     };
 
     let ttl = SAS::compute_storage_ttl(env, attestation.expiration_time);
-    env.storage().persistent().extend_ttl(uid, ttl, ttl);
+    extend_attestation_ttl(env, uid, ttl);
 
     if attestation.revocation_time != 0 {
         return false;
@@ -599,7 +661,7 @@ impl SAS {
             panic_with_error!(&env, SASError::PayloadTooLarge);
         }
 
-        if env.storage().persistent().has(&attestation.uid) {
+        if has_attestation(&env, &attestation.uid) {
             panic_with_error!(&env, SASError::DuplicateAttestation);
         }
 
@@ -647,8 +709,7 @@ impl SAS {
         if attestation.ref_uid == attestation.uid {
             panic_with_error!(&env, SASError::InvalidRefUid);
         }
-        if attestation.ref_uid != zero_ref && !env.storage().persistent().has(&attestation.ref_uid)
-        {
+        if attestation.ref_uid != zero_ref && !has_attestation(&env, &attestation.ref_uid) {
             panic_with_error!(&env, SASError::InvalidRefUid);
         }
 
@@ -736,14 +797,9 @@ impl SAS {
         // all record the same canonical value. (#156)
         attestation.time = env.ledger().timestamp();
 
-        // Store the attestation
+        // Store the attestation in compact internal layout (#438)
         let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-        env.storage()
-            .persistent()
-            .set(&attestation.uid, &attestation);
-        env.storage()
-            .persistent()
-            .extend_ttl(&attestation.uid, ttl, ttl);
+        write_attestation(&env, &attestation, ttl);
         // Anchor the timestamp above to the ledger that produced it, so a
         // verifier can check it against that ledger's header (#298).
         timestamp::write_anchor(&env, &attestation.uid, false, ttl);
@@ -884,7 +940,7 @@ impl SAS {
 
         let mut failed = soroban_sdk::Vec::new(&env);
         for uid in uids.iter() {
-            if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
+            if let Some(attestation) = read_attestation(&env, &uid) {
                 if !Self::push_to_indexer(&env, &indexer, &attestation) {
                     failed.push_back(uid);
                 } else {
@@ -900,7 +956,7 @@ impl SAS {
 
     pub fn reindex_attestation(env: Env, uid: UID) {
         extend_instance_ttl(&env);
-        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
         let Some(indexer) = env.storage().instance().get::<_, Address>(&INDEXER) else {
@@ -916,7 +972,7 @@ impl SAS {
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
-        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
         attestation.attester.require_auth();
@@ -930,7 +986,7 @@ impl SAS {
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
-        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
         authorizer.require_auth();
@@ -973,7 +1029,7 @@ impl SAS {
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
-        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
         Self::require_attester_key(&env, &attestation.attester, &public_key);
@@ -1045,7 +1101,7 @@ impl SAS {
             }
             seen.set(uid.clone(), true);
 
-            let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            let Some(attestation) = read_attestation(&env, &uid) else {
                 panic_with_error!(&env, SASError::AttestationNotFound);
             };
             if !attestation.revocable {
@@ -1083,12 +1139,7 @@ impl SAS {
         for i in 0..len {
             let uid = uids.get(i).unwrap();
             let nonce = nonces.get(i).unwrap();
-            let attester = env
-                .storage()
-                .persistent()
-                .get::<_, Attestation>(&uid)
-                .unwrap()
-                .attester;
+            let attester = read_attestation(&env, &uid).unwrap().attester;
             Self::consume_delegation_nonce(&env, &attester, nonce);
             Self::revoke_internal(env.clone(), uid);
         }
@@ -1100,7 +1151,7 @@ impl SAS {
 
     fn revoke_internal(env: Env, uid: UID) {
         extend_instance_ttl(&env);
-        let Some(mut attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(mut attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
 
@@ -1114,8 +1165,7 @@ impl SAS {
         let timestamp = env.ledger().timestamp();
         attestation.revocation_time = timestamp;
         let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-        env.storage().persistent().set(&uid, &attestation);
-        env.storage().persistent().extend_ttl(&uid, ttl, ttl);
+        write_attestation(&env, &attestation, ttl);
         // The revocation is anchored to its own ledger; the issuance anchor
         // stays readable alongside it (#298).
         timestamp::write_anchor(&env, &uid, true, ttl);
@@ -1188,7 +1238,7 @@ impl SAS {
             panic_with_error!(&env, SASError::ContractPaused);
         }
         extend_instance_ttl(&env);
-        let Some(old) = env.storage().persistent().get::<_, Attestation>(&old_uid) else {
+        let Some(old) = read_attestation(&env, &old_uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
 
@@ -1259,7 +1309,7 @@ impl SAS {
             panic_with_error!(&env, SASError::ContractPaused);
         }
         extend_instance_ttl(&env);
-        let Some(mut attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(mut attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
         };
 
@@ -1321,10 +1371,9 @@ impl SAS {
         // Update the expiration time
         attestation.expiration_time = new_expiration_time;
 
-        // Update storage with new TTL
+        // Update storage with new TTL in compact layout (#438)
         let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-        env.storage().persistent().set(&uid, &attestation);
-        env.storage().persistent().extend_ttl(&uid, ttl, ttl);
+        write_attestation(&env, &attestation, ttl);
 
         // Emit event
         events::publish_attestation_renewed(&env, &uid, &attestation.attester, new_expiration_time);
@@ -1464,7 +1513,7 @@ impl SAS {
             }
             seen.set(uid.clone(), true);
 
-            let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+            let Some(attestation) = read_attestation(&env, &uid) else {
                 panic_with_error!(&env, SASError::AttestationNotFound);
             };
             if !attestation.revocable {
@@ -1832,9 +1881,9 @@ impl SAS {
     /// helper surfaces that distinction as a structured
     /// `AttestationResult::Archived`.
     pub fn get_attestation(env: Env, uid: UID) -> Option<Attestation> {
-        if let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) {
+        if let Some(attestation) = read_attestation(&env, &uid) {
             let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
-            env.storage().persistent().extend_ttl(&uid, ttl, ttl);
+            extend_attestation_ttl(&env, &uid, ttl);
             Some(attestation)
         } else {
             None
@@ -1851,14 +1900,14 @@ impl SAS {
     /// garbage-collected. Archived entries trap at the host layer exactly
     /// as with `get_attestation`; callers should map that to `Archived`.
     pub fn get_attestation_view(env: Env, uid: UID) -> Option<Attestation> {
-        env.storage().persistent().get::<_, Attestation>(&uid)
+        read_attestation(&env, &uid)
     }
 
     /// Pure read-only variant of [`SAS::verify_attestation`] that does
     /// **not** renew the entry's TTL. Suitable for SDK async wrappers that
     /// need a side-effect-free verdict.
     pub fn verify_attestation_view(env: Env, uid: UID) -> bool {
-        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(attestation) = read_attestation(&env, &uid) else {
             return false;
         };
         if attestation.revocation_time != 0 {
@@ -1873,12 +1922,45 @@ impl SAS {
     /// Exposes the `valid_from` activation timestamp for an attestation (#439).
     pub fn get_valid_from(env: Env, uid: UID) -> u64 {
         extend_instance_ttl(&env);
-        let Some(attestation) = env.storage().persistent().get::<_, Attestation>(&uid) else {
+        let Some(attestation) = read_attestation(&env, &uid) else {
             return 0;
         };
         let ttl = Self::compute_storage_ttl(&env, attestation.expiration_time);
         env.storage().persistent().extend_ttl(&uid, ttl, ttl);
         attestation.valid_from
+    }
+
+    /// Migrates a legacy `Attestation` storage entry to `CompactAttestation` format (#438).
+    /// Returns `true` if migration occurred, `false` if entry was already compact or missing.
+    pub fn migrate_attestation(env: Env, uid: UID) -> bool {
+        extend_instance_ttl(&env);
+        if let Some(val) = env.storage().persistent().get::<_, Val>(&uid) {
+            if CompactAttestation::try_from_val(&env, &val).is_ok() {
+                // Already in compact layout
+                return false;
+            }
+            if let Ok(legacy) = Attestation::try_from_val(&env, &val) {
+                let compact = CompactAttestation::from_attestation(&env, &legacy);
+                let ttl = Self::compute_storage_ttl(&env, legacy.expiration_time);
+                env.storage().persistent().set(&uid, &compact);
+                env.storage().persistent().extend_ttl(&uid, ttl, ttl);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Batch migrates a slice of UIDs to `CompactAttestation` format (#438).
+    /// Returns the number of successfully migrated records.
+    pub fn migrate_attestations(env: Env, uids: soroban_sdk::Vec<UID>) -> u32 {
+        extend_instance_ttl(&env);
+        let mut count = 0u32;
+        for uid in uids.iter() {
+            if Self::migrate_attestation(env.clone(), uid) {
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Returns the ledger that issued attestation `uid` — its sequence number

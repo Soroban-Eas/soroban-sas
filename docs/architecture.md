@@ -855,3 +855,12 @@ The following table is a concise reference of every cross-contract call in the s
 | SAS `reindex_attestation` | Indexer | `index_attestation(uid, ...)` | optional write | Returns `IndexerUnavailable` on failure |
 | SAS `attest_with_value` | Token Contract | `transfer(attester → SAS, amount)` | mandatory transfer | Panics on failure |
 | Schema Registry `register_with_value` | Token Contract | `transfer(owner → treasury, amount)` | mandatory transfer | Panics on failure |
+
+---
+
+## Further Documentation
+
+- [Fee Collection and Treasury Mechanics](fee-collection-and-treasury.md): Detailed specification of fee configuration, treasury routing, and token withdrawals.
+- [Soroban Mainnet Launch Preparation](mainnet-launch-preparation.md): Launch phases, key custody, reproducible builds, and operational runbooks.
+- [Internationalization (i18n) and Translation Guidelines](i18n-translation-guidelines.md): Localization conventions, glossary, and contribution guidelines.
+

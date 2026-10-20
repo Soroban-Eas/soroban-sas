@@ -357,6 +357,7 @@ mod replace {
     pub struct Fixture {
         pub env: Env,
         pub sas_client: SASClient<'static>,
+        #[allow(dead_code)]
         pub sas_id: Address,
         pub attester: Address,
         pub recipient: Address,
@@ -466,13 +467,7 @@ fn test_replace_attestation_success() {
 
     // The new attestation is linked back to the old one via ref_uid,
     // overwriting whatever the caller passed.
-    let stored: Attestation = f.env.as_contract(&f.sas_id, || {
-        f.env
-            .storage()
-            .persistent()
-            .get(&new_attestation.uid)
-            .unwrap()
-    });
+    let stored: Attestation = f.sas_client.get_attestation(&new_attestation.uid).unwrap();
     assert_eq!(stored.ref_uid, f.old_uid);
 }
 
@@ -542,6 +537,7 @@ mod renew {
     pub struct Fixture {
         pub env: Env,
         pub sas_client: SASClient<'static>,
+        #[allow(dead_code)]
         pub sas_id: Address,
         #[allow(dead_code)]
         pub attester: Address,
@@ -609,9 +605,7 @@ fn test_renew_attestation_success_extends_expiration() {
 
     // Attestation should still be valid and have new expiration
     assert!(f.sas_client.verify_attestation(&f.uid));
-    let stored: Attestation = f.env.as_contract(&f.sas_id, || {
-        f.env.storage().persistent().get(&f.uid).unwrap()
-    });
+    let stored: Attestation = f.sas_client.get_attestation(&f.uid).unwrap();
     assert_eq!(stored.expiration_time, new_expiration);
 }
 
@@ -624,9 +618,7 @@ fn test_renew_attestation_success_makes_perpetual() {
     assert_eq!(returned_uid, f.uid);
 
     assert!(f.sas_client.verify_attestation(&f.uid));
-    let stored: Attestation = f.env.as_contract(&f.sas_id, || {
-        f.env.storage().persistent().get(&f.uid).unwrap()
-    });
+    let stored: Attestation = f.sas_client.get_attestation(&f.uid).unwrap();
     assert_eq!(stored.expiration_time, 0);
 }
 
@@ -2932,9 +2924,7 @@ fn test_attest_normalizes_time_to_ledger_timestamp() {
     attestation.time = 1; // caller-provided, must be overwritten
     sas_client.attest(&attestation);
 
-    let stored: Attestation = env.as_contract(&sas_client.address, || {
-        env.storage().persistent().get(&attestation.uid).unwrap()
-    });
+    let stored: Attestation = sas_client.get_attestation(&attestation.uid).unwrap();
     assert_eq!(stored.time, ledger_ts);
 }
 
@@ -2955,7 +2945,6 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
         stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes()).to_string();
     let attester = Address::from_string(&soroban_sdk::String::from_str(&env, &attester_strkey));
     let recipient = Address::generate(&env);
-
     let ledger_ts = 7_777u64;
     env.ledger().with_mut(|li| li.timestamp = ledger_ts);
 
@@ -2990,9 +2979,7 @@ fn test_delegated_attest_normalizes_time_to_ledger_timestamp() {
     env.mock_all_auths();
     sas_client.attest_by_delegation(&attestation, &nonce, &sig_bytes, &pub_bytes);
 
-    let stored: Attestation = env.as_contract(&sas_id, || {
-        env.storage().persistent().get(&attestation.uid).unwrap()
-    });
+    let stored: Attestation = sas_client.get_attestation(&attestation.uid).unwrap();
     assert_eq!(stored.time, ledger_ts);
 }
 
@@ -3012,12 +2999,8 @@ fn test_multi_attest_normalizes_time_to_ledger_timestamp() {
     let batch = soroban_sdk::vec![&env, att1, att2];
     sas_client.multi_attest(&batch);
 
-    let stored1: Attestation = env.as_contract(&sas_client.address, || {
-        env.storage().persistent().get(&uid1).unwrap()
-    });
-    let stored2: Attestation = env.as_contract(&sas_client.address, || {
-        env.storage().persistent().get(&uid2).unwrap()
-    });
+    let stored1: Attestation = sas_client.get_attestation(&uid1).unwrap();
+    let stored2: Attestation = sas_client.get_attestation(&uid2).unwrap();
     assert_eq!(stored1.time, ledger_ts);
     assert_eq!(stored2.time, ledger_ts);
 }

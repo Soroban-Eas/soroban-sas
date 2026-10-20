@@ -33,6 +33,10 @@ status checks alongside the existing `fmt`, `clippy`, `test`, and
 protection on its own — a repository administrator must do this from the
 repository settings.
 
+## Translations and Internationalization (i18n)
+
+Contributors adding translations or localizing documentation, CLI error messages, and developer resources must follow the [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md). All translations must maintain code block integrity and pass relative link validation.
+
 ## Dependency security
 
 New and updated dependencies must pass both security checks before merge:

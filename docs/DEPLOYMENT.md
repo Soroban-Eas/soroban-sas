@@ -13,7 +13,7 @@ here.
 > **Network safety note:** Testnet XLM has no value and Friendbot hands out
 > unlimited test coins, so feel free to experiment. Every command in this guide
 > is safe to run repeatedly on Testnet. Do **not** point any command at Mainnet
-> until you have read the [Mainnet checklist](#mainnet-checklist).
+> until you have read the [Mainnet checklist](#mainnet-checklist) and the [Soroban Mainnet Launch Preparation Runbook](mainnet-launch-preparation.md).
 
 ## Prerequisites
 
