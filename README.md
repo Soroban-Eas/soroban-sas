@@ -63,12 +63,14 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   **Duties**:
   - Maintains mappings from recipient addresses to their respective attestations.
   - Maintains mappings from schemas to all associated attestations.
+  - Supports newest-first cursor pages for recipient, schema, and attester history.
 
 - `contracts/cross-chain-verifier`
   **Role**: Verifies remote attestation status updates authenticated by an Axelar GMP gateway.
   **Duties**:
   - Binds one remote chain and source contract at deployment.
   - Rejects unapproved, stale or expired updates and exposes short-lived remote verdicts.
+  - Accepts versioned proof payloads carrying EVM schema, recipient, mapped Stellar address, and data.
   - Documents its [wire format and trust limits](docs/cross-chain-verification.md).
 
 ### Rust Packages

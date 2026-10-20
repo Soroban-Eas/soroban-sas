@@ -26,6 +26,20 @@ For a valid update, `valid_until` must be later than the receiving ledger's time
 
 The verifier rejects malformed, expired, overlong, unapproved and out-of-order messages. A failed call does not record a verdict. Successful calls publish `rem_att` with the UID and a `RemoteAttestationUpdated` payload containing the message ID and status.
 
+## Proof payload v2
+
+Version `0x02` keeps the first 50 bytes of v1 (with the version byte changed) and appends these fields. The gateway approves the hash of the **entire** payload, so the additional proof fields are authenticated along with the status.
+
+| Offset | Length | Meaning |
+| --- | ---: | --- |
+| 50 | 32 | Ethereum EAS schema UID, raw bytes |
+| 82 | 20 | EVM recipient address, raw bytes |
+| 102 | 56 | Mapped Soroban recipient, a valid `G...` or `C...` strkey |
+| 158 | 2 | Data length, unsigned big endian |
+| 160 | 0–1024 | Raw attestation data |
+
+The source contract must attest the EVM-to-Soroban recipient mapping explicitly. An EVM address is 20 bytes and cannot be inferred as a Stellar account or contract address. The verifier validates the strkey, stores the schema UID, EVM recipient, mapped Soroban `Address`, and data under the attestation UID, and exposes them through `get_proof(uid)`. A newer v1 status update clears the prior proof so callers cannot mistake it for fields from the latest verdict. Both formats retain the same gateway approval, revision, and expiry rules.
+
 ## Reading a verdict
 
 `verify_remote(uid)` returns `true` only for a stored positive update whose `valid_until` is still in the future. It returns `false` for unknown, negative or expired status. `get_status(uid)` returns the latest approved status and revision for diagnostics. The record's persistent storage TTL is renewed on reads. If archived, restore its footprint before querying, as with local SAS attestation records.

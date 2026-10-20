@@ -130,6 +130,68 @@ impl Fixture {
 }
 
 #[test]
+fn v2_proof_decodes_evm_fields_and_stellar_recipient() {
+    let mut f = Fixture::new();
+    f.env.set_config(soroban_sdk::testutils::EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
+    let recipient = Address::generate(&f.env);
+    let mut strkey = [0u8; 56];
+    recipient.to_string().copy_into_slice(&mut strkey);
+    let data = [0xde, 0xad, 0xbe, 0xef];
+    let mut raw = [0u8; PROOF_PAYLOAD_HEADER_LEN as usize + 4];
+    let status = f.payload(1, f.env.ledger().timestamp() + 100, true);
+    status.copy_into_slice(&mut raw[..STATUS_PAYLOAD_LEN as usize]);
+    raw[0] = 2;
+    raw[50..82].copy_from_slice(&[9; 32]);
+    raw[82..102].copy_from_slice(&[8; 20]);
+    raw[102..158].copy_from_slice(&strkey);
+    raw[158..160].copy_from_slice(&(data.len() as u16).to_be_bytes());
+    raw[160..].copy_from_slice(&data);
+    let payload = Bytes::from_slice(&f.env, &raw);
+    let id = String::from_str(&f.env, "proof-1");
+    assert!(f
+        .verifier
+        .try_execute(&f.source_chain, &id, &f.source_address, &payload)
+        .is_err());
+    f.approve(&id, &payload);
+    let mut forged = raw;
+    forged[82] ^= 1;
+    assert_eq!(
+        f.verifier.try_execute(
+            &f.source_chain,
+            &id,
+            &f.source_address,
+            &Bytes::from_slice(&f.env, &forged)
+        ),
+        Err(Ok(CrossChainError::MessageNotApproved))
+    );
+    f.execute(&id, &payload);
+    let proof = f.verifier.get_proof(&f.uid()).unwrap();
+    assert_eq!(proof.schema_uid, UID(BytesN::from_array(&f.env, &[9; 32])));
+    assert_eq!(proof.evm_recipient, BytesN::from_array(&f.env, &[8; 20]));
+    assert_eq!(proof.recipient, recipient);
+    assert_eq!(proof.data, Bytes::from_slice(&f.env, &data));
+    let mut bad = raw;
+    bad[159] = 5;
+    let bad_payload = Bytes::from_slice(&f.env, &bad);
+    assert_eq!(
+        f.verifier.try_execute(
+            &f.source_chain,
+            &String::from_str(&f.env, "bad"),
+            &f.source_address,
+            &bad_payload
+        ),
+        Err(Ok(CrossChainError::InvalidPayload))
+    );
+    let legacy = f.payload(2, f.env.ledger().timestamp() + 100, true);
+    let legacy_id = String::from_str(&f.env, "legacy-2");
+    f.approve(&legacy_id, &legacy);
+    f.execute(&legacy_id, &legacy);
+    assert_eq!(f.verifier.get_proof(&f.uid()), None);
+}
+
+#[test]
 fn accepts_gateway_approved_message_and_rejects_replay() {
     let f = Fixture::new();
     let id = String::from_str(&f.env, "tx-1");

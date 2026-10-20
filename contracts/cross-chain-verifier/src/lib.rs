@@ -11,6 +11,10 @@ use soroban_sdk::{
 /// asynchronous, so an old approved message must not grant indefinite trust.
 pub const MAX_VALIDITY_SECONDS: u64 = 24 * 60 * 60;
 pub const STATUS_PAYLOAD_LEN: u32 = 50;
+/// V2 appends a 32-byte schema, 20-byte EVM recipient, a 56-byte Stellar
+/// strkey, a two-byte data length, and the raw attestation data.
+pub const PROOF_PAYLOAD_HEADER_LEN: u32 = STATUS_PAYLOAD_LEN + 32 + 20 + 56 + 2;
+pub const MAX_PROOF_DATA_LEN: u32 = 1024;
 const MAX_CHAIN_LEN: u32 = 64;
 const MAX_ADDRESS_LEN: u32 = 128;
 const MAX_MESSAGE_ID_LEN: u32 = 128;
@@ -55,10 +59,22 @@ pub struct RemoteAttestationUpdated {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteProof {
+    pub schema_uid: UID,
+    pub evm_recipient: BytesN<20>,
+    /// Explicit recipient mapping certified by the remote source. An EVM
+    /// address alone cannot identify a Stellar account.
+    pub recipient: Address,
+    pub data: Bytes,
+}
+
+#[contracttype]
 #[derive(Clone)]
 enum DataKey {
     Config,
     Status(UID),
+    Proof(UID),
 }
 
 fn config(env: &Env) -> Result<SourceConfig, CrossChainError> {
@@ -72,7 +88,10 @@ fn config(env: &Env) -> Result<SourceConfig, CrossChainError> {
 /// revision (u64 big endian), valid-until UNIX timestamp (u64 big endian),
 /// validity flag (0 or 1). Exact length and flag values are mandatory.
 fn decode_status(payload: &Bytes) -> Result<RemoteAttestation, CrossChainError> {
-    if payload.len() != STATUS_PAYLOAD_LEN || payload.get(0) != Some(1) {
+    if (payload.get(0) == Some(1) && payload.len() != STATUS_PAYLOAD_LEN)
+        || (payload.get(0) == Some(2) && payload.len() < PROOF_PAYLOAD_HEADER_LEN)
+        || !matches!(payload.get(0), Some(1 | 2))
+    {
         return Err(CrossChainError::InvalidPayload);
     }
     let env = payload.env();
@@ -99,6 +118,43 @@ fn decode_status(payload: &Bytes) -> Result<RemoteAttestation, CrossChainError> 
         valid_until,
         valid,
     })
+}
+
+fn decode_proof(payload: &Bytes) -> Result<Option<RemoteProof>, CrossChainError> {
+    if payload.get(0) != Some(2) {
+        return Ok(None);
+    }
+    let env = payload.env();
+    let data_len = u32::from(payload.get(158).ok_or(CrossChainError::InvalidPayload)?) * 256
+        + u32::from(payload.get(159).ok_or(CrossChainError::InvalidPayload)?);
+    if data_len > MAX_PROOF_DATA_LEN || payload.len() != PROOF_PAYLOAD_HEADER_LEN + data_len {
+        return Err(CrossChainError::InvalidPayload);
+    }
+    let mut schema = [0u8; 32];
+    let mut evm = [0u8; 20];
+    let mut strkey = [0u8; 56];
+    let mut data = [0u8; MAX_PROOF_DATA_LEN as usize];
+    for (i, byte) in schema.iter_mut().enumerate() {
+        *byte = payload.get(50 + i as u32).unwrap();
+    }
+    for (i, byte) in evm.iter_mut().enumerate() {
+        *byte = payload.get(82 + i as u32).unwrap();
+    }
+    for (i, byte) in strkey.iter_mut().enumerate() {
+        *byte = payload.get(102 + i as u32).unwrap();
+    }
+    for (i, byte) in data.iter_mut().enumerate().take(data_len as usize) {
+        *byte = payload.get(160 + i as u32).unwrap();
+    }
+    // Soroban validates the G/C strkey checksum and type here. Malformed
+    // mappings trap, so they cannot be recorded as approved proofs.
+    let recipient = Address::from_string_bytes(&Bytes::from_slice(env, &strkey));
+    Ok(Some(RemoteProof {
+        schema_uid: UID(BytesN::from_array(env, &schema)),
+        evm_recipient: BytesN::from_array(env, &evm),
+        recipient,
+        data: Bytes::from_slice(env, &data[..data_len as usize]),
+    }))
 }
 
 #[contract]
@@ -162,6 +218,7 @@ impl CrossChainVerifier {
             return Err(CrossChainError::InvalidPayload);
         }
         let status = decode_status(&payload)?;
+        let proof = decode_proof(&payload)?;
         let now = env.ledger().timestamp();
         if status.revision == 0
             || (status.valid
@@ -202,6 +259,19 @@ impl CrossChainVerifier {
         env.storage()
             .persistent()
             .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        let proof_key = DataKey::Proof(status.uid.clone());
+        if let Some(proof) = proof {
+            env.storage().persistent().set(&proof_key, &proof);
+            env.storage().persistent().extend_ttl(
+                &proof_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        } else {
+            // A newer status-only update must not leave older proof data
+            // looking current.
+            env.storage().persistent().remove(&proof_key);
+        }
         env.events().publish(
             (symbol_short!("rem_att"), status.uid.0.clone()),
             RemoteAttestationUpdated {
@@ -224,6 +294,19 @@ impl CrossChainVerifier {
                 .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
         }
         status
+    }
+
+    /// Proof fields from the latest approved V2 update, if any.
+    pub fn get_proof(env: Env, uid: UID) -> Option<RemoteProof> {
+        extend_instance_ttl(&env);
+        let key = DataKey::Proof(uid);
+        let proof = env.storage().persistent().get(&key);
+        if proof.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        proof
     }
 
     /// Fail closed for unknown, invalid, or expired remote attestations.

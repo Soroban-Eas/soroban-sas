@@ -326,6 +326,89 @@ fn test_index_single_attestation() {
     sas_client.relay_index(&indexer_id, &uid, &recipient, &schema_uid, &attester);
 }
 
+#[test]
+fn reverse_pages_match_forward_history_across_chunk_boundaries() {
+    let env = Env::new_with_config(soroban_sdk::testutils::EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
+    env.budget().reset_unlimited();
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let schema = UID(BytesN::from_array(&env, &[3; 32]));
+    assert!(client
+        .get_atts_by_recipient_reverse(&recipient, &None, &10)
+        .uids
+        .is_empty());
+    for n in 0..201u32 {
+        let mut raw = [0u8; 32];
+        raw[..4].copy_from_slice(&n.to_be_bytes());
+        let uid = UID(BytesN::from_array(&env, &raw));
+        sas_client.relay_index(&indexer_id, &uid, &recipient, &schema, &attester);
+    }
+    let forward = client.get_attestations_by_recipient(&recipient);
+    for dimension in 0..3 {
+        let mut cursor = None;
+        let mut reverse = soroban_sdk::Vec::new(&env);
+        loop {
+            let page = match dimension {
+                0 => client.get_atts_by_recipient_reverse(&recipient, &cursor, &37),
+                1 => client.get_atts_by_schema_reverse(&schema, &cursor, &37),
+                _ => client.get_atts_by_attester_reverse(&attester, &cursor, &37),
+            };
+            assert!(page.uids.len() <= 37);
+            for uid in page.uids {
+                reverse.push_back(uid);
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(reverse.len(), forward.len());
+        for i in 0..forward.len() {
+            assert_eq!(reverse.get(i), forward.get(forward.len() - 1 - i));
+        }
+    }
+    assert!(client
+        .get_atts_by_recipient_reverse(&recipient, &None, &0)
+        .uids
+        .is_empty());
+    assert!(client
+        .get_atts_by_recipient_reverse(&recipient, &Some(201), &10)
+        .uids
+        .is_empty());
+    let exact_chunk = client.get_atts_by_recipient_reverse(&recipient, &Some(99), &100);
+    assert_eq!(exact_chunk.uids.len(), 100);
+    assert_eq!(exact_chunk.next_cursor, None);
+
+    // Both pages touch one chunk despite the 201-item history. This budget
+    // comparison guards against accidentally scanning from the head.
+    env.budget().reset_unlimited();
+    assert_eq!(
+        client
+            .get_atts_by_recipient_reverse(&recipient, &Some(199), &20)
+            .uids
+            .len(),
+        20
+    );
+    let tail_cost = env.budget().cpu_instruction_cost();
+    env.budget().reset_unlimited();
+    assert_eq!(
+        client
+            .get_atts_by_recipient_reverse(&recipient, &Some(19), &20)
+            .uids
+            .len(),
+        20
+    );
+    let head_cost = env.budget().cpu_instruction_cost();
+    assert!(
+        tail_cost < head_cost.saturating_mul(3),
+        "tail={tail_cost}, head={head_cost}"
+    );
+}
+
 /// A direct call from a bare test invocation (no authorizing contract in
 /// the call stack) must be rejected: the indexer's trust boundary is the
 /// bound SAS contract, not "whoever calls the entry point."

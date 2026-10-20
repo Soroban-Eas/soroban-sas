@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Reverse cursor pagination for recipient, schema, and attester index lookups,
+  with stable next cursors and bounded chunk reads. (#449)
+- Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,
+  explicit Soroban recipient mapping, and raw attestation data. The verifier
+  retains gateway approval and revision checks and exposes `get_proof`. (#458)
 - Indexer pagination for every lookup dimension:
   `get_atts_by_schema_paginated` and `get_atts_by_attester_paginated` join
   `get_atts_by_recipient_paginated`, all backed by one chunk-window reader

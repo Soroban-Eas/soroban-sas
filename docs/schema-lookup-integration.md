@@ -144,6 +144,14 @@ Every lookup dimension has a paginated read with the same contract:
 - `get_count_by_recipient` / `get_count_by_schema` / `get_count_by_attester`
   return `count` for computing page totals.
 
+For newest-first results, use `get_atts_by_recipient_reverse`,
+`get_atts_by_schema_reverse`, or `get_atts_by_attester_reverse`. Pass `None`
+as the first `cursor` and follow each `ReversePage.next_cursor` until it is
+`None`. The cursor is an inclusive absolute position, so it remains stable
+when new attestations are appended. Each call reads only the chunks touched
+by its page, including when it crosses a 100-UID chunk boundary. A zero limit,
+empty history, or out-of-range cursor returns an empty page.
+
 ```rust
 let page_size = 50;
 let mut cursor = 0;
