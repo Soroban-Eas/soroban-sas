@@ -130,37 +130,6 @@ fn expand(schema: &LitStr, item: &ItemStruct) -> syn::Result<proc_macro2::TokenS
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_schemas_report_compile_errors() {
-        let item: ItemStruct = syn::parse_quote!(
-            pub struct Claim {}
-        );
-        for schema in [
-            "",
-            "bool",
-            "bool  verified",
-            "bool verified,",
-            "bool verified, bool verified",
-            "unknown value",
-            "bool 1bad",
-            "BytesN<0> digest",
-        ] {
-            let literal = LitStr::new(schema, proc_macro2::Span::call_site());
-            assert!(expand(&literal, &item).is_err(), "accepted {schema:?}");
-        }
-        let nonempty: ItemStruct = syn::parse_quote!(
-            struct Claim {
-                value: bool,
-            }
-        );
-        assert!(expand(&syn::parse_quote!("bool verified"), &nonempty).is_err());
-    }
-}
-
 fn valid_name(name: &str) -> bool {
     name.len() <= 32
         && name
@@ -191,4 +160,35 @@ fn rust_type(name: &str) -> Option<Type> {
         }
     };
     syn::parse2(ty).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_schemas_report_compile_errors() {
+        let item: ItemStruct = syn::parse_quote!(
+            pub struct Claim {}
+        );
+        for schema in [
+            "",
+            "bool",
+            "bool  verified",
+            "bool verified,",
+            "bool verified, bool verified",
+            "unknown value",
+            "bool 1bad",
+            "BytesN<0> digest",
+        ] {
+            let literal = LitStr::new(schema, proc_macro2::Span::call_site());
+            assert!(expand(&literal, &item).is_err(), "accepted {schema:?}");
+        }
+        let nonempty: ItemStruct = syn::parse_quote!(
+            struct Claim {
+                value: bool,
+            }
+        );
+        assert!(expand(&syn::parse_quote!("bool verified"), &nonempty).is_err());
+    }
 }
