@@ -298,6 +298,7 @@ impl CompactAttestation {
             attester: self.attester.clone(),
             revocable,
             data: self.data.clone(),
+            valid_from: 0,
         }
     }
 

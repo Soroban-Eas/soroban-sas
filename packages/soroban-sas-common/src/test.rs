@@ -745,6 +745,7 @@ fn test_compact_attestation_roundtrip() {
         attester: attester.clone(),
         revocable: true,
         data: data.clone(),
+        valid_from: 0,
     };
 
     let compact = crate::CompactAttestation::from_attestation(&env, &original);
@@ -785,6 +786,7 @@ fn test_compact_attestation_storage_footprint_reduction_exceeds_15_percent() {
         attester: attester.clone(),
         revocable: true,
         data: data.clone(),
+        valid_from: 0,
     };
 
     let compact = crate::CompactAttestation::from_attestation(&env, &original);

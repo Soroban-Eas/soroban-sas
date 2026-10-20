@@ -273,6 +273,7 @@ mod tests {
                 recipient: recipient.clone(),
                 attester: attester.clone(),
                 revocable: (i % 2) == 0,
+                valid_from: 0,
                 data,
             };
 
