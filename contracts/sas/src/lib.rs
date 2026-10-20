@@ -761,12 +761,20 @@ impl SAS {
             panic_with_error!(&env, SASError::Unauthorized);
         }
 
-        // A revocable schema permits both revocable and irrevocable
-        // attestations; a non-revocable schema forbids an attestation from
-        // claiming `revocable = true` under it. See docs/schemas.md.
-        if let Err(err) =
-            soroban_sas_common::check_revocable(&env, schema.revocable, attestation.revocable)
-        {
+        // Validate policy compliance during attestation creation (#448).
+        // Queries tri-state policy if supported by registry, otherwise maps from bool.
+        let policy: soroban_sas_common::RevocationPolicy =
+            match env
+                .try_invoke_contract::<soroban_sas_common::RevocationPolicy, soroban_sdk::Error>(
+                    &registry,
+                    &Symbol::new(&env, "get_schema_policy"),
+                    soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+                ) {
+                Ok(Ok(p)) => p,
+                _ => soroban_sas_common::RevocationPolicy::from(schema.revocable),
+            };
+
+        if let Err(err) = soroban_sas_common::check_policy(policy, attestation.revocable) {
             panic_with_error!(&env, err);
         }
 
@@ -1743,6 +1751,91 @@ impl SAS {
         }
         env.storage().instance().set(&key, &nonce);
         extend_instance_ttl(env);
+    }
+
+    /// Invalidates a range of delegation nonces `[min_nonce, max_nonce]` for `attester` (#437).
+    /// Requires direct caller authorization (`attester.require_auth()`).
+    pub fn invalidate_nonces(env: Env, attester: Address, min_nonce: u64, max_nonce: u64) {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+        if min_nonce > max_nonce {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        attester.require_auth();
+
+        Self::invalidate_nonces_internal(&env, &attester, min_nonce, max_nonce);
+    }
+
+    /// Sets the nonce high-water mark for `attester` to `new_nonce` (#437).
+    /// Requires direct caller authorization (`attester.require_auth()`).
+    pub fn set_nonce_highwater_mark(env: Env, attester: Address, new_nonce: u64) {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+        attester.require_auth();
+
+        let key = DelegationNonceKey {
+            attester: attester.clone(),
+        };
+        let current = env.storage().instance().get::<_, u64>(&key).unwrap_or(0);
+        let min_nonce = current.saturating_add(1);
+        Self::invalidate_nonces_internal(&env, &attester, min_nonce, new_nonce);
+    }
+
+    /// Invalidates a range of delegation nonces using an off-chain signed administrative delegation message (#437).
+    pub fn invalidate_nonces_by_delegation(
+        env: Env,
+        attester: Address,
+        min_nonce: u64,
+        max_nonce: u64,
+        nonce: u64,
+        signature: soroban_sdk::BytesN<64>,
+        public_key: soroban_sdk::BytesN<32>,
+    ) {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+        if min_nonce > max_nonce {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        Self::require_attester_key(&env, &attester, &public_key);
+        let domain = soroban_sas_common::AttestationDomain {
+            network_id: env.ledger().network_id(),
+            contract: env.current_contract_address(),
+            nonce,
+        };
+        let payload_hash = soroban_sas_common::hash_delegated_nonce_invalidation(
+            &env, &attester, min_nonce, max_nonce, &domain,
+        );
+        soroban_sas_common::verify_offchain_signature(&env, &payload_hash, &public_key, &signature);
+        Self::consume_delegation_nonce(&env, &attester, nonce);
+
+        Self::invalidate_nonces_internal(&env, &attester, min_nonce, max_nonce);
+    }
+
+    /// Returns the current delegation nonce high-water mark for `attester` (#437).
+    pub fn get_nonce_highwater_mark(env: Env, attester: Address) -> u64 {
+        extend_instance_ttl(&env);
+        let key = DelegationNonceKey { attester };
+        env.storage().instance().get::<_, u64>(&key).unwrap_or(0)
+    }
+
+    fn invalidate_nonces_internal(env: &Env, attester: &Address, min_nonce: u64, max_nonce: u64) {
+        let key = DelegationNonceKey {
+            attester: attester.clone(),
+        };
+        let current = env.storage().instance().get::<_, u64>(&key).unwrap_or(0);
+        if max_nonce < current {
+            panic_with_error!(env, SASError::InvalidValue);
+        }
+        env.storage().instance().set(&key, &max_nonce);
+        extend_instance_ttl(env);
+
+        events::publish_nonces_invalidated(env, attester, min_nonce, max_nonce);
     }
 
     /// Verifies off-chain attestation signed by attester's ed25519 key.

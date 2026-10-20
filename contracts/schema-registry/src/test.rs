@@ -45,7 +45,9 @@ fn test_register_rejects_malformed_schema_strings() {
         let res = client.try_register(&owner, &schema, &resolver, &true);
         assert_eq!(
             res,
-            Err(Ok(soroban_sas_common::SASError::InvalidSchema.into()))
+            Err(Ok(
+                soroban_sas_common::SASError::InvalidSchemaDefinition.into()
+            ))
         );
     }
 }
@@ -910,6 +912,7 @@ fn test_get_schemas_pagination_boundaries() {
 #[test]
 fn test_get_schemas_page_size_capped_to_budget() {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let contract_id = env.register_contract(None, SchemaRegistry);
     let client = SchemaRegistryClient::new(&env, &contract_id);
     env.mock_all_auths();
@@ -1346,6 +1349,167 @@ fn test_transfer_schema_ownership_deprecated_schema_rejected() {
     assert_eq!(
         res,
         Err(Ok(soroban_sas_common::SASError::InvalidSchema.into()))
+    );
+}
+
+#[test]
+fn test_two_step_schema_ownership_transfer() {
+    use soroban_sas_common::events::SCHEMA_OWNERSHIP_PROPOSED;
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let bystander = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool like_soroban");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    // Initial state: no pending owner
+    assert_eq!(client.get_pending_schema_owner(&uid), None);
+
+    // Cannot propose self
+    let res = client.try_propose_schema_owner(&uid, &owner);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::InvalidValue.into()))
+    );
+
+    // Propose new owner
+    client.propose_schema_owner(&uid, &new_owner);
+    assert_eq!(
+        client.get_pending_schema_owner(&uid),
+        Some(new_owner.clone())
+    );
+
+    // Verify SchemaOwnershipProposed event emitted
+    let expected_proposed = (
+        contract_id.clone(),
+        (SCHEMA_OWNERSHIP_PROPOSED, uid.clone()).into_val(&env),
+        soroban_sas_common::events::SchemaOwnershipProposedEvent {
+            schema_uid: uid.clone(),
+            current_owner: owner.clone(),
+            proposed_owner: new_owner.clone(),
+        }
+        .into_val(&env),
+    );
+    assert!(
+        env.events().all().contains(expected_proposed),
+        "SchemaOwnershipProposed event must be emitted"
+    );
+
+    // Cancellation: owner can cancel
+    client.cancel_schema_ownership_transfer(&uid);
+    assert_eq!(client.get_pending_schema_owner(&uid), None);
+
+    // Claiming after cancellation reverts with Unauthorized
+    let res = client.try_claim_schema_ownership(&uid);
+    assert_eq!(
+        res,
+        Err(Ok(soroban_sas_common::SASError::Unauthorized.into()))
+    );
+
+    // Propose again
+    client.propose_schema_owner(&uid, &new_owner);
+    assert_eq!(
+        client.get_pending_schema_owner(&uid),
+        Some(new_owner.clone())
+    );
+
+    // Successful claim by new owner
+    client.claim_schema_ownership(&uid);
+    assert_eq!(client.get_pending_schema_owner(&uid), None);
+
+    // Verify SchemaOwnershipTransferred event emitted
+    let expected_transferred = (
+        contract_id.clone(),
+        (
+            soroban_sas_common::events::SCHEMA_OWNERSHIP_TRANSFERRED,
+            uid.clone(),
+        )
+            .into_val(&env),
+        SchemaOwnershipTransferredEvent {
+            schema_uid: uid.clone(),
+            old_owner: owner.clone(),
+            new_owner: new_owner.clone(),
+        }
+        .into_val(&env),
+    );
+    assert!(
+        env.events().all().contains(expected_transferred),
+        "SchemaOwnershipTransferred event must be emitted"
+    );
+
+    // Verify creator is now new_owner by having new_owner propose transfer to bystander
+    client.propose_schema_owner(&uid, &bystander);
+    assert_eq!(
+        client.get_pending_schema_owner(&uid),
+        Some(bystander.clone())
+    );
+}
+
+#[test]
+fn test_schema_revocation_policy_registration_and_get() {
+    use soroban_sas_common::RevocationPolicy;
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    // 1. Register with RevocableOnly policy
+    let s1 = String::from_str(&env, "bool flag1");
+    let uid1 =
+        client.register_with_policy(&owner, &s1, &resolver, &RevocationPolicy::RevocableOnly);
+    assert_eq!(
+        client.get_schema_policy(&uid1),
+        RevocationPolicy::RevocableOnly
+    );
+    assert_eq!(
+        client.get_revocation_policy(&uid1),
+        RevocationPolicy::RevocableOnly
+    );
+
+    // 2. Register with IrrevocableOnly policy
+    let s2 = String::from_str(&env, "bool flag2");
+    let uid2 =
+        client.register_with_policy(&owner, &s2, &resolver, &RevocationPolicy::IrrevocableOnly);
+    assert_eq!(
+        client.get_schema_policy(&uid2),
+        RevocationPolicy::IrrevocableOnly
+    );
+
+    // 3. Register with Permissive policy
+    let s3 = String::from_str(&env, "bool flag3");
+    let uid3 = client.register_with_policy(&owner, &s3, &resolver, &RevocationPolicy::Permissive);
+    assert_eq!(
+        client.get_schema_policy(&uid3),
+        RevocationPolicy::Permissive
+    );
+
+    // 4. Legacy boolean registration mapping:
+    // revocable = false -> IrrevocableOnly
+    let s4 = String::from_str(&env, "bool flag4");
+    let uid4 = client.register(&owner, &s4, &resolver, &false);
+    assert_eq!(
+        client.get_schema_policy(&uid4),
+        RevocationPolicy::IrrevocableOnly
+    );
+
+    // revocable = true -> Permissive
+    let s5 = String::from_str(&env, "bool flag5");
+    let uid5 = client.register(&owner, &s5, &resolver, &true);
+    assert_eq!(
+        client.get_schema_policy(&uid5),
+        RevocationPolicy::Permissive
     );
 }
 

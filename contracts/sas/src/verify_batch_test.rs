@@ -247,6 +247,7 @@ fn batch_verify_rejects_oversized_batch() {
 #[test]
 fn batch_verify_accepts_exactly_max_batch() {
     let f = setup();
+    f.env.budget().reset_unlimited();
 
     let mut at_limit: Vec<UID> = Vec::new(&f.env);
     let mut index = 0;

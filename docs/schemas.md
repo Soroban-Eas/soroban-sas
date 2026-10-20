@@ -63,7 +63,7 @@ Behaviour:
 - All three fields participate in the UID, so changing only `resolver` or only
   `revocable` addresses different (normally unregistered) content. See
   [Schema identity and UID derivation](../specs/protocol-v1.md#schema-identity-and-uid-derivation).
-- A malformed `schema` string panics with `SASError::InvalidSchema` — the same
+- A malformed `schema` string panics with `SASError::InvalidSchemaDefinition` — the same
   error `register` raises — rather than returning a misleading `None`. Syntax
   is validated before the UID is derived.
 
@@ -81,15 +81,25 @@ soroban-sas-cli schema get-by-content \
 ## Verification
 When verifying an attestation off-chain or on-chain, the client decodes the raw `data` field using the associated schema definition. The schema enforces that every issued attestation strictly conforms to the expected layout.
 
-## Revocability
-A schema's `revocable` flag is a ceiling on what attestations issued under it are allowed to claim, not a mandate:
+## Revocability Policies
 
-| `schema.revocable` | `attestation.revocable` | Result |
+Schemas support a tri-state `RevocationPolicy` enum:
+- `RevocableOnly`: Creator mandates that all attestations issued under this schema must be revocable. Attempting to issue an irrevocable attestation reverts with `SASError::InvalidRevocability`.
+- `IrrevocableOnly`: Creator mandates that all attestations issued under this schema must be irrevocable. Attempting to issue a revocable attestation reverts with `SASError::NotRevocable`.
+- `Permissive`: Attester may choose whether each attestation is revocable (`revocable: true`) or irrevocable (`revocable: false`).
+
+| `RevocationPolicy` | `attestation.revocable` | Result |
 | --- | --- | --- |
-| `true`  | `true`  | Allowed — the attestation may later be revoked. |
-| `true`  | `false` | Allowed — a revocable schema may still issue irrevocable attestations. |
-| `false` | `false` | Allowed — matches the schema's policy. |
-| `false` | `true`  | **Rejected** with `SASError::NotRevocable`. |
+| `RevocableOnly`   | `true`  | Allowed — attestation is revocable. |
+| `RevocableOnly`   | `false` | **Rejected** with `SASError::InvalidRevocability`. |
+| `IrrevocableOnly` | `true`  | **Rejected** with `SASError::NotRevocable`. |
+| `IrrevocableOnly` | `false` | Allowed — attestation is permanent. |
+| `Permissive`      | `true`  | Allowed — attester chose revocable. |
+| `Permissive`      | `false` | Allowed — attester chose irrevocable. |
+
+Existing boolean revocable schemas map cleanly to this model:
+- `schema.revocable == false` maps to `IrrevocableOnly`.
+- `schema.revocable == true` maps to `Permissive`.
 
 This is enforced once, inside `attest_internal`, before the attestation is stored or the resolver is invoked — every issuance path (`attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest`, and `replace_attestation`) shares this same check, so none of them can bypass it. Note this only constrains issuance: it does not change how `revoke`/`multi_revoke`/`replace_attestation` behave once an attestation exists, which continue to key off the attestation's own `revocable` flag.
 
@@ -174,4 +184,4 @@ To support DAOs, enterprise organizations, and multi-issuer systems without shar
 
 ## Schema ID Collision Resistance
 
-Schema UID derivation hashes the schema string, resolver address, and revocability boolean flag together using SHA-256. This deterministic formulation guarantees robust ID collision resistance: two independent entities creating the exact same schema structure will not collide if they specify different resolvers or different revocability toggles. Furthermore, strict capitalization boundaries and whitespace trimmings during schema string validation prevent bad actors from intentionally creating semantically identical duplicates disguised by format drift. 
+Schema UID derivation hashes the schema string, resolver address, and revocability boolean flag together using SHA-256. This deterministic formulation guarantees robust ID collision resistance: two independent entities creating the exact same schema structure will not collide if they specify different resolvers or different revocability toggles. Furthermore, strict capitalization boundaries and whitespace trimmings during schema string validation prevent bad actors from intentionally creating semantically identical duplicates disguised by format drift.

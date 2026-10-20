@@ -38,6 +38,14 @@ pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");
 /// Stored under `(SCHEMA_OWNERS, schema_uid) -> OwnerSet`.
 pub const SCHEMA_OWNERS: Symbol = symbol_short!("OWNERS");
 
+/// Storage key for the in-flight two-step schema ownership transfer (#446).
+/// Stored under `(PENDING_SCHEMA_OWNER, schema_uid) -> Address`.
+pub const PENDING_SCHEMA_OWNER: Symbol = symbol_short!("PEND_OWN");
+
+/// Storage key for the schema revocation policy (#448).
+/// Stored under `(SCHEMA_POLICY, schema_uid) -> RevocationPolicy`.
+pub const SCHEMA_POLICY: Symbol = symbol_short!("POLICY");
+
 /// Storage key for the in-flight multi-signature ownership transfer.
 /// Stored under `(PENDING_OWNERSHIP, schema_uid) -> PendingOwnershipTransfer`
 /// and removed as soon as the transfer is executed, cancelled, or invalidated

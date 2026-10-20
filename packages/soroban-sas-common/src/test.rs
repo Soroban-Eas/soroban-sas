@@ -109,7 +109,7 @@ fn test_validate_schema_syntax_rejects_malformed_strings() {
         let schema = soroban_sdk::String::from_str(&env, schema);
         assert_eq!(
             validate_schema_syntax(&env, &schema),
-            Err(crate::errors::SASError::InvalidSchema)
+            Err(crate::errors::SASError::InvalidSchemaDefinition)
         );
     }
 
@@ -148,7 +148,9 @@ fn test_validate_schema_syntax_matches_shared_vectors() {
 
         let expected = match expected {
             "ok" => Ok(()),
-            "InvalidSchema" => Err(crate::errors::SASError::InvalidSchema),
+            "InvalidSchema" | "InvalidSchemaDefinition" => {
+                Err(crate::errors::SASError::InvalidSchemaDefinition)
+            }
             "EmptySchema" => Err(crate::errors::SASError::EmptySchema),
             other => panic!("unknown expected result {other:?} in schema vector"),
         };
@@ -191,8 +193,121 @@ fn test_validate_schema_syntax_enforces_max_field_count() {
     let schema = soroban_sdk::String::from_str(&env, &over_limit);
     assert_eq!(
         validate_schema_syntax(&env, &schema),
-        Err(crate::errors::SASError::InvalidSchema)
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
     );
+}
+
+#[test]
+fn test_strict_lexical_validation_rejects_adversarial_inputs() {
+    let env = Env::default();
+
+    // Tabs
+    let schema_tab = soroban_sdk::String::from_str(&env, "name\tString");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_tab),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Newlines and carriage returns
+    let schema_nl = soroban_sdk::String::from_str(&env, "name String\n");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_nl),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Null bytes
+    let schema_null = soroban_sdk::String::from_str(&env, "name\0String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_null),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Control characters (ASCII < 32)
+    let schema_ctrl = soroban_sdk::String::from_str(&env, "name\x07String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_ctrl),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Non-breaking space (U+00A0: 0xC2 0xA0)
+    let schema_nbsp = soroban_sdk::String::from_str(&env, "name\u{00A0}String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_nbsp),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Zero-width space (U+200B)
+    let schema_zwsp = soroban_sdk::String::from_str(&env, "name\u{200B} String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_zwsp),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Non-canonical spacing: multiple spaces between identifier and type
+    let schema_multi_space = soroban_sdk::String::from_str(&env, "name   String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_multi_space),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Malformed separators: space before comma
+    let schema_space_comma =
+        soroban_sdk::String::from_str(&env, "first_name String , last_name String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_space_comma),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Malformed separators: trailing delimiter
+    let schema_trailing_comma = soroban_sdk::String::from_str(&env, "first_name String,");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_trailing_comma),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Malformed separators: consecutive commas
+    let schema_double_comma =
+        soroban_sdk::String::from_str(&env, "first_name String,,last_name String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_double_comma),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+}
+
+#[test]
+fn test_check_policy_all_three_paths() {
+    use crate::validation::check_policy;
+    use crate::RevocationPolicy;
+
+    // IrrevocableOnly:
+    // - irrevocable attestation is allowed
+    assert!(check_policy(RevocationPolicy::IrrevocableOnly, false).is_ok());
+    // - revocable attestation reverts with NotRevocable
+    assert_eq!(
+        check_policy(RevocationPolicy::IrrevocableOnly, true),
+        Err(crate::errors::SASError::NotRevocable)
+    );
+
+    // RevocableOnly:
+    // - revocable attestation is allowed
+    assert!(check_policy(RevocationPolicy::RevocableOnly, true).is_ok());
+    // - irrevocable attestation reverts with InvalidRevocability
+    assert_eq!(
+        check_policy(RevocationPolicy::RevocableOnly, false),
+        Err(crate::errors::SASError::InvalidRevocability)
+    );
+
+    // Permissive:
+    // - allows attester to choose either flag
+    assert!(check_policy(RevocationPolicy::Permissive, true).is_ok());
+    assert!(check_policy(RevocationPolicy::Permissive, false).is_ok());
+
+    // From<bool> mappings:
+    assert_eq!(
+        RevocationPolicy::from(false),
+        RevocationPolicy::IrrevocableOnly
+    );
+    assert_eq!(RevocationPolicy::from(true), RevocationPolicy::Permissive);
 }
 
 #[test]

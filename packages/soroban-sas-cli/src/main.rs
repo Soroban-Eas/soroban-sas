@@ -217,17 +217,48 @@ fn trim_bounds(bytes: &[u8], mut start: usize, mut end: usize) -> Option<(usize,
 }
 
 fn validate_schema_syntax(schema: &str) -> Result<(), String> {
-    let schema = schema.as_bytes();
-    if schema.is_empty() {
+    let schema_bytes = schema.as_bytes();
+    if schema_bytes.is_empty() {
         return Err("schema is empty: pass a non-empty --schema definition string".to_string());
     }
-    if schema.len() > MAX_SCHEMA_LENGTH {
+    if schema_bytes.len() > MAX_SCHEMA_LENGTH {
         return Err(format!(
             "schema is {} bytes, which exceeds the {MAX_SCHEMA_LENGTH}-byte limit",
-            schema.len()
+            schema_bytes.len()
         ));
     }
 
+    for &b in schema_bytes {
+        if b < 32 || b == 127 {
+            return Err(
+                "schema contains invalid control character or null byte (ASCII < 32)".to_string(),
+            );
+        }
+    }
+    for c in schema.chars() {
+        if c != ' ' && c.is_whitespace() {
+            return Err("schema contains invalid unicode whitespace".to_string());
+        }
+        if matches!(
+            c,
+            '\u{0085}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'
+                ..='\u{200B}'
+                    | '\u{200C}'
+                    | '\u{200D}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202F}'
+                    | '\u{205F}'
+                    | '\u{2060}'
+                    | '\u{3000}'
+                    | '\u{FEFF}'
+                    | '\u{00AD}'
+        ) {
+            return Err("schema contains reserved invisible or unicode whitespace".to_string());
+        }
+    }
+
+    let schema = schema_bytes;
     let Some((mut start, end)) = trim_bounds(schema, 0, schema.len()) else {
         return Err("schema is empty: pass a non-empty --schema definition string".to_string());
     };
@@ -239,6 +270,10 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
             field_end += 1;
         }
 
+        if field_end > start && schema[field_end - 1] == b' ' {
+            return Err("malformed separator: space before comma not allowed".to_string());
+        }
+
         let Some((field_start, field_end)) = trim_bounds(schema, start, field_end) else {
             return Err(
                 "schema must use comma-separated `name Type` field definitions".to_string(),
@@ -246,7 +281,7 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
         };
 
         let mut split_index = field_start;
-        while split_index < field_end && !is_ascii_whitespace(schema[split_index]) {
+        while split_index < field_end && schema[split_index] != b' ' {
             split_index += 1;
         }
         if split_index == field_start || split_index >= field_end {
@@ -255,13 +290,11 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
             );
         }
 
-        let mut ty_start = split_index;
-        while ty_start < field_end && is_ascii_whitespace(schema[ty_start]) {
-            ty_start += 1;
-        }
-        if ty_start >= field_end {
+        let ty_start = split_index + 1;
+        if ty_start >= field_end || schema[ty_start] == b' ' {
             return Err(
-                "schema must use comma-separated `name Type` field definitions".to_string(),
+                "non-canonical spacing: exactly one space allowed between identifier and type"
+                    .to_string(),
             );
         }
 

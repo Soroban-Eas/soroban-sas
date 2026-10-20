@@ -14,6 +14,7 @@ pub enum SASError {
     InvalidSchema = 101,
     InvalidSchemaFormat = 104,
     EmptySchema = 105,
+    InvalidSchemaDefinition = 106,
     SchemaAlreadyExists = 102,
     SchemaNotFound = 103,
 
@@ -23,6 +24,7 @@ pub enum SASError {
     NotRevocable = 203,
     AlreadyExpired = 204,
     DuplicateAttestation = 205,
+    InvalidRevocability = 206,
 
     /// Authorization errors
     Unauthorized = 301,

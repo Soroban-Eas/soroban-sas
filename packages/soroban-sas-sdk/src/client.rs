@@ -1272,6 +1272,187 @@ impl SASClient {
         )
     }
 
+    /// Step 1 of two-step schema ownership transfer (#446).
+    /// Calls `SchemaRegistry::propose_schema_owner(schema_uid, new_owner)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_schema_owner(
+        &self,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+        new_owner: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let env = &Env::default();
+        let new_owner_addr = parse_address(env, new_owner, AddressKind::Either, "new_owner")?;
+        let args = vec![
+            simulate::encode_arg(env, schema_uid)?,
+            simulate::encode_arg(env, &new_owner_addr)?,
+        ];
+        self.submit_write(
+            rpc,
+            network_passphrase,
+            owner_secret_seed,
+            registry_contract_id,
+            "propose_schema_owner",
+            args,
+        )
+    }
+
+    /// Step 2 of two-step schema ownership transfer (#446).
+    /// Calls `SchemaRegistry::claim_schema_ownership(schema_uid)`.
+    /// Callable only by the proposed new owner.
+    pub fn claim_schema_ownership(
+        &self,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        new_owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let env = &Env::default();
+        let args = vec![simulate::encode_arg(env, schema_uid)?];
+        self.submit_write(
+            rpc,
+            network_passphrase,
+            new_owner_secret_seed,
+            registry_contract_id,
+            "claim_schema_ownership",
+            args,
+        )
+    }
+
+    /// Cancels an in-flight two-step schema ownership transfer (#446).
+    /// Calls `SchemaRegistry::cancel_schema_ownership_transfer(schema_uid)`.
+    pub fn cancel_schema_ownership_transfer(
+        &self,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        owner_secret_seed: &[u8; 32],
+        registry_contract_id: &str,
+        schema_uid: &UID,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let env = &Env::default();
+        let args = vec![simulate::encode_arg(env, schema_uid)?];
+        self.submit_write(
+            rpc,
+            network_passphrase,
+            owner_secret_seed,
+            registry_contract_id,
+            "cancel_schema_ownership_transfer",
+            args,
+        )
+    }
+
+    /// Queries the currently pending owner for a schema, if any (#446).
+    pub fn get_pending_schema_owner(
+        &self,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        schema_uid: &UID,
+    ) -> Result<Option<Address>, SdkError> {
+        let env = &Env::default();
+        let arg = simulate::encode_arg(env, schema_uid)?;
+        invoke_read_only(
+            env,
+            rpc,
+            registry_contract_id,
+            "get_pending_schema_owner",
+            vec![arg],
+        )
+    }
+
+    /// Queries the revocation policy for a schema (#448).
+    pub fn get_schema_policy(
+        &self,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        schema_uid: &UID,
+    ) -> Result<soroban_sas_common::RevocationPolicy, SdkError> {
+        let env = &Env::default();
+        let arg = simulate::encode_arg(env, schema_uid)?;
+        invoke_read_only(
+            env,
+            rpc,
+            registry_contract_id,
+            "get_schema_policy",
+            vec![arg],
+        )
+    }
+
+    /// Advances the nonce watermark to cancel prior unsubmitted off-chain signatures (#437).
+    pub fn set_nonce_highwater_mark(
+        &self,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        attester_secret_seed: &[u8; 32],
+        new_nonce: u64,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let env = &Env::default();
+        let attester_public_key = signature::derive_public_key(attester_secret_seed);
+        let attester_strkey = stellar_strkey::ed25519::PublicKey(attester_public_key).to_string();
+        let attester = Address::from_string(&SorobanString::from_str(env, &attester_strkey));
+        let args = vec![
+            simulate::encode_arg(env, &attester)?,
+            simulate::encode_arg(env, &new_nonce)?,
+        ];
+        self.submit_write(
+            rpc,
+            network_passphrase,
+            attester_secret_seed,
+            &self.contract_id,
+            "set_nonce_highwater_mark",
+            args,
+        )
+    }
+
+    /// Bulk invalidates a range of nonces for the calling attester (#437).
+    pub fn invalidate_nonces(
+        &self,
+        rpc: &RpcClient,
+        network_passphrase: &str,
+        attester_secret_seed: &[u8; 32],
+        min_nonce: u64,
+        max_nonce: u64,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let env = &Env::default();
+        let attester_public_key = signature::derive_public_key(attester_secret_seed);
+        let attester_strkey = stellar_strkey::ed25519::PublicKey(attester_public_key).to_string();
+        let attester = Address::from_string(&SorobanString::from_str(env, &attester_strkey));
+        let args = vec![
+            simulate::encode_arg(env, &attester)?,
+            simulate::encode_arg(env, &min_nonce)?,
+            simulate::encode_arg(env, &max_nonce)?,
+        ];
+        self.submit_write(
+            rpc,
+            network_passphrase,
+            attester_secret_seed,
+            &self.contract_id,
+            "invalidate_nonces",
+            args,
+        )
+    }
+
+    /// Returns the current nonce highwater mark for an attester (#437).
+    pub fn get_nonce_highwater_mark(
+        &self,
+        rpc: &RpcClient,
+        attester: &str,
+    ) -> Result<u64, SdkError> {
+        let env = &Env::default();
+        let attester_addr = parse_address(env, attester, AddressKind::Either, "attester")?;
+        let arg = simulate::encode_arg(env, &attester_addr)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_nonce_highwater_mark",
+            vec![arg],
+        )
+    }
+
     /// Checks whether `delegate` is currently an authorized delegate for `schema_uid`.
     pub fn is_delegate(
         &self,

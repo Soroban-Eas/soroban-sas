@@ -25,15 +25,18 @@ fuzz_target!(|data: &[u8]| {
     // 3. Duk abin da aka karɓa dole ya bi ka'idojin schema.
     if result.is_ok() {
         assert!(data.is_ascii());
+        assert!(!data.iter().any(|&b| b < 32 || b == 127));
+        assert!(!data.contains(&b'\t'));
+        assert!(!data.contains(&b'\0'));
         let text = core::str::from_utf8(data).unwrap();
         let fields: Vec<&str> = text.split(',').collect();
         assert!(fields.len() <= MAX_FIELDS);
         for f in fields {
-            let f = f.trim_matches(is_ws);
+            let f = f.trim_matches(' ');
             assert!(!f.is_empty() && f.len() <= 64);
-            let mut it = f.splitn(2, is_ws);
+            let mut it = f.splitn(2, ' ');
             let ident = it.next().unwrap();
-            let ty = it.next().unwrap().trim_matches(is_ws);
+            let ty = it.next().unwrap().trim_matches(' ');
             assert!(!ident.is_empty() && ident.len() <= 32);
             assert!(!ty.is_empty() && ty.len() <= 32);
         }

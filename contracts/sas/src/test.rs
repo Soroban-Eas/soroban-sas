@@ -165,6 +165,54 @@ pub mod mock4 {
     }
 }
 
+pub mod mock_policy_registry {
+    use super::*;
+    use soroban_sas_common::RevocationPolicy;
+
+    #[contract]
+    pub struct MockPolicyRegistry;
+
+    #[contractimpl]
+    impl MockPolicyRegistry {
+        pub fn on_attest(_env: Env, _attestation: Attestation) {}
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+        pub fn validate_schema(_env: Env, _uid: UID) -> bool {
+            true
+        }
+        pub fn is_authorized(_env: Env, _uid: UID, _attester: Address) -> bool {
+            true
+        }
+        #[allow(non_snake_case)]
+        pub fn SASREG(_env: Env) -> bool {
+            true
+        }
+
+        pub fn get_schema(env: Env, uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
+            let policy = Self::get_schema_policy(env.clone(), uid.clone());
+            Some(soroban_sas_common::SchemaRecord {
+                uid,
+                resolver: env.current_contract_address(),
+                revocable: policy != RevocationPolicy::IrrevocableOnly,
+                schema: soroban_sdk::String::from_str(&env, "bool flag"),
+                deprecated: false,
+            })
+        }
+
+        pub fn get_schema_policy(env: Env, uid: UID) -> RevocationPolicy {
+            let key = symbol_short!("POL");
+            env.storage()
+                .instance()
+                .get(&(key, uid))
+                .unwrap_or(RevocationPolicy::Permissive)
+        }
+
+        pub fn set_policy(env: Env, uid: UID, policy: RevocationPolicy) {
+            let key = symbol_short!("POL");
+            env.storage().instance().set(&(key, uid), &policy);
+        }
+    }
+}
+
 #[test]
 fn test_admin_returns_initialized_admin() {
     let env = Env::default();
@@ -4119,5 +4167,180 @@ mod view_functions {
         recompute_uid(&env, &mut att);
         att.expiration_time = 0;
         client.attest(&att);
+    }
+
+    #[test]
+    fn test_revocation_policy_compliance_paths() {
+        use crate::test::mock_policy_registry;
+        use soroban_sas_common::RevocationPolicy;
+
+        let env = Env::default();
+        let registry_id = env.register_contract(None, mock_policy_registry::MockPolicyRegistry);
+        let policy_client = mock_policy_registry::MockPolicyRegistryClient::new(&env, &registry_id);
+
+        let sas_id = env.register_contract(None, SAS);
+        let sas_client = SASClient::new(&env, &sas_id);
+
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        sas_client.init(&admin, &registry_id);
+
+        let attester = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        // 1. IrrevocableOnly schema
+        let uid_irrev = UID(BytesN::from_array(&env, &[1u8; 32]));
+        policy_client.set_policy(&uid_irrev, &RevocationPolicy::IrrevocableOnly);
+
+        // Attempting to issue revocable attestation under IrrevocableOnly reverts with SASError::NotRevocable
+        let mut att_rev = attestation_fixture(&env, &attester, &recipient, [10u8; 32]);
+        att_rev.schema_uid = uid_irrev.clone();
+        att_rev.revocable = true;
+        recompute_uid(&env, &mut att_rev);
+        let res = sas_client.try_attest(&att_rev);
+        assert_eq!(res, Err(Ok(SASError::NotRevocable.into())));
+
+        // Issuing irrevocable attestation under IrrevocableOnly succeeds
+        let mut att_irrev = attestation_fixture(&env, &attester, &recipient, [11u8; 32]);
+        att_irrev.schema_uid = uid_irrev.clone();
+        att_irrev.revocable = false;
+        recompute_uid(&env, &mut att_irrev);
+        assert!(sas_client.try_attest(&att_irrev).is_ok());
+
+        // 2. RevocableOnly schema
+        let uid_rev = UID(BytesN::from_array(&env, &[2u8; 32]));
+        policy_client.set_policy(&uid_rev, &RevocationPolicy::RevocableOnly);
+
+        // Attempting to issue irrevocable attestation under RevocableOnly reverts with SASError::InvalidRevocability
+        let mut att_irrev2 = attestation_fixture(&env, &attester, &recipient, [20u8; 32]);
+        att_irrev2.schema_uid = uid_rev.clone();
+        att_irrev2.revocable = false;
+        recompute_uid(&env, &mut att_irrev2);
+        let res = sas_client.try_attest(&att_irrev2);
+        assert_eq!(res, Err(Ok(SASError::InvalidRevocability.into())));
+
+        // Issuing revocable attestation under RevocableOnly succeeds
+        let mut att_rev2 = attestation_fixture(&env, &attester, &recipient, [21u8; 32]);
+        att_rev2.schema_uid = uid_rev.clone();
+        att_rev2.revocable = true;
+        recompute_uid(&env, &mut att_rev2);
+        assert!(sas_client.try_attest(&att_rev2).is_ok());
+
+        // 3. Permissive schema: allows attester to choose either flag
+        let uid_perm = UID(BytesN::from_array(&env, &[3u8; 32]));
+        policy_client.set_policy(&uid_perm, &RevocationPolicy::Permissive);
+
+        let mut att_p1 = attestation_fixture(&env, &attester, &recipient, [30u8; 32]);
+        att_p1.schema_uid = uid_perm.clone();
+        att_p1.revocable = true;
+        recompute_uid(&env, &mut att_p1);
+        assert!(sas_client.try_attest(&att_p1).is_ok());
+
+        let mut att_p2 = attestation_fixture(&env, &attester, &recipient, [31u8; 32]);
+        att_p2.schema_uid = uid_perm.clone();
+        att_p2.revocable = false;
+        recompute_uid(&env, &mut att_p2);
+        assert!(sas_client.try_attest(&att_p2).is_ok());
+    }
+
+    #[test]
+    fn test_conditional_delegation_nonce_invalidation() {
+        use crate::test::mock1;
+
+        let env = Env::default();
+        let registry_id = env.register_contract(None, mock1::MockRegistry);
+        let sas_id = env.register_contract(None, SAS);
+        let sas_client = SASClient::new(&env, &sas_id);
+
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        sas_client.init(&admin, &registry_id);
+
+        let attester = Address::generate(&env);
+
+        // Initial watermark is 0
+        assert_eq!(sas_client.get_nonce_highwater_mark(&attester), 0);
+
+        // Single nonce invalidation (advance watermark to 5)
+        sas_client.set_nonce_highwater_mark(&attester, &5);
+        assert_eq!(sas_client.get_nonce_highwater_mark(&attester), 5);
+
+        // Range invalidation (bulk advance watermark to 10)
+        sas_client.invalidate_nonces(&attester, &6, &10);
+        assert_eq!(sas_client.get_nonce_highwater_mark(&attester), 10);
+
+        // Cannot decrease nonce watermark
+        let res = sas_client.try_set_nonce_highwater_mark(&attester, &9);
+        assert_eq!(res, Err(Ok(SASError::InvalidValue.into())));
+
+        let res = sas_client.try_invalidate_nonces(&attester, &5, &9);
+        assert_eq!(res, Err(Ok(SASError::InvalidValue.into())));
+
+        // Invalid range where min > max
+        let res = sas_client.try_invalidate_nonces(&attester, &15, &12);
+        assert_eq!(res, Err(Ok(SASError::InvalidValue.into())));
+
+        // Verify subsequent delegated call with skipped nonce reverts with DelegationReplay
+        let signing_key = SigningKey::from_bytes(&[88u8; 32]);
+        let public_key_bytes: [u8; 32] = signing_key.verifying_key().to_bytes();
+        let public_key = BytesN::from_array(&env, &public_key_bytes);
+
+        // Register attester key
+        sas_client.register_attester_key(&attester, &public_key);
+
+        // Issue an attestation that we will try to revoke by delegation
+        let recipient = Address::generate(&env);
+        let mut att = attestation_fixture(&env, &attester, &recipient, [40u8; 32]);
+        recompute_uid(&env, &mut att);
+        let issued_uid = sas_client.attest(&att);
+
+        let domain = AttestationDomain {
+            network_id: env.ledger().network_id(),
+            contract: sas_id.clone(),
+            nonce: 8, // nonce 8 <= 10 (which is the watermark)
+        };
+        let payload_hash =
+            soroban_sas_common::hash_delegated_revocation(&env, &issued_uid, &attester, &domain);
+        let sig = signing_key.sign(&payload_hash.to_array());
+        let sig_bytes: [u8; 64] = sig.to_bytes();
+        let signature = BytesN::from_array(&env, &sig_bytes);
+
+        // Revoking with nonce 8 reverts with DelegationReplay because nonce 8 <= 10
+        let res = sas_client.try_revoke_by_delegation(&issued_uid, &8, &signature, &public_key);
+        assert_eq!(res, Err(Ok(SASError::DelegationReplay.into())));
+
+        // Revoking with nonce 11 (> 10) succeeds
+        let domain2 = AttestationDomain {
+            network_id: env.ledger().network_id(),
+            contract: sas_id.clone(),
+            nonce: 11,
+        };
+        let payload_hash2 =
+            soroban_sas_common::hash_delegated_revocation(&env, &issued_uid, &attester, &domain2);
+        let sig2 = signing_key.sign(&payload_hash2.to_array());
+        let sig2_bytes: [u8; 64] = sig2.to_bytes();
+        let signature2 = BytesN::from_array(&env, &sig2_bytes);
+
+        sas_client.revoke_by_delegation(&issued_uid, &11, &signature2, &public_key);
+        assert_eq!(sas_client.get_nonce_highwater_mark(&attester), 11);
+
+        // Event check: NoncesInvalidated event was emitted
+        let expected_nonce_event = (
+            sas_id.clone(),
+            (
+                soroban_sas_common::events::NONCES_INVALIDATED,
+                attester.clone(),
+            )
+                .into_val(&env),
+            soroban_sas_common::events::NoncesInvalidatedEvent {
+                attester: attester.clone(),
+                min_nonce: 6,
+                max_nonce: 10,
+            }
+            .into_val(&env),
+        );
+        assert!(
+            env.events().all().contains(expected_nonce_event),
+            "NoncesInvalidated event must be emitted"
+        );
     }
 }
