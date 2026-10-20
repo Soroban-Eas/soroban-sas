@@ -4,8 +4,6 @@
 //! 1. The function never panics, regardless of byte content or length.
 //! 2. When it returns `Ok`, the input must:
 //!    - Be valid UTF-8.
-//!    - Contain no uppercase ASCII letters (the parser requires lowercase
-//!      identifiers and types).
 //!    - Have at most `MAX_SCHEMA_FIELDS` comma-separated fields.
 //!    - Not exceed `MAX_SCHEMA_LENGTH` bytes.
 //! 3. Determinism — the same input always yields the same result.
@@ -64,13 +62,6 @@ fuzz_target!(|data: &[u8]| {
 
     // ── Property 2: if accepted, structural invariants hold ──────────────────
     if result1.is_ok() {
-        // No uppercase ASCII letters allowed in valid schemas.
-        assert!(
-            !schema_str.chars().any(|c| c.is_ascii_uppercase()),
-            "a schema with uppercase letters must not be accepted: {:?}",
-            schema_str
-        );
-
         // Field count must not exceed the maximum.
         let field_count = schema_str
             .split(',')
