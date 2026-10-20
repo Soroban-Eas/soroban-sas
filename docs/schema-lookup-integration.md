@@ -54,6 +54,20 @@ let attestations = indexer_client.get_atts_by_schema_paginated(
 );
 ```
 
+#### Checking Whether a UID Is Indexed
+
+```rust
+// One read of the UID's index record; no chunk is loaded
+let indexed = indexer_client.is_attestation_indexed(uid);
+```
+
+`is_attestation_indexed` reads the record `index_attestation` writes the
+first time it indexes a UID, so its cost does not depend on how many
+attestations a recipient, schema, or attester has. It returns `false` for a
+UID that was never indexed without creating storage, renews the instance TTL,
+and does not count toward the per-ledger query limit. Revoked and replaced
+UIDs stay indexed; read their state with `get_attestation_status`.
+
 #### Filtering Attestations
 
 The indexer supports two modes for queries:
@@ -238,6 +252,7 @@ fn verify_attestations_for_schema(
 
 ### No Results from Queries
 - Verify the schema UID is correct
+- Check that a specific attestation was indexed at all using `is_attestation_indexed`
 - Check if attestations exist using `get_count_by_schema`
 - Ensure using active-only filter if revoked attestations shouldn't appear
 

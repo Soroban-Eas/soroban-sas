@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- `Indexer::is_attestation_indexed(uid)`: a fast existence check that reads
+  the UID's `(INDEXED_KEY, uid)` idempotency record directly instead of
+  walking recipient, schema, or attester chunks. It renews the instance TTL
+  (and the record's TTL when present), writes nothing, creates no storage for
+  unknown UIDs, and does not count toward the per-ledger query limit. A unit
+  test meters it against a paginated chunk walk over the same UIDs and
+  requires at least 70% fewer CPU instructions. (#542)
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,
