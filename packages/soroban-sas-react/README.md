@@ -89,3 +89,23 @@ cd ../soroban-sas-react && npm ci && npm run typecheck && npm test && npm run bu
 SDK contract-call argument shapes require testnet integration verification
 before a real transaction is broadcast. The unit tests exercise deterministic
 mock clients, cache revalidation, mutation states and unmount handling.
+
+
+## Testnet and wallet signing verification
+
+The SDK accepts SEP-43 `signTransaction` and `signAuthEntry` callbacks in
+`SASClientConfig`, allowing Freighter-style wallet signing without Node secret keys.
+The Next.js example includes `app/freighter-wallet.ts` and an opt-in diagnostic
+page at `/wallet`. The page connects to Freighter on Testnet, then verifies a
+signed transaction envelope cryptographically **without submitting it**.
+
+For an independent end-to-end smoke test with a throwaway account, run
+`cd packages/soroban-sas-js && npm run test:testnet`. It explicitly requests
+Friendbot funds, submits a harmless manageData transaction to Stellar Testnet,
+and checks ledger inclusion through raw JSON-RPC. This network operation is
+opt-in and deliberately excluded from unit tests.
+
+Full SAS Registry/Indexer integration requires genuine deployed contract IDs.
+Real Freighter approval requires the wallet owner to interact with the extension.
+Do not confuse a successful throwaway-account transaction with a successful SAS
+contract invocation or with extension approval.

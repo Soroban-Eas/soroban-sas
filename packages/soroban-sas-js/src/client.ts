@@ -17,6 +17,7 @@
 // packages/soroban-sas-js/README.md's "Scope and limitations" section.
 
 import { Client as ContractClient, basicNodeSigner } from "@stellar/stellar-sdk/contract";
+import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 import { Keypair } from "@stellar/stellar-sdk";
 import type { Attestation, DelegatedAttestation, SchemaRecord, UID } from "./types.js";
 
@@ -33,6 +34,10 @@ export interface SASClientConfig {
   publicKey?: string;
   /** ed25519 secret seed (S...) for `publicKey`; enables signAndSend. */
   secret?: string;
+  /** SEP-43 signer callback (e.g. Freighter). Never expose secret seeds in dApps. */
+  signTransaction?: ClientOptions["signTransaction"];
+  /** Optional SEP-43 authorization signer for delegated/multi-auth invocations. */
+  signAuthEntry?: ClientOptions["signAuthEntry"];
 }
 
 export interface SubmitResult {
@@ -66,12 +71,17 @@ export class SASClient {
 
   constructor(private readonly config: SASClientConfig) {}
 
-  private signer() {
-    if (!this.config.secret) return undefined;
-    return basicNodeSigner(
-      Keypair.fromSecret(this.config.secret),
-      this.config.networkPassphrase,
-    );
+  private signer(): Pick<ClientOptions, "signTransaction" | "signAuthEntry"> {
+    if (this.config.secret && (this.config.signTransaction || this.config.signAuthEntry)) {
+      throw new Error("Specify either a Node secret signer or wallet callbacks, not both");
+    }
+    if (this.config.secret) {
+      return basicNodeSigner(Keypair.fromSecret(this.config.secret), this.config.networkPassphrase);
+    }
+    return {
+      signTransaction: this.config.signTransaction,
+      signAuthEntry: this.config.signAuthEntry,
+    };
   }
 
   private publicKey(): string | undefined {
