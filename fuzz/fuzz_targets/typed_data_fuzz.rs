@@ -31,6 +31,7 @@ fuzz_target!(|data: &[u8]| {
         attester: Address::generate(&env),
         revocable: true,
         data: data_payload,
+        valid_from: 0,
     };
 
     let domain = AttestationDomain {
