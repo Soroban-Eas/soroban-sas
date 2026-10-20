@@ -10,6 +10,7 @@ pub struct SchemaBuilder {
     schema: std::string::String,
     resolver: Option<std::string::String>,
     revocable: bool,
+    max_ttl: u64,
 }
 
 impl SchemaBuilder {
@@ -39,6 +40,18 @@ impl SchemaBuilder {
     pub fn with_revocable(mut self, flag: bool) -> Self {
         self.revocable = flag;
         self
+    }
+
+    /// Sets an optional maximum expiration window limit (in seconds) for this schema (#441).
+    /// `0` (the default) allows any valid expiration time or perpetual attestations.
+    pub fn with_max_ttl(mut self, ttl: u64) -> Self {
+        self.max_ttl = ttl;
+        self
+    }
+
+    /// Returns the configured max_ttl.
+    pub fn max_ttl(&self) -> u64 {
+        self.max_ttl
     }
 
     /// Builds a `SchemaRecord`, deriving its UID from the schema definition.

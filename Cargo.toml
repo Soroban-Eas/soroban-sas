@@ -9,8 +9,9 @@ members = [
     "contracts/permissive-resolver",
 "tools/prometheus-exporter",
 "contracts/cross-chain-verifier",
+"contracts/zk-verifier",
 ]
-exclude = ["fuzz"]
+exclude = ["fuzz", "tools/gas-profiler"]
 resolver = "2"
 
 [package]
@@ -34,6 +35,10 @@ ureq = "2"
 
 [[bench]]
 name = "hashing_benchmark"
+harness = false
+
+[[bench]]
+name = "attestations_benchmark"
 harness = false
 
 [[test]]

@@ -251,3 +251,21 @@ pub fn publish_attestation_renewed(
     env.events()
         .publish((ATTESTATION_RENEWED, uid.clone(), attester.clone()), event);
 }
+
+/// Publishes the `NoncesInvalidated` event when an attester advances their
+/// nonce high-water mark (#437).
+///
+/// Topics: `(NONCES_INVALIDATED, attester)`.
+pub fn publish_nonces_invalidated(env: &Env, attester: &Address, min_nonce: u64, max_nonce: u64) {
+    use soroban_sas_common::events::NONCES_INVALIDATED;
+    use soroban_sas_common::NoncesInvalidatedEvent;
+
+    env.events().publish(
+        (NONCES_INVALIDATED, attester.clone()),
+        NoncesInvalidatedEvent {
+            attester: attester.clone(),
+            min_nonce,
+            max_nonce,
+        },
+    );
+}

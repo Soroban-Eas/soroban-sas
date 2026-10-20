@@ -63,6 +63,8 @@ const ATTESTER_TOTAL: Symbol = symbol_short!("ACOUNT");
 const SAS_INTERFACE_VERSION: Symbol = symbol_short!("SASV1");
 /// Persistent key prefix for a UID's [`IndexStatus`]: `(STATUS_KEY, uid)`.
 const STATUS_KEY: Symbol = symbol_short!("IDXSTAT");
+/// Persistent key prefix for an attestation's valid_from activation timestamp (#439).
+const VALID_FROM_KEY: Symbol = symbol_short!("VFROM");
 /// Persistent key prefix for a UID's idempotency record: `(INDEXED_KEY, uid)`
 /// stores the `(recipient, schema_uid, attester)` triple the UID was first
 /// indexed with. Its presence marks the UID as already indexed and pins the
@@ -628,6 +630,30 @@ impl Indexer {
     pub fn get_attestation_status(env: Env, uid: UID) -> Option<IndexStatus> {
         extend_instance_ttl(&env);
         env.storage().persistent().get(&(STATUS_KEY, uid))
+    }
+
+    /// Records the activation timestamp `valid_from` for an indexed attestation (#439).
+    /// Can only be called by the bound SAS contract.
+    pub fn set_valid_from(env: Env, uid: UID, valid_from: u64) {
+        let Some(sas): Option<Address> = env.storage().instance().get(&SAS_CONTRACT) else {
+            panic_with_error!(&env, SASError::Unauthorized);
+        };
+        sas.require_auth();
+        extend_instance_ttl(&env);
+        let key = (VALID_FROM_KEY, uid);
+        env.storage().persistent().set(&key, &valid_from);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        extend_instance_ttl(&env);
+    }
+
+    /// Exposes the recorded `valid_from` activation timestamp for `uid` (#439).
+    /// Returns 0 if unset or unknown.
+    pub fn get_valid_from(env: Env, uid: UID) -> u64 {
+        extend_instance_ttl(&env);
+        let key = (VALID_FROM_KEY, uid);
+        env.storage().persistent().get(&key).unwrap_or(0)
     }
 
     /// Total number of UIDs indexed under `address` as a recipient, across

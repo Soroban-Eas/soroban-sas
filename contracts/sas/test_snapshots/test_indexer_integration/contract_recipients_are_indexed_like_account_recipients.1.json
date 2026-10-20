@@ -216,6 +216,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 }
@@ -327,6 +335,14 @@
                             "bytes": "fcd47b463fac7bed06af17e347cda72a2f815dce37e51855a74827f796ec4c8e"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     }
                   ]
@@ -698,6 +714,59 @@
         {
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "POLICY"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                    }
+                  ]
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "POLICY"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 3
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -865,6 +934,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 }
@@ -996,6 +1073,14 @@
                             "bytes": "fcd47b463fac7bed06af17e347cda72a2f815dce37e51855a74827f796ec4c8e"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     }
                   ]
@@ -2983,6 +3068,14 @@
                       }
                     ]
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
                 }
               ]
             }
@@ -3104,6 +3197,59 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
               },
               {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "u64": 0
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
                 "symbol": "is_authorized"
               }
             ],
@@ -3143,6 +3289,59 @@
             ],
             "data": {
               "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "get_schema_policy"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_schema_policy"
+              }
+            ],
+            "data": {
+              "u32": 3
             }
           }
         }
@@ -3259,6 +3458,14 @@
                         "bytes": "9c554bb46cd70f48b4e0a7582804a770adf879cdd8dfcd286fcb69a46c426e81"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]
@@ -3626,6 +3833,14 @@
                       }
                     ]
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
                 }
               ]
             }
@@ -3747,6 +3962,59 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
               },
               {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "u64": 0
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
                 "symbol": "is_authorized"
               }
             ],
@@ -3786,6 +4054,59 @@
             ],
             "data": {
               "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "get_schema_policy"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0e3d85a7e9515fe157a7ce0e6b7e7707517e2940295e8be31ef26544fa04d32b"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_schema_policy"
+              }
+            ],
+            "data": {
+              "u32": 3
             }
           }
         }
@@ -3902,6 +4223,14 @@
                         "bytes": "fcd47b463fac7bed06af17e347cda72a2f815dce37e51855a74827f796ec4c8e"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]
@@ -4410,6 +4739,14 @@
                       }
                     ]
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
                 }
               ]
             }
@@ -4744,6 +5081,14 @@
                         "bytes": "fcd47b463fac7bed06af17e347cda72a2f815dce37e51855a74827f796ec4c8e"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]

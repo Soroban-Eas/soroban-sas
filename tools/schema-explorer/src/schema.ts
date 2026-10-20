@@ -19,7 +19,7 @@ export const MAX_IDENTIFIER_LENGTH = 32;
 export const MAX_TYPE_LENGTH = 32;
 
 /** The `SASError` variant the contract would return for this schema. */
-export type SchemaErrorCode = "InvalidSchema" | "EmptySchema";
+export type SchemaErrorCode = "InvalidSchema" | "InvalidSchemaDefinition" | "EmptySchema";
 
 export interface SchemaField {
   name: string;
@@ -44,6 +44,41 @@ function isWhitespace(byte: number): boolean {
   // Matches Rust's `is_ascii_whitespace` helper in validation.rs:
   // space, \n, \r, \t, vertical tab, form feed.
   return byte === 0x20 || byte === 0x0a || byte === 0x0d || byte === 0x09 || byte === 0x0b || byte === 0x0c;
+}
+
+function containsControlOrInvalidWhitespace(bytes: Uint8Array): boolean {
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b < 32 || b === 127) return true;
+  }
+  let s: string;
+  try {
+    s = decoder.decode(bytes);
+  } catch {
+    return true;
+  }
+  for (const c of s) {
+    if (c !== " " && /\s/.test(c)) return true;
+    if (
+      c === "\u0085" ||
+      c === "\u00a0" ||
+      c === "\u1680" ||
+      (c >= "\u2000" && c <= "\u200b") ||
+      c === "\u200c" ||
+      c === "\u200d" ||
+      c === "\u2028" ||
+      c === "\u2029" ||
+      c === "\u202f" ||
+      c === "\u205f" ||
+      c === "\u2060" ||
+      c === "\u3000" ||
+      c === "\ufeff" ||
+      c === "\u00ad"
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isAlpha(byte: number): boolean {
@@ -102,6 +137,9 @@ export function parseSchema(schema: string): SchemaParseResult {
   if (byteLength === 0) return fail("EmptySchema", "Schema is empty.");
   if (byteLength > MAX_SCHEMA_LENGTH) {
     return fail("InvalidSchema", `Schema is ${byteLength} bytes; the limit is ${MAX_SCHEMA_LENGTH}.`);
+  }
+  if (containsControlOrInvalidWhitespace(bytes)) {
+    return fail("InvalidSchemaDefinition", "Schema contains control characters or invalid whitespace.");
   }
 
   const outer = trimBounds(bytes, 0, byteLength);

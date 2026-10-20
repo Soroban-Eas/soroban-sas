@@ -612,6 +612,59 @@
         {
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "POLICY"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "0505c114b6f3b46c9c8fdb721a188a1d107e76103ee5b0daa355c3c3e26bf249"
+                    }
+                  ]
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "POLICY"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "0505c114b6f3b46c9c8fdb721a188a1d107e76103ee5b0daa355c3c3e26bf249"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 3
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -778,6 +831,14 @@
                             "bytes": "ee54e4155a6d94f4f7a62b26bd44808a160614c4e14dd78c3ed58db7289c7c53"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     }
                   ]
@@ -2828,6 +2889,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 },
@@ -2960,6 +3029,59 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
               },
               {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0505c114b6f3b46c9c8fdb721a188a1d107e76103ee5b0daa355c3c3e26bf249"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_max_ttl"
+              }
+            ],
+            "data": {
+              "u64": 0
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
                 "symbol": "is_authorized"
               }
             ],
@@ -2999,6 +3121,59 @@
             ],
             "data": {
               "bool": true
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "get_schema_policy"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "0505c114b6f3b46c9c8fdb721a188a1d107e76103ee5b0daa355c3c3e26bf249"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_schema_policy"
+              }
+            ],
+            "data": {
+              "u32": 3
             }
           }
         }
@@ -3115,6 +3290,14 @@
                         "bytes": "ee54e4155a6d94f4f7a62b26bd44808a160614c4e14dd78c3ed58db7289c7c53"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]
@@ -3594,6 +3777,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 },
@@ -3814,6 +4005,14 @@
                                 "bytes": "ee54e4155a6d94f4f7a62b26bd44808a160614c4e14dd78c3ed58db7289c7c53"
                               }
                             ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
                           }
                         }
                       ]
@@ -4135,6 +4334,14 @@
                         "bytes": "ee54e4155a6d94f4f7a62b26bd44808a160614c4e14dd78c3ed58db7289c7c53"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]
@@ -4481,6 +4688,14 @@
                         "bytes": "ee54e4155a6d94f4f7a62b26bd44808a160614c4e14dd78c3ed58db7289c7c53"
                       }
                     ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
                   }
                 }
               ]

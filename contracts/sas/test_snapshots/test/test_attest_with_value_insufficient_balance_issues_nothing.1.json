@@ -920,6 +920,14 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     }
                   ]
                 },
@@ -1230,6 +1238,14 @@
                                 "bytes": "2bd454f79c71d917f1de2570ef829c162b0202939298f569282fcfbf8a0ccdfd"
                               }
                             ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
                           }
                         }
                       ]

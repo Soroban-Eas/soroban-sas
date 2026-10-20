@@ -1,4 +1,5 @@
 use crate::errors::SASError;
+use crate::RevocationPolicy;
 use soroban_sdk::{Address, Env, String};
 
 const MAX_SCHEMA_LENGTH: u32 = 1024;
@@ -18,6 +19,41 @@ const ZERO_CONTRACT_STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 fn is_ascii_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\n' | b'\r' | b'\t' | 0x0b | 0x0c)
+}
+
+fn contains_control_or_invalid_whitespace(bytes: &[u8]) -> bool {
+    for &b in bytes {
+        if b < 32 || b == 127 {
+            return true;
+        }
+    }
+    if let Ok(s) = core::str::from_utf8(bytes) {
+        for c in s.chars() {
+            if c != ' ' && c.is_whitespace() {
+                return true;
+            }
+            if matches!(
+                c,
+                '\u{0085}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'
+                    ..='\u{200B}'
+                        | '\u{200C}'
+                        | '\u{200D}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                        | '\u{202F}'
+                        | '\u{205F}'
+                        | '\u{2060}'
+                        | '\u{3000}'
+                        | '\u{FEFF}'
+                        | '\u{00AD}'
+            ) {
+                return true;
+            }
+        }
+    } else {
+        return true;
+    }
+    false
 }
 
 fn trim_bounds(bytes: &[u8], mut start: u32, mut end: u32) -> Option<(u32, u32)> {
@@ -72,10 +108,19 @@ fn is_valid_type(bytes: &[u8], start: u32, end: u32) -> bool {
     }
 
     let mut has_alpha = false;
+    let mut prev_space = false;
     for index in start..end {
         let Some(byte) = bytes.get(index as usize).copied() else {
             return false;
         };
+        if byte == b' ' {
+            if prev_space {
+                return false;
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+        }
         if byte.is_ascii_alphabetic() {
             has_alpha = true;
         }
@@ -89,7 +134,7 @@ fn is_valid_type(bytes: &[u8], start: u32, end: u32) -> bool {
         }
     }
 
-    has_alpha
+    has_alpha && !prev_space
 }
 
 pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASError> {
@@ -98,22 +143,32 @@ pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASErro
         return Err(SASError::EmptySchema);
     }
     if schema_len > MAX_SCHEMA_LENGTH as usize {
-        return Err(SASError::InvalidSchema);
+        return Err(SASError::InvalidSchemaDefinition);
     }
     let mut buf = [0u8; 1024]; // Hardcoded to MAX_SCHEMA_LENGTH
     schema.copy_into_slice(&mut buf[..schema_len]);
     let schema_bytes = &buf[..schema_len]; // Use native slice directly
 
+    if contains_control_or_invalid_whitespace(schema_bytes) {
+        return Err(SASError::InvalidSchemaDefinition);
+    }
+
     let Some((mut start, end)) = trim_bounds(schema_bytes, 0, schema_len as u32) else {
-        return Err(SASError::InvalidSchema);
+        return Err(SASError::InvalidSchemaDefinition);
     };
+
+    let slice = &schema_bytes[start as usize..end as usize];
+    // Reject leading or trailing delimiters
+    if slice.first() == Some(&b',') || slice.last() == Some(&b',') {
+        return Err(SASError::InvalidSchemaDefinition);
+    }
 
     let mut field_count = 0u32;
     while start < end {
         let mut field_end = start;
         while field_end < end {
             let Some(byte) = schema_bytes.get(field_end as usize).copied() else {
-                return Err(SASError::InvalidSchema);
+                return Err(SASError::InvalidSchemaDefinition);
             };
             if byte == b',' {
                 break;
@@ -121,75 +176,75 @@ pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASErro
             field_end += 1;
         }
 
+        // Space immediately before comma is a malformed separator (e.g. `a B ,`)
+        if field_end > start && schema_bytes.get((field_end - 1) as usize).copied() == Some(b' ') {
+            return Err(SASError::InvalidSchemaDefinition);
+        }
+
         let Some((field_start, fe)) = trim_bounds(schema_bytes, start, field_end) else {
-            return Err(SASError::InvalidSchema);
+            return Err(SASError::InvalidSchemaDefinition);
         };
-        // Ensure field lengths are within strict limits (Issue 287)
+        // Ensure field lengths are within strict limits
         if fe - field_start > 64 {
-            return Err(SASError::InvalidSchema);
+            return Err(SASError::InvalidSchemaDefinition);
         }
 
         let mut split_index = field_start;
         while split_index < fe {
             let Some(byte) = schema_bytes.get(split_index as usize).copied() else {
-                return Err(SASError::InvalidSchema);
+                return Err(SASError::InvalidSchemaDefinition);
             };
-            if is_ascii_whitespace(byte) {
+            if byte == b' ' {
                 break;
             }
             split_index += 1;
         }
 
         if split_index == field_start || split_index >= fe {
-            return Err(SASError::InvalidSchema);
+            return Err(SASError::InvalidSchemaDefinition);
         }
         let identifier_len = split_index - field_start;
         if identifier_len > 32 {
-            return Err(SASError::InvalidSchema); // Strict length
+            return Err(SASError::InvalidSchemaDefinition); // Strict length
         }
 
-        let mut ty_start = split_index;
-        while ty_start < fe {
-            let Some(byte) = schema_bytes.get(ty_start as usize).copied() else {
-                return Err(SASError::InvalidSchema);
-            };
-            if !is_ascii_whitespace(byte) {
-                break;
-            }
-            ty_start += 1;
+        // Canonical spacing between identifier and type: exactly one space (0x20)
+        let ty_start = split_index + 1;
+        if ty_start >= fe || schema_bytes.get(ty_start as usize).copied() == Some(b' ') {
+            return Err(SASError::InvalidSchemaDefinition);
         }
 
         let type_len = fe - ty_start;
         if type_len > 32 {
-            return Err(SASError::InvalidSchema); // Strict length
+            return Err(SASError::InvalidSchemaDefinition); // Strict length
         }
 
-        if ty_start >= fe
-            || !is_valid_identifier(schema_bytes, field_start, split_index)
+        if !is_valid_identifier(schema_bytes, field_start, split_index)
             || !is_valid_type(schema_bytes, ty_start, fe)
         {
-            return Err(SASError::InvalidSchema);
+            return Err(SASError::InvalidSchemaDefinition);
         }
         field_count += 1;
         if field_count > MAX_SCHEMA_FIELDS {
-            return Err(SASError::InvalidSchema);
+            return Err(SASError::InvalidSchemaDefinition);
         }
 
         if field_end >= end {
             break;
         }
-        start = field_end + 1;
-        while start < end {
-            let Some(byte) = schema_bytes.get(start as usize).copied() else {
-                return Err(SASError::InvalidSchema);
-            };
-            if !is_ascii_whitespace(byte) {
-                break;
+
+        // Separator between fields: comma followed by at most one optional space
+        let mut next_start = field_end + 1;
+        if next_start < end && schema_bytes.get(next_start as usize).copied() == Some(b' ') {
+            next_start += 1;
+            // Reject multiple spaces after comma
+            if next_start < end && schema_bytes.get(next_start as usize).copied() == Some(b' ') {
+                return Err(SASError::InvalidSchemaDefinition);
             }
-            start += 1;
         }
+        start = next_start;
         if start >= end {
-            return Err(SASError::InvalidSchema);
+            return Err(SASError::InvalidSchemaDefinition);
         }
     }
 
@@ -242,13 +297,31 @@ pub fn validate_attestation_parties(
     Ok(())
 }
 
+/// Validates compliance with the schema's tri-state revocation policy (#448).
+pub fn check_policy(policy: RevocationPolicy, attestation_revocable: bool) -> Result<(), SASError> {
+    match policy {
+        RevocationPolicy::RevocableOnly => {
+            if !attestation_revocable {
+                return Err(SASError::InvalidRevocability);
+            }
+        }
+        RevocationPolicy::IrrevocableOnly => {
+            if attestation_revocable {
+                return Err(SASError::NotRevocable);
+            }
+        }
+        RevocationPolicy::Permissive => {}
+    }
+    Ok(())
+}
+
 pub fn check_revocable(
     _env: &Env,
     schema_revocable: bool,
     attestation_revocable: bool,
 ) -> Result<(), SASError> {
-    if !schema_revocable && attestation_revocable {
-        return Err(SASError::NotRevocable);
-    }
-    Ok(())
+    check_policy(
+        RevocationPolicy::from(schema_revocable),
+        attestation_revocable,
+    )
 }

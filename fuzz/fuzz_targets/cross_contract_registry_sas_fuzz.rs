@@ -178,6 +178,7 @@ fn run_case(data: &[u8]) {
         attester: owner.clone(),
         revocable: case.attestation_revocable,
         data: payload,
+        valid_from: 0,
     };
 
     let result = sas.try_attest(&attestation);

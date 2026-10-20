@@ -396,6 +396,14 @@
                       }
                     ]
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
                 }
               ]
             }
@@ -605,6 +613,14 @@
                                 "bytes": "ea33be7ed0663d8f7496020b1de2da63a8388712cd7eca34c39207711e29e244"
                               }
                             ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
                           }
                         }
                       ]

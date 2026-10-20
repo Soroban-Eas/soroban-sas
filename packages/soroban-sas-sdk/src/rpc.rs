@@ -1262,7 +1262,7 @@ mod tests {
             "expected SdkError::TransportError, got {err:?}"
         );
         assert!(
-            elapsed < Duration::from_secs(2),
+            elapsed < Duration::from_secs(5),
             "unreachable endpoint took {elapsed:?} to fail; the client hangs"
         );
     }

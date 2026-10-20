@@ -131,8 +131,22 @@ fi
 # -----------------------------------------------------------------------------
 info "Checking relative markdown links..."
 
-python3 - << 'PYEOF'
+PYTHON_CMD=""
+for cmd in py python3 python /c/Python314/python; do
+    if command -v "$cmd" &> /dev/null && "$cmd" -c "import sys" &> /dev/null; then
+        PYTHON_CMD="$cmd"
+        break
+    fi
+done
+
+if [[ -z "$PYTHON_CMD" ]]; then
+    fail "Python interpreter not found for checking Markdown relative links"
+else
+    $PYTHON_CMD - << 'PYEOF'
 import os, re, sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 failed = False
 repo_root = os.getcwd()
@@ -169,8 +183,9 @@ if failed:
 else:
     print("  ✓ All relative Markdown links resolve successfully")
 PYEOF
-if [[ $? -ne 0 ]]; then
-    FAILED=1
+    if [[ $? -ne 0 ]]; then
+        FAILED=1
+    fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -190,8 +205,11 @@ for script in scripts/*.sh tools/*.sh .githooks/*; do
 done
 
 # Extract and syntax-check bash code blocks from README.md
-python3 - << 'PYEOF'
+$PYTHON_CMD - << 'PYEOF'
 import re, subprocess, sys, tempfile
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 with open("README.md", "r", encoding="utf-8") as f:
     content = f.read()

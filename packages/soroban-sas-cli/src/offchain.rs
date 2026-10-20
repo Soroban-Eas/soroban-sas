@@ -31,6 +31,9 @@ pub struct AttestationInput {
     /// Arbitrary attestation data, hex encoded (may be empty).
     #[serde(default)]
     pub data: String,
+    /// Activation timestamp in Unix seconds; 0 means valid immediately upon issuance (#439).
+    #[serde(default)]
+    pub valid_from: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +83,7 @@ pub fn parse_attestation(env: &Env, input: &AttestationInput) -> Result<Attestat
             .map_err(|e| e.to_string())?,
         revocable: input.revocable,
         data: Bytes::from_slice(env, &data),
+        valid_from: input.valid_from,
     })
 }
 

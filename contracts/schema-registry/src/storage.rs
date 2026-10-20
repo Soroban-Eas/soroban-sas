@@ -8,6 +8,9 @@ pub const DEPRECATED: Symbol = symbol_short!("DEPRECATE");
 /// Maps a schema UID to the address that registered it. Kept separately from
 /// `SchemaRecord` so the record's serialized contract type remains stable.
 pub const SCHEMA_CREATOR: Symbol = symbol_short!("CREATOR");
+/// Configurable maximum expiration window limit (in seconds) per schema (#441).
+/// Stored under `(SCHEMA_MAX_TTL, uid) -> u64`. `0` or absent means no limit.
+pub const SCHEMA_MAX_TTL: Symbol = symbol_short!("MAXTTL");
 /// The WASM hash currently installed for this contract. Soroban does not
 /// expose a way to read a contract's own installed hash from within its
 /// own execution, so `commit_upgrade` tracks it here itself, letting
@@ -34,6 +37,14 @@ pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");
 /// Storage key for a schema's multi-signature owner set (#288).
 /// Stored under `(SCHEMA_OWNERS, schema_uid) -> OwnerSet`.
 pub const SCHEMA_OWNERS: Symbol = symbol_short!("OWNERS");
+
+/// Storage key for the in-flight two-step schema ownership transfer (#446).
+/// Stored under `(PENDING_SCHEMA_OWNER, schema_uid) -> Address`.
+pub const PENDING_SCHEMA_OWNER: Symbol = symbol_short!("PEND_OWN");
+
+/// Storage key for the schema revocation policy (#448).
+/// Stored under `(SCHEMA_POLICY, schema_uid) -> RevocationPolicy`.
+pub const SCHEMA_POLICY: Symbol = symbol_short!("POLICY");
 
 /// Storage key for the in-flight multi-signature ownership transfer.
 /// Stored under `(PENDING_OWNERSHIP, schema_uid) -> PendingOwnershipTransfer`

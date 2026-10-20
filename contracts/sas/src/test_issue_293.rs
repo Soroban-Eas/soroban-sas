@@ -67,6 +67,7 @@ fn fixture(env: &Env, attester: &Address, recipient: &Address, seed: [u8; 32]) -
         schema_uid,
         time: 1000,
         expiration_time: 0,
+        valid_from: 0,
         revocation_time: 0,
         ref_uid: UID(BytesN::from_array(env, &[0u8; 32])),
         recipient: recipient.clone(),

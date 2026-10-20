@@ -109,7 +109,7 @@ fn test_validate_schema_syntax_rejects_malformed_strings() {
         let schema = soroban_sdk::String::from_str(&env, schema);
         assert_eq!(
             validate_schema_syntax(&env, &schema),
-            Err(crate::errors::SASError::InvalidSchema)
+            Err(crate::errors::SASError::InvalidSchemaDefinition)
         );
     }
 
@@ -148,7 +148,9 @@ fn test_validate_schema_syntax_matches_shared_vectors() {
 
         let expected = match expected {
             "ok" => Ok(()),
-            "InvalidSchema" => Err(crate::errors::SASError::InvalidSchema),
+            "InvalidSchema" | "InvalidSchemaDefinition" => {
+                Err(crate::errors::SASError::InvalidSchemaDefinition)
+            }
             "EmptySchema" => Err(crate::errors::SASError::EmptySchema),
             other => panic!("unknown expected result {other:?} in schema vector"),
         };
@@ -191,8 +193,121 @@ fn test_validate_schema_syntax_enforces_max_field_count() {
     let schema = soroban_sdk::String::from_str(&env, &over_limit);
     assert_eq!(
         validate_schema_syntax(&env, &schema),
-        Err(crate::errors::SASError::InvalidSchema)
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
     );
+}
+
+#[test]
+fn test_strict_lexical_validation_rejects_adversarial_inputs() {
+    let env = Env::default();
+
+    // Tabs
+    let schema_tab = soroban_sdk::String::from_str(&env, "name\tString");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_tab),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Newlines and carriage returns
+    let schema_nl = soroban_sdk::String::from_str(&env, "name String\n");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_nl),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Null bytes
+    let schema_null = soroban_sdk::String::from_str(&env, "name\0String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_null),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Control characters (ASCII < 32)
+    let schema_ctrl = soroban_sdk::String::from_str(&env, "name\x07String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_ctrl),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Non-breaking space (U+00A0: 0xC2 0xA0)
+    let schema_nbsp = soroban_sdk::String::from_str(&env, "name\u{00A0}String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_nbsp),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Zero-width space (U+200B)
+    let schema_zwsp = soroban_sdk::String::from_str(&env, "name\u{200B} String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_zwsp),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Non-canonical spacing: multiple spaces between identifier and type
+    let schema_multi_space = soroban_sdk::String::from_str(&env, "name   String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_multi_space),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Malformed separators: space before comma
+    let schema_space_comma =
+        soroban_sdk::String::from_str(&env, "first_name String , last_name String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_space_comma),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Malformed separators: trailing delimiter
+    let schema_trailing_comma = soroban_sdk::String::from_str(&env, "first_name String,");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_trailing_comma),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+
+    // Malformed separators: consecutive commas
+    let schema_double_comma =
+        soroban_sdk::String::from_str(&env, "first_name String,,last_name String");
+    assert_eq!(
+        validate_schema_syntax(&env, &schema_double_comma),
+        Err(crate::errors::SASError::InvalidSchemaDefinition)
+    );
+}
+
+#[test]
+fn test_check_policy_all_three_paths() {
+    use crate::validation::check_policy;
+    use crate::RevocationPolicy;
+
+    // IrrevocableOnly:
+    // - irrevocable attestation is allowed
+    assert!(check_policy(RevocationPolicy::IrrevocableOnly, false).is_ok());
+    // - revocable attestation reverts with NotRevocable
+    assert_eq!(
+        check_policy(RevocationPolicy::IrrevocableOnly, true),
+        Err(crate::errors::SASError::NotRevocable)
+    );
+
+    // RevocableOnly:
+    // - revocable attestation is allowed
+    assert!(check_policy(RevocationPolicy::RevocableOnly, true).is_ok());
+    // - irrevocable attestation reverts with InvalidRevocability
+    assert_eq!(
+        check_policy(RevocationPolicy::RevocableOnly, false),
+        Err(crate::errors::SASError::InvalidRevocability)
+    );
+
+    // Permissive:
+    // - allows attester to choose either flag
+    assert!(check_policy(RevocationPolicy::Permissive, true).is_ok());
+    assert!(check_policy(RevocationPolicy::Permissive, false).is_ok());
+
+    // From<bool> mappings:
+    assert_eq!(
+        RevocationPolicy::from(false),
+        RevocationPolicy::IrrevocableOnly
+    );
+    assert_eq!(RevocationPolicy::from(true), RevocationPolicy::Permissive);
 }
 
 #[test]
@@ -292,6 +407,7 @@ fn sample_attestation(env: &Env, attester: Address) -> Attestation {
         attester,
         revocable: true,
         data: Bytes::from_slice(env, &[0xde, 0xad, 0xbe, 0xef]),
+        valid_from: 0,
     }
 }
 
@@ -535,5 +651,160 @@ fn test_delegation_nonce_key_xdr_smaller_than_tuple() {
         "Typed DelegationNonceKey XDR ({} bytes) must be smaller than raw tuple XDR ({} bytes)",
         typed_xdr.len(),
         tuple_xdr.len()
+    );
+}
+
+#[test]
+fn test_compact_attestation_pack_unpack_meta() {
+    let env = Env::default();
+    let time = 1_700_000_000u64;
+    let expiration_time = 1_750_000_000u64;
+    let revocation_time = 1_710_000_000u64;
+
+    // Test all flag permutations
+    for revocable in [true, false] {
+        for deprecated in [true, false] {
+            let meta = crate::CompactAttestation::pack_meta(
+                time,
+                expiration_time,
+                revocation_time,
+                revocable,
+                deprecated,
+            );
+            assert_eq!(meta.len(), 25);
+
+            let compact = crate::CompactAttestation {
+                schema_uid: UID(BytesN::from_array(&env, &[1u8; 32])),
+                ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+                recipient: Address::generate(&env),
+                attester: Address::generate(&env),
+                packed_meta: BytesN::from_array(&env, &meta),
+                data: soroban_sdk::Bytes::from_slice(&env, &[1, 2, 3]),
+            };
+
+            let (t, exp, rev, is_revocable, is_revoked, is_dep) = compact.unpack_meta();
+            assert_eq!(t, time);
+            assert_eq!(exp, expiration_time);
+            assert_eq!(rev, revocation_time);
+            assert_eq!(is_revocable, revocable);
+            assert!(is_revoked); // revocation_time > 0
+            assert_eq!(is_dep, deprecated);
+
+            assert_eq!(compact.time(), time);
+            assert_eq!(compact.expiration_time(), expiration_time);
+            assert_eq!(compact.revocation_time(), revocation_time);
+            assert_eq!(compact.is_revocable(), revocable);
+            assert!(compact.is_revoked());
+            assert_eq!(compact.is_deprecated(), deprecated);
+        }
+    }
+
+    // Zero revocation time => is_revoked == false
+    let meta_active = crate::CompactAttestation::pack_meta(time, expiration_time, 0, true, false);
+    let mut compact_active = crate::CompactAttestation {
+        schema_uid: UID(BytesN::from_array(&env, &[1u8; 32])),
+        ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+        recipient: Address::generate(&env),
+        attester: Address::generate(&env),
+        packed_meta: BytesN::from_array(&env, &meta_active),
+        data: soroban_sdk::Bytes::new(&env),
+    };
+    assert!(!compact_active.is_revoked());
+    assert_eq!(compact_active.revocation_time(), 0);
+
+    // Test setters
+    compact_active.set_revocation_time(&env, 1_720_000_000);
+    assert_eq!(compact_active.revocation_time(), 1_720_000_000);
+    assert!(compact_active.is_revoked());
+
+    compact_active.set_time(&env, 1_800_000_000);
+    assert_eq!(compact_active.time(), 1_800_000_000);
+
+    compact_active.set_deprecated(&env, true);
+    assert!(compact_active.is_deprecated());
+}
+
+#[test]
+fn test_compact_attestation_roundtrip() {
+    let env = Env::default();
+    let uid = UID(BytesN::from_array(&env, &[42u8; 32]));
+    let schema_uid = UID(BytesN::from_array(&env, &[7u8; 32]));
+    let ref_uid = UID(BytesN::from_array(&env, &[9u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let data = soroban_sdk::Bytes::from_slice(&env, &[10, 20, 30, 40]);
+
+    let original = crate::Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1_680_000_000,
+        expiration_time: 1_720_000_000,
+        revocation_time: 0,
+        ref_uid: ref_uid.clone(),
+        recipient: recipient.clone(),
+        attester: attester.clone(),
+        revocable: true,
+        data: data.clone(),
+        valid_from: 0,
+    };
+
+    let compact = crate::CompactAttestation::from_attestation(&env, &original);
+    let reconstructed = compact.to_attestation(&env, &uid);
+
+    assert_eq!(reconstructed.uid, original.uid);
+    assert_eq!(reconstructed.schema_uid, original.schema_uid);
+    assert_eq!(reconstructed.time, original.time);
+    assert_eq!(reconstructed.expiration_time, original.expiration_time);
+    assert_eq!(reconstructed.revocation_time, original.revocation_time);
+    assert_eq!(reconstructed.ref_uid, original.ref_uid);
+    assert_eq!(reconstructed.recipient, original.recipient);
+    assert_eq!(reconstructed.attester, original.attester);
+    assert_eq!(reconstructed.revocable, original.revocable);
+    assert_eq!(reconstructed.data, original.data);
+    assert_eq!(reconstructed, original);
+}
+
+#[test]
+fn test_compact_attestation_storage_footprint_reduction_exceeds_15_percent() {
+    use soroban_sdk::xdr::ToXdr;
+    let env = Env::default();
+    let uid = UID(BytesN::from_array(&env, &[1u8; 32]));
+    let schema_uid = UID(BytesN::from_array(&env, &[2u8; 32]));
+    let ref_uid = UID(BytesN::from_array(&env, &[0u8; 32]));
+    let recipient = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let data = soroban_sdk::Bytes::from_slice(&env, &[0xAA; 32]);
+
+    let original = crate::Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1_700_000_000,
+        expiration_time: 1_800_000_000,
+        revocation_time: 0,
+        ref_uid: ref_uid.clone(),
+        recipient: recipient.clone(),
+        attester: attester.clone(),
+        revocable: true,
+        data: data.clone(),
+        valid_from: 0,
+    };
+
+    let compact = crate::CompactAttestation::from_attestation(&env, &original);
+
+    let original_xdr = original.to_xdr(&env);
+    let compact_xdr = compact.to_xdr(&env);
+
+    let original_len = original_xdr.len();
+    let compact_len = compact_xdr.len();
+
+    let saved_bytes = original_len.saturating_sub(compact_len);
+    let reduction_percentage = (saved_bytes as f64 / original_len as f64) * 100.0;
+
+    assert!(
+        reduction_percentage >= 15.0,
+        "Storage footprint reduction must be at least 15%, achieved: {:.2}% ({} bytes -> {} bytes)",
+        reduction_percentage,
+        original_len,
+        compact_len
     );
 }

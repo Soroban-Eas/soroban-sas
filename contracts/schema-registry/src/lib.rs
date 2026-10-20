@@ -1,16 +1,18 @@
 #![allow(unexpected_cfgs)]
 #![no_std]
 #![allow(unused_variables)]
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sas_common::{
     events::{
         CONTRACT_UPGRADED, SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_DEPRECATED,
-        SCHEMA_FEE_UPDATED, SCHEMA_OWNERSHIP_TRANSFERRED, TREASURY_UPDATED,
+        SCHEMA_FEE_UPDATED, SCHEMA_OWNERSHIP_PROPOSED, SCHEMA_OWNERSHIP_TRANSFERRED,
+        TREASURY_UPDATED,
     },
-    validate_schema_syntax, ContractUpgradedEvent, PreviousAddress, SASError,
+    validate_schema_syntax, ContractUpgradedEvent, PreviousAddress, RevocationPolicy, SASError,
     SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent, SchemaDeprecatedEvent,
-    SchemaFeeUpdatedEvent, SchemaOwnershipTransferredEvent, SchemaRecord, TreasuryUpdatedEvent,
-    LEDGERS_IN_ONE_YEAR, UID,
+    SchemaFeeUpdatedEvent, SchemaOwnershipProposedEvent, SchemaOwnershipTransferredEvent,
+    SchemaRecord, TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, token, Address, BytesN, Env, String,
@@ -761,6 +763,106 @@ impl SchemaRegistry {
             .publish((SCHEMA_OWNERSHIP_TRANSFERRED, uid), (sender, new_owner));
     }
 
+    /// Proposes transferring schema ownership to `new_owner` using the two-step
+    /// acceptance pattern (#446). Callable only by current schema owner.
+    pub fn propose_schema_owner(env: Env, schema_uid: UID, new_owner: Address) {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &schema_uid);
+
+        let Some(current_owner) = schema_creator(&env, &schema_uid) else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+        current_owner.require_auth();
+
+        if current_owner == new_owner {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let pending_key = (PENDING_SCHEMA_OWNER, schema_uid.clone());
+        env.storage().persistent().set(&pending_key, &new_owner);
+        env.storage().persistent().extend_ttl(
+            &pending_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+
+        env.events().publish(
+            (SCHEMA_OWNERSHIP_PROPOSED, schema_uid.clone()),
+            SchemaOwnershipProposedEvent {
+                schema_uid,
+                current_owner,
+                proposed_owner: new_owner,
+            },
+        );
+    }
+
+    /// Claims schema ownership by the proposed new owner (#446).
+    pub fn claim_schema_ownership(env: Env, schema_uid: UID) {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &schema_uid);
+
+        let pending_key = (PENDING_SCHEMA_OWNER, schema_uid.clone());
+        let Some(proposed_owner) = env.storage().persistent().get::<_, Address>(&pending_key)
+        else {
+            panic_with_error!(&env, SASError::Unauthorized);
+        };
+
+        proposed_owner.require_auth();
+
+        let Some(old_owner) = schema_creator(&env, &schema_uid) else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+
+        let creator_key = (SCHEMA_CREATOR, schema_uid.clone());
+        env.storage()
+            .persistent()
+            .set(&creator_key, &proposed_owner);
+        env.storage().persistent().extend_ttl(
+            &creator_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+        env.storage().persistent().remove(&pending_key);
+        renew_schema_record(&env, &schema_uid);
+
+        env.events().publish(
+            (SCHEMA_OWNERSHIP_TRANSFERRED, schema_uid.clone()),
+            SchemaOwnershipTransferredEvent {
+                schema_uid,
+                old_owner,
+                new_owner: proposed_owner,
+            },
+        );
+    }
+
+    /// Cancels an in-flight two-step schema ownership transfer (#446).
+    /// Callable only by current schema owner.
+    pub fn cancel_schema_ownership_transfer(env: Env, schema_uid: UID) {
+        extend_instance_ttl(&env);
+        require_transferable_schema(&env, &schema_uid);
+
+        let Some(current_owner) = schema_creator(&env, &schema_uid) else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+        current_owner.require_auth();
+
+        let pending_key = (PENDING_SCHEMA_OWNER, schema_uid.clone());
+        if !env.storage().persistent().has(&pending_key) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+        env.storage().persistent().remove(&pending_key);
+
+        env.events()
+            .publish((SCHEMA_OWNER_TRANSFER_CANCELLED, schema_uid), current_owner);
+    }
+
+    /// Returns the pending two-step owner proposed for `schema_uid`, if any (#446).
+    pub fn get_pending_schema_owner(env: Env, schema_uid: UID) -> Option<Address> {
+        extend_instance_ttl(&env);
+        let pending_key = (PENDING_SCHEMA_OWNER, schema_uid);
+        env.storage().persistent().get(&pending_key)
+    }
+
     /// Configures (or replaces) the multi-signature owner set for schema `uid` (#288).
     ///
     /// `authorizer` must be a current owner of the schema (the creator, a
@@ -1023,7 +1125,78 @@ impl SchemaRegistry {
         // The owner must authorize the registration so the emitted event
         // carries a caller identity that off-chain indexers can trust.
         owner.require_auth();
-        Self::register_internal(env, owner, schema, resolver, revocable)
+        Self::register_internal(env, owner, schema, resolver, revocable, 0)
+    }
+
+    /// Registers a new schema with a configurable maximum expiration window limit (#441).
+    pub fn register_with_ttl(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        max_ttl: u64,
+    ) -> UID {
+        owner.require_auth();
+        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
+    }
+
+    /// Alias for `register_with_ttl` (#441).
+    pub fn register_with_max_ttl(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        max_ttl: u64,
+    ) -> UID {
+        Self::register_with_ttl(env, owner, schema, resolver, revocable, max_ttl)
+    }
+
+    /// Registers a new schema with a specific tri-state revocation policy (#448).
+    pub fn register_with_policy(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        policy: RevocationPolicy,
+    ) -> UID {
+        owner.require_auth();
+        let revocable = policy != RevocationPolicy::IrrevocableOnly;
+        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable, 0);
+        let policy_key = (SCHEMA_POLICY, uid.clone());
+        env.storage().persistent().set(&policy_key, &policy);
+        env.storage().persistent().extend_ttl(
+            &policy_key,
+            LEDGERS_IN_ONE_YEAR,
+            LEDGERS_IN_ONE_YEAR,
+        );
+        uid
+    }
+
+    /// Returns the schema's revocation policy (#448).
+    /// Defaults to Permissive if revocable is true, or IrrevocableOnly if revocable is false.
+    pub fn get_schema_policy(env: Env, uid: UID) -> RevocationPolicy {
+        extend_instance_ttl(&env);
+        let policy_key = (SCHEMA_POLICY, uid.clone());
+        if let Some(policy) = env
+            .storage()
+            .persistent()
+            .get::<_, RevocationPolicy>(&policy_key)
+        {
+            return policy;
+        }
+
+        if let Some(record) = env.storage().persistent().get::<_, SchemaRecord>(&uid) {
+            RevocationPolicy::from(record.revocable)
+        } else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+    }
+
+    /// Alias for `get_schema_policy` (#448).
+    pub fn get_revocation_policy(env: Env, uid: UID) -> RevocationPolicy {
+        Self::get_schema_policy(env, uid)
     }
 
     /// Registers a new schema, paying the configured registration fee (#1).
@@ -1046,6 +1219,20 @@ impl SchemaRegistry {
         revocable: bool,
         token: Address,
         value: i128,
+    ) -> UID {
+        Self::register_with_value_and_ttl(env, owner, schema, resolver, revocable, token, value, 0)
+    }
+
+    /// Registers a new schema with both fee payment and a configurable maximum expiration window limit (#441).
+    pub fn register_with_value_and_ttl(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        token: Address,
+        value: i128,
+        max_ttl: u64,
     ) -> UID {
         if value < 0 {
             panic_with_error!(&env, SASError::InvalidValue);
@@ -1078,7 +1265,7 @@ impl SchemaRegistry {
             token::Client::new(&env, &token).transfer(&owner, &treasury, &value);
         }
 
-        Self::register_internal(env, owner, schema, resolver, revocable)
+        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
     }
 
     fn register_internal(
@@ -1087,6 +1274,7 @@ impl SchemaRegistry {
         schema: String,
         resolver: Address,
         revocable: bool,
+        max_ttl: u64,
     ) -> UID {
         extend_instance_ttl(&env);
         if let Err(err) = validate_schema_syntax(&env, &schema) {
@@ -1115,6 +1303,17 @@ impl SchemaRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&uid, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+
+        if max_ttl > 0 {
+            let max_ttl_key = (SCHEMA_MAX_TTL, uid.clone());
+            env.storage().persistent().set(&max_ttl_key, &max_ttl);
+            env.storage().persistent().extend_ttl(
+                &max_ttl_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
+
         let creator_key = (SCHEMA_CREATOR, uid.clone());
         env.storage().persistent().set(&creator_key, &owner);
         env.storage().persistent().extend_ttl(
@@ -1122,6 +1321,17 @@ impl SchemaRegistry {
             LEDGERS_IN_ONE_YEAR,
             LEDGERS_IN_ONE_YEAR,
         );
+
+        let policy_key = (SCHEMA_POLICY, uid.clone());
+        if !env.storage().persistent().has(&policy_key) {
+            let default_policy = RevocationPolicy::from(revocable);
+            env.storage().persistent().set(&policy_key, &default_policy);
+            env.storage().persistent().extend_ttl(
+                &policy_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
 
         let mut count: u32 = if let Some(c) = env.storage().persistent().get(&SCHEMA_COUNT) {
             env.storage().persistent().extend_ttl(
@@ -1179,6 +1389,25 @@ impl SchemaRegistry {
             renew_schema_record(&env, &uid);
         }
         record
+    }
+
+    /// Returns the maximum expiration window limit (in seconds) declared for `uid` (#441).
+    /// Returns `0` if no max_ttl was set (perpetual and arbitrary expirations allowed).
+    pub fn get_max_ttl(env: Env, uid: UID) -> u64 {
+        extend_instance_ttl(&env);
+        let key = (SCHEMA_MAX_TTL, uid);
+        let max_ttl: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+        if max_ttl > 0 {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        max_ttl
+    }
+
+    /// Alias for `get_max_ttl` (#441).
+    pub fn get_schema_max_ttl(env: Env, uid: UID) -> u64 {
+        Self::get_max_ttl(env, uid)
     }
 
     /// Returns the active [`SchemaRecord`] for a raw schema definition,

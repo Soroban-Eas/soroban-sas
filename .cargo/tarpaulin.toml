@@ -1,0 +1,39 @@
+# cargo-tarpaulin configuration for soroban-sas
+# Run locally: cargo tarpaulin --config .cargo/tarpaulin.toml
+# CI adds --out xml html json --output-dir coverage-report --fail-under 60
+
+[default]
+# Measure the entire workspace except the fuzz crate, which uses a separate
+# nightly toolchain and does not produce regular test binaries.
+workspace = true
+
+# Do not instrument generated test-support modules, benchmark harnesses, or
+# integration test helpers. These contain no production logic worth tracking.
+exclude = [
+    "fuzz",
+]
+exclude-files = [
+    "benches/*",
+    "tests/integration/*",
+    "*/test_support*",
+    "examples/*",
+]
+
+# Report formats written by CI. Override on the command line if needed.
+out = ["xml", "html", "json"]
+
+# Where tarpaulin writes its reports. The directory is gitignored.
+output-dir = "coverage-report"
+
+# Tarpaulin timeout per test binary (seconds). Soroban SDK test helpers can
+# be slow; 120 s prevents spurious failures on a cold cache.
+timeout = "120"
+
+# Use Ptrace engine for instrumentation (default on Linux; best accuracy).
+engine = "Ptrace"
+
+# Pass --all-features so conditional compilation paths are included.
+all-features = false
+
+# Run doc-tests as well as lib/unit tests.
+run-types = ["Tests", "Doctests"]

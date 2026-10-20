@@ -61,6 +61,15 @@ mod tests {
         assert!(validate_schema_syntax("!!!").is_err());
         assert!(validate_schema_syntax("12345").is_err());
         assert!(validate_schema_syntax("first_name String, last_name String").is_ok());
+
+        // Issue #447: Reject tabs, control characters, invalid unicode whitespace, malformed separators
+        assert!(validate_schema_syntax("name\tString").is_err());
+        assert!(validate_schema_syntax("name\x07String").is_err());
+        assert!(validate_schema_syntax("name\0String").is_err());
+        assert!(validate_schema_syntax("name\u{00A0}String").is_err());
+        assert!(validate_schema_syntax("first_name String , last_name String").is_err());
+        assert!(validate_schema_syntax("first_name String,").is_err());
+        assert!(validate_schema_syntax("first_name   String").is_err());
     }
 
     // --- Issue #174: `--network` / `--identity` actually change behavior
@@ -787,6 +796,7 @@ mod offchain_tests {
             schema_uid: hex::encode([2u8; 32]),
             time: 1000,
             expiration_time: 0,
+            valid_from: 0,
             ref_uid: hex::encode([0u8; 32]),
             recipient,
             attester,
@@ -1070,6 +1080,7 @@ mod online_verification_tests {
             attester,
             revocable: true,
             data: "deadbeef".to_string(),
+            valid_from: 0,
         };
         sign_offchain_attestation(input, 7, NETWORK, contract_id, &seed).unwrap()
     }

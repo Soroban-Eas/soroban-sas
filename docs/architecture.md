@@ -6,6 +6,7 @@ The Soroban Attestation Service (SAS) is composed of three primary components:
 2. **SAS Core Contract**: Issues, revokes and verifies attestations based on registered schemas.
 3. **Indexer Contract**: Provides efficient off-chain and on-chain reverse lookups for recipients, schemas and attesters.
 4. **Cross-chain Verifier**: Tracks short-lived remote attestation verdicts delivered through an Axelar GMP gateway. It is deployed separately from the SAS v1 contract and binds one remote source contract and chain at initialization.
+5. **Zero-Knowledge Verifier**: Verifies zero-knowledge proofs for private attestations, enforcing nullifier anti-replay defense and time-locked activation constraints.
 
 ## Design Goals
 - High throughput via parallelized state access.
@@ -854,3 +855,12 @@ The following table is a concise reference of every cross-contract call in the s
 | SAS `reindex_attestation` | Indexer | `index_attestation(uid, ...)` | optional write | Returns `IndexerUnavailable` on failure |
 | SAS `attest_with_value` | Token Contract | `transfer(attester → SAS, amount)` | mandatory transfer | Panics on failure |
 | Schema Registry `register_with_value` | Token Contract | `transfer(owner → treasury, amount)` | mandatory transfer | Panics on failure |
+
+---
+
+## Further Documentation
+
+- [Fee Collection and Treasury Mechanics](fee-collection-and-treasury.md): Detailed specification of fee configuration, treasury routing, and token withdrawals.
+- [Soroban Mainnet Launch Preparation](mainnet-launch-preparation.md): Launch phases, key custody, reproducible builds, and operational runbooks.
+- [Internationalization (i18n) and Translation Guidelines](i18n-translation-guidelines.md): Localization conventions, glossary, and contribution guidelines.
+

@@ -355,6 +355,59 @@
         {
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "POLICY"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "cc8b21d67c49e5a754438330d83191a06910141373740ea53b0d26e9ac54def9"
+                    }
+                  ]
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "POLICY"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "bytes": "cc8b21d67c49e5a754438330d83191a06910141373740ea53b0d26e9ac54def9"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 3
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -1106,7 +1159,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 106
                 }
               }
             ],
@@ -1116,7 +1169,7 @@
                   "string": "failing with contract error"
                 },
                 {
-                  "u32": 101
+                  "u32": 106
                 }
               ]
             }
@@ -1138,7 +1191,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 106
                 }
               }
             ],
@@ -1163,7 +1216,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 106
                 }
               }
             ],
@@ -1188,7 +1241,7 @@
               },
               {
                 "error": {
-                  "contract": 101
+                  "contract": 106
                 }
               }
             ],

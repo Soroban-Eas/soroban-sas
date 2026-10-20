@@ -337,7 +337,7 @@ fn test_get_schema_by_content_matches_uid_lookup_and_rejects_invalid_syntax() {
     let malformed = String::from_str(&env, "!!!");
     assert_eq!(
         client.try_get_schema_by_content(&malformed, &resolver, &true),
-        Err(Ok(SASError::InvalidSchema.into()))
+        Err(Ok(SASError::InvalidSchemaDefinition.into()))
     );
 
     // Deprecated content resolves to None, matching get_schema.

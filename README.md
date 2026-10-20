@@ -350,6 +350,9 @@ TMPDIR=/tmp cargo test --workspace
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
+- [Soroban Mainnet Launch Preparation](docs/mainnet-launch-preparation.md): launch phases, key custody, reproducible builds, and operational runbooks.
+- [Fee Collection and Treasury Mechanics](docs/fee-collection-and-treasury.md): protocol fee configuration, treasury routing, and token withdrawals.
+- [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md): localization conventions, terminology glossary, and contribution guidelines.
 - [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
 - [Glossary of Terms](docs/glossary.md): authoritative protocol definitions for Attestation, Schema, Issuer, Resolver, UID, and lifecycle terms.
 
