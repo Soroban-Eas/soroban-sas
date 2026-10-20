@@ -1163,7 +1163,7 @@ impl SchemaRegistry {
     ) -> UID {
         owner.require_auth();
         let revocable = policy != RevocationPolicy::IrrevocableOnly;
-        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable);
+        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable, 0);
         let policy_key = (SCHEMA_POLICY, uid.clone());
         env.storage().persistent().set(&policy_key, &policy);
         env.storage().persistent().extend_ttl(
