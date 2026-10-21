@@ -103,6 +103,44 @@ Existing boolean revocable schemas map cleanly to this model:
 
 This is enforced once, inside `attest_internal`, before the attestation is stored or the resolver is invoked — every issuance path (`attest`, `attest_by_delegation`, `attest_with_value`, `multi_attest`, and `replace_attestation`) shares this same check, so none of them can bypass it. Note this only constrains issuance: it does not change how `revoke`/`multi_revoke`/`replace_attestation` behave once an attestation exists, which continue to key off the attestation's own `revocable` flag.
 
+## Threshold Endorsement Groups (FROST)
+
+A schema can require a FROST threshold group for delegated signatures, so `t`
+of `n` authorized nodes must jointly endorse an attestation before it can be
+issued through `attest_by_delegation`:
+
+```rust
+registry.set_schema_frost_group(
+    &authorizer, // schema owner or registry admin
+    &schema_uid,
+    &FrostGroup { group_public_key, threshold, max_signers },
+);
+registry.get_schema_frost_group(&schema_uid); // Option<FrostGroup>
+registry.clear_schema_frost_group(&authorizer, &schema_uid);
+```
+
+Configuration rules enforced at declaration time:
+
+- `2 <= threshold <= max_signers <= 255` (`SASError::InvalidValue` /
+  `SASError::LimitExceeded` otherwise),
+- `group_public_key` must not be the all-zero sentinel,
+- the schema must exist and not be deprecated (`SASError::SchemaNotFound`),
+- only the schema owner/admin may set or clear it (`SASError::Unauthorized`).
+
+The group is stored in a dedicated key beside the schema record, so
+`SchemaRecord`'s serialized layout — and therefore every existing schema UID —
+is unchanged. Declaration/rotation/clearing emits `SchemaFrostGroupUpdated`.
+
+For delegated issuance and revocation the group replaces the single-key
+binding: the relayer's supplied 32-byte public key must equal the declared group
+key, and the 64-byte signature must verify as a standard Ed25519 signature under
+it. FROST aggregates look exactly like single-signer signatures on chain, so the
+calldata footprint and verification cost do not change. Under-threshold
+aggregates are invalid Ed25519 signatures under the group key and are rejected.
+See [Delegated Issuance](delegation.md#threshold-endorsement-with-frost) for the
+full flow and `packages/soroban-sas-common/test_vectors/frost_threshold.tsv` for
+2-of-3 and 3-of-5 test vectors.
+
 ## Payload Size
 
 The `data` field of every attestation is bounded by `MAX_ATTESTATION_DATA_BYTES`

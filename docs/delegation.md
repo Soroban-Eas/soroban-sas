@@ -24,7 +24,9 @@ signature, and a 32-byte public key. The contract:
 2. Binds the supplied public key to `attestation.attester`. For a classic
    ed25519 account, the key must match the account address structurally. The
    contract also accepts the current non-revoked key stored by
-   `register_attester_key` or `rotate_attester_key`.
+   `register_attester_key` or `rotate_attester_key`. When the schema declares a
+   FROST group, only that group public key is accepted instead — see
+   [Threshold endorsement with FROST](#threshold-endorsement-with-frost).
 3. Constructs the signed `AttestationDomain` from the current network ID, the
    current SAS contract address, and the supplied nonce.
 4. Hashes the domain together with the signed attestation fields and verifies
@@ -54,11 +56,68 @@ SAS contract address, and nonce—but hashes a body containing the UID and
 recorded attester under `DELEGATED_REVOCATION_TYPE_TAG`. That tag is distinct
 from `ATTESTATION_TYPE_TAG`, and the two actions use different hash layouts.
 Consequently, a signature created for an attestation cannot authorize a
-revocation, or vice versa.
-
-After signature verification, the contract consumes the nonce for the recorded
+revocation, or vice versa.After signature verification, the contract consumes the nonce for the recorded
 attester and runs the normal revocation checks. The attestation must exist, be
 revocable, and not already be revoked.
+
+## Threshold endorsement with FROST
+
+Consortiums and decentralized identity groups often need several independent
+signing nodes to endorse one attestation. A schema can require a
+[FROST](https://datatracker.ietf.org/doc/draft-irtf-cfrg-frost/) threshold group
+instead of a single attester key:
+
+```rust
+// Schema owner or registry admin declares a 2-of-3 group.
+registry.set_schema_frost_group(
+    &owner,
+    &schema_uid,
+    &FrostGroup {
+        group_public_key, // aggregated Ed25519 key produced by the DKG
+        threshold: 2,
+        max_signers: 3,
+    },
+);
+```
+
+The group is stored beside the schema record (`get_schema_frost_group`), so the
+on-chain `SchemaRecord` layout is unchanged. Declaring or rotating a group emits
+`SchemaFrostGroupUpdated`; `clear_schema_frost_group` restores the ordinary
+single-key behaviour. Only a schema owner (creator or configured owner-set
+member) or the registry admin may change it.
+
+Once declared, every delegated path verifies against the group key and ignores
+the attester account key and any `register_attester_key` record for that schema:
+
+- `attest_by_delegation` and `multi_attest_by_delegation`
+- `revoke_by_delegation` and `multi_revoke_by_delegation`
+- `verify_offchain_attestation`
+
+A submitted public key that is not the declared group key fails with
+`SASError::Unauthorized`. There is no separate threshold argument: FROST
+aggregation outputs one ordinary 64-byte Ed25519 signature, so the call's
+calldata stays identical to a single-signer delegated attestation.
+
+Verification is plain Ed25519: `R || s` is checked against
+`A = group_public_key` over the usual SAS delegated digest. A ceremony that
+combined fewer than `threshold` shares does not produce a valid signature under
+`A`, so under-threshold aggregates fail the same way any bad signature does. The
+contract makes exactly one `ed25519_verify` call, the same cost as the
+single-key path; the `threshold`/`max_signers` metadata is advisory for clients
+and indexers.
+
+The group public key must be produced by a DKG (or a trusted dealer for test
+environments) so no single participant knows the group secret. Rotating the
+schema's group key immediately invalidates signatures made under the previous
+key. Test vectors for 2-of-3 and 3-of-5 groups live in
+`packages/soroban-sas-common/test_vectors/frost_threshold.tsv`.
+
+The direct (non-delegated) entry points `attest`, `multi_attest`,
+`attest_with_value`, and `replace_attestation` remain authorized by the
+attester address's own `require_auth`; a FROST declaration governs the
+*off-chain endorsement* paths. Consortiums that also want to gate direct
+issuance should make `attestation.attester` an address they control jointly
+(for example a contract or multisig account).
 
 ## Batch delegation
 

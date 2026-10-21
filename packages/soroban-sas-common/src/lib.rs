@@ -3,6 +3,7 @@
 pub mod eip712;
 pub mod errors;
 pub mod events;
+pub mod frost;
 pub mod macros;
 pub mod merkle;
 pub mod signature;
@@ -11,6 +12,7 @@ pub mod validation;
 
 pub use errors::*;
 pub use events::*;
+pub use frost::*;
 pub use merkle::*;
 pub use signature::*;
 pub use typed_data::*;

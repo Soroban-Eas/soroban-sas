@@ -1,0 +1,31 @@
+# FROST / Ed25519 threshold signature golden vectors for SAS (#534).
+#
+# These vectors pin the cryptographic contract behind schemas that declare
+# `FrostGroup` in `SchemaRegistry::set_schema_frost_group`: a FROST aggregate
+# is an ordinary RFC 8032 Ed25519 signature under the group public key, so
+# SAS verifies it with one `ed25519_verify` call, exactly like a single-signer
+# delegated attestation.
+#
+# Columns are tab-separated:
+#   1. expected result: `ok` or `insufficient-threshold`
+#   2. threshold t
+#   3. max_signers n
+#   4. group seed (32-byte hex). TEST-ONLY key material: the deterministic
+#      dealer derives the t polynomial coefficients from this seed, then the
+#      Shamir shares at x = 1..n, so the vectors are fully reproducible.
+#   5. group public key A (32-byte compressed Ed25519 point, hex)
+#   6. signing set (1-based share indices, comma separated)
+#   7. public share A_i for each signing index, in the same order (hex)
+#   8. message (32-byte hex; stands in for the SAS delegated payload digest)
+#   9. aggregate signature R || s (64-byte hex)
+#
+# For `ok` rows, the signing set size is >= t, the signature verifies under A
+# with a standard Ed25519 verifier, and A equals the Lagrange-weighted sum of
+# the listed public shares. For `insufficient-threshold` rows, fewer than t
+# shares contributed and the aggregate does NOT verify under A.
+#
+# DO NOT reuse any of this key material for a production group.
+ok	2	3	2121212121212121212121212121212121212121212121212121212121212121	66e48a1825159a55c52b514d9e925b24711f0a3ce0af9b5b370fb074256b0561	1,3	b61829a1c37bb178939a3d852bd33b7f2fadb6c47cba1d170b5226017ca29d82,d65d9158e1229b221cf8921ec5fbc27ee300aa6bc636dd1bba5165657cfeb679	5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a	b0edced35943917264196da7ee159eaa54c13497b4b5705b247c6c83fe3903fd72b239330dd212f9eca563b5f6c95e07cb2c8240daa55985febf441089983304
+ok	3	5	5353535353535353535353535353535353535353535353535353535353535353	dec6b74202a2837506a2158ab89ed0a5e4dd3268e88cfb66188d603e52c890a9	1,3,5	61ef0c5e1a82b8c0669dc5e94251d04c022274bf2b39ac9104f03962b2f05097,8b4447ed0b7816d03198b84d8a32862a03ba2551c05cfff42a494ca28f1e553a,a0b7e261ff258b6759eef3e797bfbdeccbdd8bbb0c6804afe6617a575698fac2	a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5	bf5d4920c8ca1ee81615fce95144d53f0095d3b4ee3a62cc6db6e565197306df06c658e777d17f7d9ce30ff76a1cfff13c1de0cf8f5a7016610c6cc1f50d1401
+insufficient-threshold	2	3	2121212121212121212121212121212121212121212121212121212121212121	66e48a1825159a55c52b514d9e925b24711f0a3ce0af9b5b370fb074256b0561	1	b61829a1c37bb178939a3d852bd33b7f2fadb6c47cba1d170b5226017ca29d82	5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a	ebe31cbec8fab8ef3e5d81c8474e4170b757518d4b6f66dab1e0b73b57ded2c95e4d0bec47e2c0349f5a20c9918029e70e5886f6fc0117a475366c470eed840c
+insufficient-threshold	3	5	5353535353535353535353535353535353535353535353535353535353535353	dec6b74202a2837506a2158ab89ed0a5e4dd3268e88cfb66188d603e52c890a9	1,2	61ef0c5e1a82b8c0669dc5e94251d04c022274bf2b39ac9104f03962b2f05097,7d1c4a0e4b7b8d4390b3c8a145410e0148508ac28731bb84c30bfae2b3e67fdc	a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5	d737f76db441989371d8ced35260839993c1ed96e322e5a9f37c14a336f248100be2f1d8d88a89e842ae798587db17df72ea6765b7f96041f806c58203109706

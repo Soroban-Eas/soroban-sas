@@ -1513,6 +1513,175 @@ fn test_schema_revocation_policy_registration_and_get() {
     );
 }
 
+#[test]
+fn test_schema_frost_group_declaration_roundtrip_and_event() {
+    use soroban_sas_common::{FrostGroup, SchemaFrostGroupUpdatedEvent, MAX_FROST_SIGNERS};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    env.mock_all_auths();
+
+    let uid = client.register(
+        &owner,
+        &String::from_str(&env, "bool consortium_endorsed"),
+        &resolver,
+        &true,
+    );
+    assert_eq!(client.get_schema_frost_group(&uid), None);
+
+    let group = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[0x11; 32]),
+        threshold: 2,
+        max_signers: 3,
+    };
+    client.set_schema_frost_group(&owner, &uid, &group);
+    assert_eq!(client.get_schema_frost_group(&uid), Some(group.clone()));
+
+    let expected = SchemaFrostGroupUpdatedEvent {
+        schema_uid: uid.clone(),
+        authorizer: owner.clone(),
+        enabled: true,
+        group_public_key: group.group_public_key.clone(),
+        threshold: group.threshold,
+        max_signers: group.max_signers,
+    };
+    assert!(
+        env.events().all().contains((
+            contract_id.clone(),
+            (symbol_short!("FROSTGRP"), uid.clone()).into_val(&env),
+            expected.into_val(&env),
+        )),
+        "declaring a group must emit SchemaFrostGroupUpdated"
+    );
+
+    // Rotation replaces the key immediately; delegated signatures made under
+    // the old group stop verifying.
+    let rotated = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[0x22; 32]),
+        threshold: 3,
+        max_signers: MAX_FROST_SIGNERS,
+    };
+    client.set_schema_frost_group(&owner, &uid, &rotated);
+    assert_eq!(client.get_schema_frost_group(&uid), Some(rotated));
+
+    client.clear_schema_frost_group(&owner, &uid);
+    assert_eq!(client.get_schema_frost_group(&uid), None);
+}
+
+#[test]
+fn test_schema_frost_group_rejects_invalid_configurations() {
+    use soroban_sas_common::{FrostGroup, SASError, MAX_FROST_SIGNERS};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    env.mock_all_auths();
+
+    let uid = client.register(
+        &owner,
+        &String::from_str(&env, "bool threshold_rejected"),
+        &resolver,
+        &true,
+    );
+
+    let key = BytesN::from_array(&env, &[7u8; 32]);
+    let threshold_one = FrostGroup {
+        group_public_key: key.clone(),
+        threshold: 1,
+        max_signers: 3,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &threshold_one),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    let unreachable = FrostGroup {
+        group_public_key: key.clone(),
+        threshold: 4,
+        max_signers: 3,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &unreachable),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    let oversized = FrostGroup {
+        group_public_key: key.clone(),
+        threshold: 2,
+        max_signers: MAX_FROST_SIGNERS + 1,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &oversized),
+        Err(Ok(SASError::LimitExceeded.into()))
+    );
+
+    let zero_key = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[0u8; 32]),
+        threshold: 2,
+        max_signers: 3,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &zero_key),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    assert_eq!(client.get_schema_frost_group(&uid), None);
+}
+
+#[test]
+fn test_schema_frost_group_requires_owner_or_admin_and_known_schema() {
+    use soroban_sas_common::{FrostGroup, SASError};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.init(&admin);
+    let uid = client.register(
+        &owner,
+        &String::from_str(&env, "bool owner_gated"),
+        &resolver,
+        &true,
+    );
+    let group = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[9u8; 32]),
+        threshold: 2,
+        max_signers: 3,
+    };
+
+    assert_eq!(
+        client.try_set_schema_frost_group(&stranger, &uid, &group),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
+    assert_eq!(
+        client.try_clear_schema_frost_group(&stranger, &uid),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
+
+    // The registry admin may also govern the declaration.
+    client.set_schema_frost_group(&admin, &uid, &group);
+    assert_eq!(client.get_schema_frost_group(&uid), Some(group.clone()));
+
+    let unknown = soroban_sas_common::UID(BytesN::from_array(&env, &[0x42u8; 32]));
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &unknown, &group),
+        Err(Ok(SASError::SchemaNotFound.into()))
+    );
+}
+
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;

@@ -170,6 +170,72 @@ entry expires, the nonce sequence resumes from the highest previously consumed v
 the entry is archived and later recreated, preventing a replayed stale signature from being
 accepted as a new attestation.
 
+## FROST Threshold Delegated Signatures (#534)
+
+A schema MAY declare a FROST (Flexible Round-Optimized Schnorr Threshold) group
+that must endorse every delegated attestation or revocation under it. This lets
+`t`-of-`n` consortium nodes jointly authorize one attestation without changing
+the SAS calldata layout or verification cost.
+
+### Declaration
+
+```
+SchemaRegistry::set_schema_frost_group(authorizer, schema_uid, FrostGroup)
+SchemaRegistry::get_schema_frost_group(schema_uid) -> Option<FrostGroup>
+SchemaRegistry::clear_schema_frost_group(authorizer, schema_uid)
+
+FrostGroup {
+    group_public_key: BytesN<32>, // compressed Ed25519 group key A
+    threshold: u32,               // t, 2..=max_signers
+    max_signers: u32,             // n, <= 255
+}
+```
+
+The declaration is stored separately from `SchemaRecord`, so the schema record's
+XDR layout and the schema UID derivation are unchanged. Only the schema owner or
+registry admin may change it; every mutation emits `SchemaFrostGroupUpdated`.
+
+### Verification algorithm (normative)
+
+For a delegated operation whose attestation or recorded attestation has
+`schema_uid` S:
+
+1. Resolve `group = SchemaRegistry::get_schema_frost_group(S)`. If it is absent,
+   fall back to the single-signer key binding (see below).
+2. If it is present, require `submitted_public_key == group.group_public_key`.
+   Any other key — including the attester's account key and any key registered
+   through `register_attester_key` — MUST fail with `SASError::Unauthorized`.
+3. Compute the ordinary v1 digest `M`: `hash_offchain_attestation` for
+   attestations, `hash_delegated_revocation` for revocations. No FROST-specific
+   prefix, domain separator, or extra field is added.
+4. Verify `sig = R || s` (64 bytes, RFC 8032 encoding) as a standard Ed25519
+   signature under `A = group.group_public_key` over `M`, i.e.
+   `[s]B = R + H(R || A || M) * A` with SHA-512 as `H`.
+5. Continue with the normal nonce, authorization, and storage checks.
+
+The chain cannot observe the number of shares that participated, and does not
+need to: a signature that verifies under `A` can only have been produced by a
+quorum of `threshold` shares (assuming an honest DKG, where no participant
+knows the group secret). An aggregate produced with fewer than `threshold`
+shares is not a valid signature under `A` and therefore fails step 4.
+
+### Normative properties
+
+- **One verification call.** The contract performs exactly one
+  `ed25519_verify` for both single-signer and FROST paths.
+- **Identical calldata.** Both paths use `attest_by_delegation(attestation,
+  nonce, signature: BytesN<64>, public_key: BytesN<32>)`. A FROST aggregate is
+  not larger than a single Ed25519 signature.
+- **Applies to delegated paths only.** `attest_by_delegation`,
+  `multi_attest_by_delegation`, `revoke_by_delegation`,
+  `multi_revoke_by_delegation`, and `verify_offchain_attestation` honor the
+  group. Direct entry points continue to use the attester address's own
+  `require_auth`.
+- **Fail closed on key mismatch.** A schema with a declared group never accepts
+  a participant key, even if that key is registered for the attester.
+- **Backward compatible.** Registries without `get_schema_frost_group` (or
+  schemas without a declaration) keep the single-signer behaviour.
+
 ## Resolver Callback Interface
 
 When a schema defines a resolver address, the SAS contract invokes callbacks on that resolver
@@ -256,6 +322,26 @@ Attestation identity derivation test cases:
 | (32-byte UID from above) | Account A | Account B | `0xDEADBEEF` | (SHA256 computation) |
 
 (Full vectors are in `contracts/sas/src/test.rs`.)
+
+### FROST Threshold Signature Test Vectors
+
+Aggregate signatures for a 2-of-3 and a 3-of-5 Ed25519 FROST group. Each valid
+vector verifies with a standard Ed25519 verifier under the listed group public
+key; the negative vectors combine fewer than `threshold` shares and MUST fail
+verification under the same key. The full table — group seeds, group public
+keys, participant public shares, signing sets, messages, and 64-byte signatures —
+is maintained in `packages/soroban-sas-common/test_vectors/frost_threshold.tsv`
+and exercised by `contracts/sas/src/frost_test.rs`.
+
+| Group | Signing set | Expected |
+|-------|-------------|----------|
+| 2-of-3 | shares 1, 3 | valid Ed25519 signature under `A` |
+| 3-of-5 | shares 1, 3, 5 | valid Ed25519 signature under `A` |
+| 2-of-3 | share 1 only | rejected (under threshold) |
+| 3-of-5 | shares 1, 2 only | rejected (under threshold) |
+
+The vectors are test-only key material and MUST NOT be used for production
+groups.
 
 ## Protocol Compatibility and Versioning
 

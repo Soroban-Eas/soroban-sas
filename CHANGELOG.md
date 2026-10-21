@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- FROST threshold endorsement for delegated attestations (#534). A schema may
+  declare a required Ed25519 FROST group with
+  `SchemaRegistry::set_schema_frost_group` (`get_schema_frost_group` /
+  `clear_schema_frost_group` round out the API), authenticated to the schema
+  owner or registry admin and emitted as `SchemaFrostGroupUpdated`. When a
+  group is declared, `attest_by_delegation`, `multi_attest_by_delegation`,
+  `revoke_by_delegation`, `multi_revoke_by_delegation`, and
+  `verify_offchain_attestation` accept only the group public key and verify the
+  single 64-byte aggregate with one ordinary Ed25519 verification. The calldata
+  footprint and verification cost are therefore identical to single-signature
+  delegated attestations, while aggregates made with fewer than `threshold`
+  shares fail validation. Golden vectors for 2-of-3 and 3-of-5 groups live in
+  `packages/soroban-sas-common/test_vectors/frost_threshold.tsv` and are
+  exercised end-to-end against the real contracts.
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,

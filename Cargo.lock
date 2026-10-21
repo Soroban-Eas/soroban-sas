@@ -1554,9 +1554,11 @@ dependencies = [
 name = "sas"
 version = "0.1.0"
 dependencies = [
+ "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "schema-registry",
+ "sha2",
  "soroban-sas-common",
  "soroban-sas-indexer",
  "soroban-sdk",
