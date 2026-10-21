@@ -78,6 +78,9 @@ pub enum SASError {
     InvalidTimeRange = 418,
     /// Expiration time exceeds schema's max_ttl or perpetual attestation under capped schema (#441).
     InvalidExpirationTime = 419,
+    /// `prune_expired` was called while the admin has not enabled
+    /// auto-pruning via `set_auto_prune` (#432).
+    AutoPruneDisabled = 420,
 
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).

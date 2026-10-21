@@ -25,6 +25,30 @@ expired once the ledger timestamp reaches its `expiration_time`. Expiration is
 a passive, read-time check — it does not trigger a resolver callback or emit
 an event on its own, unlike revocation.
 
+Every read and verify path evaluates expiration the same way:
+`verify_attestation`, `verify_attestation_view`, `verify_attestations` and
+`verify_all_attestations` return `false` for an expired record, with no
+revocation transaction required. `get_attestation` still returns the stored
+record so indexers can show its history, with `revocation_time` left at `0`.
+
+### Pruning expired records
+
+Expired records keep occupying persistent storage. Pruning is opt-in and
+disabled by default (#432):
+
+- `set_auto_prune(enabled)` (admin only) turns pruning on or off;
+  `is_auto_prune_enabled()` reads it.
+- `prune_expired(uids)` is a public entrypoint, limited to `MAX_PRUNE_BATCH`
+  (100) UIDs per call. It deletes the record, its `valid_from` entry and both
+  timestamp anchors for each UID whose non-zero `expiration_time` has passed,
+  emits a `PRUNED` event, and returns how many were removed. Perpetual
+  (`expiration_time == 0`), live and unknown UIDs are skipped, so the call is
+  idempotent. While disabled it fails with `SASError::AutoPruneDisabled`.
+- Expired attestations cannot be revived: `renew_attestation` on an expired
+  record fails with `SASError::AlreadyExpired`. A pruned or expired claim only
+  returns through a new `attest` call that the attester authorizes.
+- Pruning removes the stored record permanently, so archive anything you need
+  from `AttestationIssued` events or the indexer first.
 ## Revocation
 
 `revoke` (and its delegated/authorizer variants) marks an attestation revoked,

@@ -86,6 +86,13 @@ pub fn write_anchor(env: &Env, uid: &UID, revocation: bool, ttl: u32) {
     storage.extend_ttl(&key, ttl, ttl);
 }
 
+/// Deletes both anchors of `uid`, used when its attestation is pruned.
+pub fn remove_anchors(env: &Env, uid: &UID) {
+    let storage = env.storage().persistent();
+    storage.remove(&anchor_key(uid, false));
+    storage.remove(&anchor_key(uid, true));
+}
+
 /// Reads an anchor without touching storage TTLs.
 ///
 /// The verification entry point uses this: a check is a read, and a caller

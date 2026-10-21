@@ -357,6 +357,9 @@ TMPDIR=/tmp cargo test --workspace
 - [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md): localization conventions, terminology glossary, and contribution guidelines.
 - [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
 - [Glossary of Terms](docs/glossary.md): authoritative protocol definitions for Attestation, Schema, Issuer, Resolver, UID, and lifecycle terms.
+- [Video Tutorials: Schema Generation](docs/video-tutorials-schema-generation.md): episode scripts and commands for the schema generation video series.
+- [On-Chain vs Off-Chain Attestations](docs/on-chain-vs-off-chain-attestations.md): where each kind lives, who pays, and how to choose.
+- [Example Integration with Stellar SEP-8](docs/sep-8-integration.md): gate regulated-asset approvals on SAS attestations.
 
 ## Project Roadmap
 

@@ -68,6 +68,12 @@ pub const MAX_VERIFY_BATCH: u32 = 100;
 /// for the duration of a batch and removed on the success path; a nested
 /// `multi_attest` while it is held aborts with `SASError::Reentrancy` (#296).
 pub const REENTRANCY_GUARD: Symbol = symbol_short!("REENTRY");
+/// Instance key for the expired-attestation auto-pruning toggle. When `true`,
+/// anyone may call `prune_expired` to delete expired records. Absent or
+/// `false` (the default) leaves expired records in storage (#432).
+pub const AUTO_PRUNE: Symbol = symbol_short!("AUTOPRUNE");
+/// Ceiling on how many UIDs one `prune_expired` call may process.
+pub const MAX_PRUNE_BATCH: u32 = 100;
 const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
 fn extend_instance_ttl(env: &Env) {
@@ -224,6 +230,16 @@ fn extend_attestation_ttl(env: &Env, uid: &UID, ttl: u32) {
     if env.storage().persistent().has(&v_key) {
         env.storage().persistent().extend_ttl(&v_key, ttl, ttl);
     }
+}
+
+/// Removes every persistent entry that belongs to an attestation: the compact
+/// and legacy records, the `valid_from` side entry and both timestamp anchors.
+fn remove_attestation(env: &Env, uid: &UID) {
+    let storage = env.storage().persistent();
+    storage.remove(&CompactAttestationKey { uid: uid.clone() });
+    storage.remove(uid);
+    storage.remove(&(VALID_FROM, uid.clone()));
+    timestamp::remove_anchors(env, uid);
 }
 
 /// Shared verdict for a single attestation UID (#297).
@@ -937,6 +953,60 @@ impl SAS {
         extend_instance_ttl(&env);
     }
 
+    /// Admin: enable or disable expired-attestation pruning (#432).
+    ///
+    /// Disabled by default. Verification and read paths already treat expired
+    /// attestations as inactive regardless of this flag; it only controls
+    /// whether `prune_expired` may delete the stored records.
+    pub fn set_auto_prune(env: Env, enabled: bool) {
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().set(&AUTO_PRUNE, &enabled);
+        extend_instance_ttl(&env);
+    }
+
+    /// Returns whether `prune_expired` is enabled (default `false`).
+    pub fn is_auto_prune_enabled(env: Env) -> bool {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&AUTO_PRUNE).unwrap_or(false)
+    }
+
+    /// Public cleanup entrypoint: deletes the stored records of expired
+    /// attestations and returns how many were removed (#432).
+    ///
+    /// Requires auto-pruning to be enabled (`AutoPruneDisabled` otherwise) and
+    /// at most `MAX_PRUNE_BATCH` UIDs (`BatchTooLarge`). Only records with a
+    /// non-zero `expiration_time` that has passed are removed; perpetual,
+    /// still-live and unknown UIDs are skipped, so the call is idempotent and
+    /// safe for anyone to invoke. A pruned UID can only come back through a
+    /// new `attest` call authorized by the attester. Emits `PRUNED` per UID.
+    pub fn prune_expired(env: Env, uids: soroban_sdk::Vec<UID>) -> u32 {
+        extend_instance_ttl(&env);
+        if !env.storage().instance().get(&AUTO_PRUNE).unwrap_or(false) {
+            panic_with_error!(&env, SASError::AutoPruneDisabled);
+        }
+        if uids.len() > MAX_PRUNE_BATCH {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+        let mut pruned = 0u32;
+        for uid in uids.iter() {
+            let Some(attestation) = read_attestation(&env, &uid) else {
+                continue;
+            };
+            if attestation.expiration_time == 0
+                || validate_expiration(&env, attestation.expiration_time).is_ok()
+            {
+                continue;
+            }
+            remove_attestation(&env, &uid);
+            env.events()
+                .publish((symbol_short!("PRUNED"), uid.clone()), uid);
+            pruned += 1;
+        }
+        pruned
+    }
+
     /// Returns the current Indexer availability policy: `true` fail-closed,
     /// `false` fail-open (the default).
     pub fn get_indexer_strict(env: Env) -> bool {
@@ -1348,6 +1418,11 @@ impl SAS {
         }
         if attestation.revocation_time != 0 {
             panic_with_error!(&env, SASError::AlreadyRevoked);
+        }
+        // An expired attestation is inactive and cannot be revived by renewal;
+        // a fresh attestation signed by the attester is required (#432).
+        if let Err(err) = validate_expiration(&env, attestation.expiration_time) {
+            panic_with_error!(&env, err);
         }
 
         // Validate that the new expiration time extends or maintains the current one.
@@ -2194,6 +2269,8 @@ mod test_issue_252;
 mod test_issue_293;
 #[cfg(test)]
 mod test_issue_296;
+#[cfg(test)]
+mod test_issue_432;
 #[cfg(test)]
 mod test_round_trip;
 #[cfg(test)]
