@@ -8,6 +8,7 @@ mod io_safety;
 mod manpage;
 mod network;
 mod offchain;
+mod watch;
 
 /// Resolves a subcommand's own flag against the global `--network` shorthand
 /// (issue #174): an explicit flag (already merged with its environment
@@ -495,6 +496,35 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Poll Soroban RPC for live SAS events until interrupted.
+    Watch {
+        #[arg(long, env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+        #[arg(long, help = "Filter by schema UID, 64 hex digits")]
+        schema: Option<String>,
+        #[arg(long, help = "Filter by recipient G... or C... address")]
+        recipient: Option<String>,
+        #[arg(long, value_enum, help = "Event category: issued, revoked, schema")]
+        event: Option<watch::WatchKind>,
+        #[arg(long, default_value_t = 5)]
+        poll_seconds: u64,
+    },
+    /// Deploy the registry, SAS core and indexer using the maintained deployment script.
+    DeployAll {
+        #[arg(long, value_parser = ["testnet", "mainnet", "local"], default_value = "testnet")]
+        network: String,
+        #[arg(long, value_name = "FILE", default_value = ".env")]
+        env_file: String,
+        #[arg(long)]
+        skip_build: bool,
+        #[arg(long)]
+        dry_run: bool,
+        /// Required for sending real transactions to public mainnet.
+        #[arg(long)]
+        confirm_mainnet: bool,
+    },
     /// Schema registry commands
     Schema {
         #[command(subcommand)]
@@ -731,7 +761,19 @@ enum SchemaCommands {
     /// resolver address, and revocability, re-prompting on an invalid
     /// answer; `--secret-key` / `--registry-contract-id` still come from
     /// flags or environment variables, matching `register` (#326).
+    #[command(alias = "create")]
     Interactive {
+        #[arg(
+            long,
+            help = "Enable interactive wizard mode (required for schema create)"
+        )]
+        interactive: bool,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Export schema definition and UID as JSON without submitting"
+        )]
+        export: Option<std::path::PathBuf>,
         #[arg(
             long,
             help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
@@ -1355,6 +1397,56 @@ fn main() {
         account: cli.hd_account,
     });
     let result = match cli.command {
+        Some(Commands::Watch {
+            contract_id,
+            rpc_url,
+            schema,
+            recipient,
+            event,
+            poll_seconds,
+        }) => resolve_rpc_url(rpc_url, network.as_deref())
+            .and_then(|url| watch::watch(url, contract_id, schema, recipient, event, poll_seconds)),
+        Some(Commands::DeployAll {
+            network,
+            env_file,
+            skip_build,
+            dry_run,
+            confirm_mainnet,
+        }) => {
+            let script =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/deploy.sh");
+            if !script.is_file() {
+                Err(format!("deployment script not found: {}", script.display()))
+            } else if network == "mainnet" && !confirm_mainnet {
+                Err("mainnet deployment requires --confirm-mainnet".into())
+            } else if dry_run {
+                println!(
+                    "Would run: bash {} --network {} --env-file {}{} --json",
+                    script.display(),
+                    network,
+                    env_file,
+                    if skip_build { " --skip-build" } else { "" }
+                );
+                Ok(())
+            } else {
+                let mut command = std::process::Command::new("bash");
+                command
+                    .arg(script)
+                    .arg("--network")
+                    .arg(network)
+                    .arg("--env-file")
+                    .arg(env_file)
+                    .arg("--json");
+                if skip_build {
+                    command.arg("--skip-build");
+                }
+                match command.status() {
+                    Ok(exit) if exit.success() => Ok(()),
+                    Ok(exit) => Err(format!("deployment failed with exit status {exit}")),
+                    Err(err) => Err(format!("unable to launch deployment script: {err}")),
+                }
+            }
+        }
         Some(Commands::Offchain { action }) => {
             run_offchain(action, output, network, identity, hardware)
         }
@@ -2590,6 +2682,8 @@ fn run_schema(
             print_schema_registration_result(result, &uid_hex, output)
         }
         SchemaCommands::Interactive {
+            interactive: _,
+            export,
             secret_key,
             network_passphrase,
             registry_contract_id,
@@ -2599,6 +2693,24 @@ fn run_schema(
             let stdin = std::io::stdin();
             let mut lines = stdin.lock().lines();
             let (schema, resolver, revocable) = build_schema_interactively(&mut lines)?;
+            let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
+            println!("Preview: schema={schema:?}, resolver={resolver}, revocable={revocable}, uid={uid_hex}");
+            if let Some(path) = export {
+                let json = serde_json::json!({
+                    "schema": schema, "resolver": resolver,
+                    "revocable": revocable, "schema_uid": uid_hex,
+                });
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(&json).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| format!("cannot export schema to {}: {e}", path.display()))?;
+                return Ok(());
+            }
+            let answer = next_interactive_line(&mut lines, "Submit this schema? [y/N]: ")?;
+            if !matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes") {
+                return Err("schema submission cancelled; no transaction sent".into());
+            }
 
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =

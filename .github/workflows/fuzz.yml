@@ -22,6 +22,23 @@ env:
 # steps are fast (toolchain is cached by dtolnay/rust-toolchain).
 
 jobs:
+  differential-schema-smoke:
+    name: Smoke · differential_schema_fuzz (Rust vs JavaScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build differential_schema_fuzz
+      - run: cargo fuzz run differential_schema_fuzz fuzz/corpus/differential_schema_fuzz -- -runs=1000 -max_len=1024 -rss_limit_mb=2048
+
   # ── Smoke tests (every PR and push to main) ────────────────────────────────
   # Each smoke job builds one target and runs it for a small number of
   # executions.  The goal is to catch obvious panics or compilation failures
