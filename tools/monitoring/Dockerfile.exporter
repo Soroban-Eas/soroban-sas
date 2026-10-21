@@ -1,0 +1,15 @@
+FROM rust:1.78-slim AS builder
+
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY packages/ packages/
+COPY tools/prometheus-exporter/ tools/prometheus-exporter/
+# Build only the exporter binary
+RUN cargo build --release -p soroban-sas-prometheus-exporter
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/soroban-sas-prometheus-exporter /usr/local/bin/sas-exporter
+EXPOSE 9090
+ENTRYPOINT ["sas-exporter"]
