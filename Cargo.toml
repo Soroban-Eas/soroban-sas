@@ -75,6 +75,8 @@ panic = "unwind"
 soroban-sdk = "21.7.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 soroban-sas-common = { path = "packages/soroban-sas-common" }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 [workspace.lints.clippy]
 new_without_default = "allow"
