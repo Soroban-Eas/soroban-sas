@@ -20,7 +20,7 @@
     <header class="app-header">
       <div>
         <h1>SAS Schema Explorer</h1>
-        <p class="muted">Browse and validate schemas in a soroban-sas Schema Registry. Read-only prototype: nothing is signed or submitted.</p>
+        <p class="muted">Browse registered schemas and design new schemas with a deterministic WebAssembly UID preview. Wallet registration is separate from read-only browsing.</p>
       </div>
     </header>
 
@@ -52,6 +52,7 @@
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-browse" aria-controls="browse" aria-selected="true">Browse</button>
       <button type="button" role="tab" id="tab-validate" aria-controls="validate" aria-selected="false">Validate a schema</button>
+      <button type="button" role="tab" id="tab-designer" aria-controls="designer" aria-selected="false">Schema designer</button>
     </nav>
 
     <main>
@@ -87,6 +88,26 @@
           rejected for syntax on-chain.
         </p>
         <div id="draft-result"></div>
+      </section>
+
+      <section id="designer" role="tabpanel" aria-labelledby="tab-designer" class="playground" hidden>
+        <h2>Visual schema designer</h2>
+        <p class="muted">Drag fields to reorder them. Description tags are editor notes and are not included in the on-chain schema or UID.</p>
+        <label>Start from template
+          <select id="designer-template"></select>
+        </label>
+        <div class="designer-head muted"><span>Reorder</span><span>Field name</span><span>Type</span><span>Description tag</span><span>Actions</span></div>
+        <div id="designer-rows" aria-live="polite"></div>
+        <button type="button" id="designer-add">Add field</button>
+        <label>Resolver address (G... or C...)
+          <input id="designer-resolver" spellcheck="false" />
+        </label>
+        <label class="designer-inline"><input type="checkbox" id="designer-revocable" checked /> Revocable schema</label>
+        <h3>Canonical schema</h3>
+        <pre id="designer-schema" class="schema-raw"></pre>
+        <div id="designer-validation" aria-live="polite"></div>
+        <h3>Deterministic schema UID (WebAssembly SHA-256)</h3>
+        <pre id="designer-uid" class="schema-raw" aria-live="polite">Calculating…</pre>
       </section>
     </main>
 
