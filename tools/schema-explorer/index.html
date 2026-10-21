@@ -20,7 +20,7 @@
     <header class="app-header">
       <div>
         <h1>SAS Schema Explorer</h1>
-        <p class="muted">Browse and validate schemas in a soroban-sas Schema Registry. Read-only prototype: nothing is signed or submitted.</p>
+        <p class="muted">Browse and validate schemas · explore live attestations. Read-only prototype: nothing is signed or submitted.</p>
       </div>
     </header>
 
@@ -41,6 +41,14 @@
         Schema Registry contract id
         <input id="registry" name="registry" type="text" spellcheck="false" placeholder="C…" required />
       </label>
+      <label class="grow-2">
+        SAS contract id <span class="connect-optional">(optional – enables Attestations tab)</span>
+        <input id="sas" name="sas" type="text" spellcheck="false" placeholder="C…" />
+      </label>
+      <label class="grow-2">
+        Indexer contract id <span class="connect-optional">(optional – enables bulk lookups)</span>
+        <input id="indexer" name="indexer" type="text" spellcheck="false" placeholder="C…" />
+      </label>
       <div class="connect-actions">
         <button id="connect-btn" type="submit" class="primary">Connect</button>
         <button id="demo-btn" type="button">Use demo data</button>
@@ -52,6 +60,7 @@
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-browse" aria-controls="browse" aria-selected="true">Browse</button>
       <button type="button" role="tab" id="tab-validate" aria-controls="validate" aria-selected="false">Validate a schema</button>
+      <button type="button" role="tab" id="tab-attest" aria-controls="attest" aria-selected="false">Attestations</button>
     </nav>
 
     <main>
@@ -87,6 +96,39 @@
           rejected for syntax on-chain.
         </p>
         <div id="draft-result"></div>
+      </section>
+
+      <!-- ── Attestations tab ─────────────────────────────────────────── -->
+      <section id="attest" role="tabpanel" aria-labelledby="tab-attest" class="browse" hidden>
+        <aside class="sidebar">
+          <form id="attest-search-form" class="lookup" novalidate>
+            <label class="grow">
+              Search attestations
+              <input
+                id="attest-search"
+                type="search"
+                spellcheck="false"
+                placeholder="UID, G… address, or schema UID"
+              />
+            </label>
+            <button type="submit">Search</button>
+          </form>
+          <label>
+            Filter results
+            <input
+              id="attest-filter"
+              type="search"
+              spellcheck="false"
+              placeholder="status:active · status:expired · status:revoked · revocable:no"
+            />
+          </label>
+          <p id="attest-summary" class="muted"></p>
+          <div id="attest-list"></div>
+          <p id="attest-poll-status" class="muted attest-poll-status">Not connected</p>
+        </aside>
+        <section id="attest-detail" class="detail-pane" aria-live="polite">
+          <p class="muted">Connect (or use demo data), then search for attestations.</p>
+        </section>
       </section>
     </main>
 

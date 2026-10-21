@@ -3,3 +3,5 @@ export * from "./config.js";
 export * from "./registry.js";
 export * from "./schema.js";
 export { filterSchemas } from "./search.js";
+export * from "./attestation.js";
+export { filterAttestations } from "./filter-attestations.js";

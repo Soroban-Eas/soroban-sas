@@ -373,3 +373,55 @@ table.fields .num {
     flex: 1;
   }
 }
+
+/* ── Attestations view ───────────────────────────────────────────────── */
+
+.connect-optional {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.attestation-item[data-status="active"] {
+  border-left: 3px solid var(--ok-text);
+}
+.attestation-item[data-status="expired"] {
+  border-left: 3px solid var(--muted);
+  opacity: 0.85;
+}
+.attestation-item[data-status="revoked"] {
+  border-left: 3px solid var(--warn-text);
+  opacity: 0.75;
+}
+
+.attestation-item-addresses {
+  font-size: 0.82rem;
+}
+.attestation-addr-label {
+  font-size: 0.78rem;
+}
+
+.attestation-payload {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.attestation-hex {
+  word-break: break-all;
+}
+.attestation-decoded {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.attest-poll-status {
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+  /* Stack attestation sidebar + detail just like browse */
+  #attest.browse {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
