@@ -1,6 +1,9 @@
 // Visual schema builder. All user input is rendered as text or native input values.
 // No unreviewed transaction is submitted by this editor.
 import { h } from "./view.js";
+import { validateConfig } from "./config.js";
+import { registerSchema, TESTNET_PASSPHRASE } from "./registration.js";
+import type { SupportedWallet } from "./wallets.js";
 import { computeSchemaUidWasm, DEFAULT_RESOLVER, fromTemplate, reorderFields, TEMPLATE_FIELDS, validateDraft, type DesignerField, type SchemaDraft } from "./designer.js";
 
 function required<T extends HTMLElement>(doc: Document, id: string): T {
@@ -18,6 +21,12 @@ export function mountDesigner(doc: Document) {
   const schemaText = required<HTMLElement>(doc, "designer-schema");
   const uid = required<HTMLElement>(doc, "designer-uid");
   const validation = required<HTMLElement>(doc, "designer-validation");
+  const walletSelect = required<HTMLSelectElement>(doc, "designer-wallet");
+  const register = required<HTMLButtonElement>(doc, "designer-register");
+  const registerStatus = required<HTMLElement>(doc, "designer-registration-status");
+  const rpcInput = required<HTMLInputElement>(doc, "rpc-url");
+  const passphraseInput = required<HTMLInputElement>(doc, "passphrase");
+  const registryInput = required<HTMLInputElement>(doc, "registry");
 
   let draft = fromTemplate("KYC");
   let nextId = draft.fields.length + 1;
@@ -125,6 +134,44 @@ export function mountDesigner(doc: Document) {
   revocable.addEventListener("change", () => {
     draft.revocable = revocable.checked;
     void updatePreview();
+  });
+
+  register.addEventListener("click", async () => {
+    const result = validateConfig({
+      rpcUrl: rpcInput.value,
+      networkPassphrase: passphraseInput.value,
+      registryContractId: registryInput.value,
+    });
+    if (!result.ok) {
+      registerStatus.textContent = result.errors.join(" ");
+      return;
+    }
+    if (result.config.networkPassphrase !== TESTNET_PASSPHRASE) {
+      registerStatus.textContent = "Select Testnet before registering a schema.";
+      return;
+    }
+    const snapshot = { ...draft, fields: draft.fields.map(field => ({ ...field })) };
+    if (!validateDraft(snapshot).ok) {
+      registerStatus.textContent = "Correct schema validation errors before registration.";
+      return;
+    }
+    // Explicit confirmation before requesting any wallet permission or sending a transaction.
+    if (!doc.defaultView?.confirm("Register this schema with your selected wallet on Stellar Testnet? This will submit a real transaction.")) return;
+    register.disabled = true;
+    registerStatus.textContent = "Requesting wallet connection and Testnet transaction approval…";
+    try {
+      const { connectWallet } = await import("./wallets.js");
+      const wallet = await connectWallet(walletSelect.value as SupportedWallet);
+      registerStatus.textContent = "Preparing, simulating, and signing schema registration…";
+      const submitted = await registerSchema(snapshot, result.config, wallet);
+      registerStatus.textContent = "Registered UID " + submitted.uid + " · Transaction " + submitted.hash
+        + " · ledger " + submitted.ledger;
+    } catch (error) {
+      registerStatus.textContent = "Registration not confirmed: " +
+        (error instanceof Error ? error.message : String(error));
+    } finally {
+      register.disabled = false;
+    }
   });
 
   resolver.value = draft.resolver;
