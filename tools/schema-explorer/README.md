@@ -12,6 +12,10 @@ checking draft schema strings before registering them.
 - **Validate a schema**: checks a draft string live, using the same rules as
   `SchemaRegistry::register`, and reports the first problem plus byte and
   field usage against the 1024-byte and 64-field limits.
+- **QR Code & Mobile Verification (#485)**: Generates verifiable QR codes and
+  secure deep-link URLs for in-person checks, physical event badges, and ticketing.
+  Scanning opens a high-contrast mobile verification screen verifying directly against
+  Soroban RPC with offline Ed25519 signature fallback. Exportable as SVG and PNG.
 - **Demo data**: "Use demo data" (or `?demo=1`) loads built-in fixtures with
   no network access, so you can try the UI without deploying anything.
 
@@ -57,6 +61,10 @@ can serve it.
 | `src/config.ts` | Network presets, connection validation, shareable query strings |
 | `src/fixtures.ts` | Demo data, and `FixtureCaller`, an in-memory registry with the contract's encoding and pagination rules |
 | `src/view.ts`, `src/app.ts` | DOM rendering and page wiring |
+| `src/qrcode.ts` | Zero-dependency QR Code generator, SVG and PNG export |
+| `src/attestation.ts` | Deep-link builder/parser, Soroban RPC verification, and offline cryptographic proof |
+| `src/mobile-verify.ts` | High-contrast mobile verification badge and UI |
+| `src/qr-view.ts` | Explorer QR Code generator panel with SVG/PNG download and deep-linking |
 
 ## Keeping the validator in sync with the contract
 

@@ -52,6 +52,7 @@
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-browse" aria-controls="browse" aria-selected="true">Browse</button>
       <button type="button" role="tab" id="tab-validate" aria-controls="validate" aria-selected="false">Validate a schema</button>
+      <button type="button" role="tab" id="tab-verify" aria-controls="verify" aria-selected="false">Verify Attestation / QR</button>
     </nav>
 
     <main>
@@ -88,6 +89,8 @@
         </p>
         <div id="draft-result"></div>
       </section>
+
+      <section id="verify" role="tabpanel" aria-labelledby="tab-verify" class="verify-panel" hidden></section>
     </main>
 
     <script type="module" src="./src/main.ts"></script>
