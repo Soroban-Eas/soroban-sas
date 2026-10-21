@@ -106,3 +106,10 @@ name = "attestation_builder_fuzz"
 path = "fuzz_targets/attestation_builder_fuzz.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "stateful_indexer_fuzz"
+path = "fuzz_targets/stateful_indexer_fuzz.rs"
+test = false
+doc = false
+
