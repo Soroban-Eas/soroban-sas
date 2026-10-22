@@ -5,14 +5,15 @@
 
 use soroban_sas_common::{
     events::{
-        CONTRACT_UPGRADED, SCHEMA_DELEGATE_ADDED, SCHEMA_DELEGATE_REMOVED, SCHEMA_DEPRECATED,
-        SCHEMA_FEE_UPDATED, SCHEMA_OWNERSHIP_PROPOSED, SCHEMA_OWNERSHIP_TRANSFERRED,
-        TREASURY_UPDATED,
+        CONTRACT_UPGRADED, SCHEMA_ATTESTER_ADDED, SCHEMA_ATTESTER_REMOVED, SCHEMA_DELEGATE_ADDED,
+        SCHEMA_DELEGATE_REMOVED, SCHEMA_DEPRECATED, SCHEMA_FEE_UPDATED, SCHEMA_OWNERSHIP_PROPOSED,
+        SCHEMA_OWNERSHIP_TRANSFERRED, TREASURY_UPDATED,
     },
     validate_schema_syntax, ContractUpgradedEvent, PreviousAddress, RevocationPolicy, SASError,
-    SchemaDelegateAddedEvent, SchemaDelegateRemovedEvent, SchemaDeprecatedEvent,
-    SchemaFeeUpdatedEvent, SchemaOwnershipProposedEvent, SchemaOwnershipTransferredEvent,
-    SchemaRecord, TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
+    SchemaAttesterAddedEvent, SchemaAttesterRemovedEvent, SchemaDelegateAddedEvent,
+    SchemaDelegateRemovedEvent, SchemaDeprecatedEvent, SchemaFeeUpdatedEvent,
+    SchemaOwnershipProposedEvent, SchemaOwnershipTransferredEvent, SchemaRecord,
+    TreasuryUpdatedEvent, LEDGERS_IN_ONE_YEAR, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, token, Address, BytesN, Env, String,
@@ -156,6 +157,97 @@ fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_ve
 }
 
 const MAX_SCAN_BUDGET: u32 = 100;
+
+// ===== HIERARCHICAL SCHEMA VERSIONING (#442) =====
+
+/// Longest allowed chain of parent links from a schema up to its root.
+/// Bounds every lineage walk so tracing ancestry costs a fixed, small amount
+/// of work no matter how many versions a schema family accumulates.
+pub const MAX_SCHEMA_LINEAGE_DEPTH: u32 = 32;
+
+/// Ancestry of one schema, as returned by `get_schema_lineage`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaLineage {
+    /// The schema this lineage was computed for.
+    pub schema_uid: UID,
+    /// Direct parent, or `None` when the schema is a root.
+    pub parent: Option<UID>,
+    /// Oldest ancestor. Equals `schema_uid` when the schema is a root.
+    pub root: UID,
+    /// Number of parent links between the schema and `root` (0 for a root).
+    pub depth: u32,
+    /// Every ancestor ordered from the direct parent up to `root`.
+    pub ancestors: Vec<UID>,
+}
+
+/// Returns the oldest ancestor of `uid` and the number of parent links that
+/// lead to it. Panics with `LimitExceeded` if the chain is longer than
+/// [`MAX_SCHEMA_LINEAGE_DEPTH`], which registration prevents.
+fn lineage_root(env: &Env, uid: &UID) -> (UID, u32) {
+    let mut current = uid.clone();
+    let mut hops: u32 = 0;
+    while hops <= MAX_SCHEMA_LINEAGE_DEPTH {
+        let record: Option<SchemaRecord> = env.storage().persistent().get(&current);
+        match record.and_then(|r| r.parent_schema_uid) {
+            Some(parent) => {
+                current = parent;
+                hops = hops.saturating_add(1);
+            }
+            None => return (current, hops),
+        }
+    }
+    panic_with_error!(env, SASError::LimitExceeded);
+}
+
+/// Validates a requested parent link before a child schema is written.
+///
+/// The parent must already be registered (`InvalidSchema` otherwise, which
+/// also rules out self-references and cycles because the child's UID cannot
+/// exist yet), the registering `owner` must be allowed to act for it
+/// (`Unauthorized`), and the resulting chain must stay within
+/// [`MAX_SCHEMA_LINEAGE_DEPTH`] (`LimitExceeded`). A deprecated parent is
+/// accepted: superseding a deprecated schema is the normal upgrade path.
+fn validate_parent_schema(env: &Env, owner: &Address, parent: &UID) {
+    if !env.storage().persistent().has(parent) {
+        panic_with_error!(env, SASError::InvalidSchema);
+    }
+    if !is_owner_address(env, parent, owner) {
+        panic_with_error!(env, SASError::Unauthorized);
+    }
+    let (_, parent_depth) = lineage_root(env, parent);
+    if parent_depth >= MAX_SCHEMA_LINEAGE_DEPTH {
+        panic_with_error!(env, SASError::LimitExceeded);
+    }
+}
+
+// ===== SCHEMA ATTESTER ACCESS CONTROL LISTS (#443) =====
+
+/// Number of attesters on the schema's access control list.
+fn acl_count(env: &Env, uid: &UID) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&(SCHEMA_ACL_COUNT, uid.clone()))
+        .unwrap_or(0)
+}
+
+/// Loads the schema's creator and requires its authorization. Fails with
+/// `SchemaNotFound` for an unknown schema. Shared by the ACL entrypoints so
+/// the authorizer is always the stored creator, never a caller-supplied value.
+fn require_creator_auth(env: &Env, uid: &UID) -> Address {
+    if !env.storage().persistent().has(uid) {
+        panic_with_error!(env, SASError::SchemaNotFound);
+    }
+    let creator: Option<Address> = env
+        .storage()
+        .persistent()
+        .get(&(SCHEMA_CREATOR, uid.clone()));
+    let Some(owner) = creator else {
+        panic_with_error!(env, SASError::SchemaNotFound);
+    };
+    owner.require_auth();
+    owner
+}
 
 // ===== MULTI-SIGNATURE SCHEMA OWNERS (#288) =====
 
@@ -660,6 +752,183 @@ impl SchemaRegistry {
         extend_instance_ttl(&env);
     }
 
+    /// Adds `attester` to schema `uid`'s attester access control list (#443).
+    ///
+    /// Listed attesters may issue attestations under the schema without being
+    /// delegates: unlike a delegate they cannot revoke other attesters'
+    /// attestations. Once the list is non-empty the schema is "restricted" and
+    /// SAS rejects any other issuer with `SASError::UnauthorizedAttester`;
+    /// while it is empty the schema behaves exactly as before (owner and
+    /// delegates only).
+    ///
+    /// Requires authorization from the primary schema owner (creator) and
+    /// fails with `SchemaNotFound` for an unknown schema. Adding an attester
+    /// that is already listed is a no-op. Emits `SchemaAttesterAdded` when the
+    /// list changes.
+    pub fn add_authorized_attester(env: Env, uid: UID, attester: Address) {
+        extend_instance_ttl(&env);
+        let owner = require_creator_auth(&env, &uid);
+
+        let key = (SCHEMA_ACL, uid.clone(), attester.clone());
+        let listed: bool = env.storage().persistent().get(&key).unwrap_or(false);
+        if !listed {
+            let count_key = (SCHEMA_ACL_COUNT, uid.clone());
+            let count = acl_count(&env, &uid).saturating_add(1);
+            env.storage().persistent().set(&count_key, &count);
+            env.storage().persistent().extend_ttl(
+                &count_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+            env.storage().persistent().set(&key, &true);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+
+            env.events().publish(
+                (SCHEMA_ATTESTER_ADDED, uid.clone()),
+                SchemaAttesterAddedEvent {
+                    schema_uid: uid,
+                    attester,
+                    authorizer: owner,
+                },
+            );
+        }
+
+        extend_instance_ttl(&env);
+    }
+
+    /// Removes `attester` from schema `uid`'s attester access control list
+    /// (#443). Removing the last attester returns the schema to its default,
+    /// unrestricted-by-ACL behavior.
+    ///
+    /// Requires authorization from the primary schema owner (creator) and
+    /// fails with `SchemaNotFound` for an unknown schema. Removing an address
+    /// that is not listed is a no-op. Emits `SchemaAttesterRemoved` when the
+    /// list changes.
+    pub fn remove_authorized_attester(env: Env, uid: UID, attester: Address) {
+        extend_instance_ttl(&env);
+        let owner = require_creator_auth(&env, &uid);
+
+        let key = (SCHEMA_ACL, uid.clone(), attester.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().remove(&key);
+
+            let count_key = (SCHEMA_ACL_COUNT, uid.clone());
+            let count = acl_count(&env, &uid).saturating_sub(1);
+            if count == 0 {
+                env.storage().persistent().remove(&count_key);
+            } else {
+                env.storage().persistent().set(&count_key, &count);
+                env.storage().persistent().extend_ttl(
+                    &count_key,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
+            }
+
+            env.events().publish(
+                (SCHEMA_ATTESTER_REMOVED, uid.clone()),
+                SchemaAttesterRemovedEvent {
+                    schema_uid: uid,
+                    attester,
+                    authorizer: owner,
+                },
+            );
+        }
+
+        extend_instance_ttl(&env);
+    }
+
+    /// Returns true if `attester` is on schema `uid`'s access control list and
+    /// the schema is not deprecated (#443). Does not consider the owner or
+    /// delegates; see `is_authorized` for those. SAS calls this after
+    /// `is_authorized` declines an issuer.
+    pub fn is_attester_authorized(env: Env, uid: UID, attester: Address) -> bool {
+        extend_instance_ttl(&env);
+        if env
+            .storage()
+            .persistent()
+            .get(&(DEPRECATED, uid.clone()))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+
+        let key = (SCHEMA_ACL, uid.clone(), attester);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&key)
+            .unwrap_or(false)
+        {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns true when schema `uid` has a non-empty attester access control
+    /// list (#443).
+    pub fn is_schema_restricted(env: Env, uid: UID) -> bool {
+        extend_instance_ttl(&env);
+        acl_count(&env, &uid) > 0
+    }
+
+    /// Returns how many attesters are on schema `uid`'s access control list
+    /// (#443). `0` means the schema is not restricted by an ACL.
+    pub fn get_authorized_attester_count(env: Env, uid: UID) -> u32 {
+        extend_instance_ttl(&env);
+        acl_count(&env, &uid)
+    }
+
+    /// Traces schema `schema_uid` back to its root (#442).
+    ///
+    /// Returns its direct parent, its root, its depth and every ancestor from
+    /// the parent upward. A schema with no parent is its own root, at depth 0
+    /// with no ancestors. Deprecated schemas and deprecated ancestors are
+    /// included, since lineage exists precisely to follow a deprecated schema
+    /// to its successor. Fails with `SASError::SchemaNotFound` for an unknown
+    /// schema.
+    pub fn get_schema_lineage(env: Env, schema_uid: UID) -> SchemaLineage {
+        extend_instance_ttl(&env);
+        let Some(record) = env
+            .storage()
+            .persistent()
+            .get::<_, SchemaRecord>(&schema_uid)
+        else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+        renew_schema_record(&env, &schema_uid);
+
+        let mut ancestors: Vec<UID> = Vec::new(&env);
+        let mut root = schema_uid.clone();
+        let mut next = record.parent_schema_uid.clone();
+        while let Some(ancestor) = next {
+            if ancestors.len() >= MAX_SCHEMA_LINEAGE_DEPTH {
+                panic_with_error!(&env, SASError::LimitExceeded);
+            }
+            ancestors.push_back(ancestor.clone());
+            root = ancestor.clone();
+            let ancestor_record: Option<SchemaRecord> = env.storage().persistent().get(&ancestor);
+            if ancestor_record.is_some() {
+                renew_schema_record(&env, &ancestor);
+            }
+            next = ancestor_record.and_then(|r| r.parent_schema_uid);
+        }
+
+        SchemaLineage {
+            schema_uid,
+            parent: record.parent_schema_uid,
+            root,
+            depth: ancestors.len(),
+            ancestors,
+        }
+    }
+
     /// Transfers ownership of schema `uid` to `new_owner` (#229).
     ///
     /// Requires authorization from the current schema owner (creator).
@@ -1125,7 +1394,37 @@ impl SchemaRegistry {
         // The owner must authorize the registration so the emitted event
         // carries a caller identity that off-chain indexers can trust.
         owner.require_auth();
-        Self::register_internal(env, owner, schema, resolver, revocable, 0)
+        Self::register_internal(env, owner, schema, resolver, revocable, 0, None)
+    }
+
+    /// Registers a new schema that supersedes `parent_schema_uid` (#442).
+    ///
+    /// `parent_schema_uid` must name an existing schema, otherwise this
+    /// panics with `SASError::InvalidSchema`. `owner` must be allowed to act
+    /// for the parent: its creator, a member of its multi-signature owner
+    /// set, or the registry admin (`SASError::Unauthorized` otherwise).
+    /// Passing `None` is identical to `register`. The parent is not part of
+    /// the schema UID, so a definition that is already registered under the
+    /// same schema, resolver and revocability still fails with
+    /// `SchemaAlreadyExists` whatever parent is supplied.
+    pub fn register_with_parent(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        parent_schema_uid: Option<UID>,
+    ) -> UID {
+        owner.require_auth();
+        Self::register_internal(
+            env,
+            owner,
+            schema,
+            resolver,
+            revocable,
+            0,
+            parent_schema_uid,
+        )
     }
 
     /// Registers a new schema with a configurable maximum expiration window limit (#441).
@@ -1138,7 +1437,7 @@ impl SchemaRegistry {
         max_ttl: u64,
     ) -> UID {
         owner.require_auth();
-        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
+        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl, None)
     }
 
     /// Alias for `register_with_ttl` (#441).
@@ -1163,7 +1462,7 @@ impl SchemaRegistry {
     ) -> UID {
         owner.require_auth();
         let revocable = policy != RevocationPolicy::IrrevocableOnly;
-        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable, 0);
+        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable, 0, None);
         let policy_key = (SCHEMA_POLICY, uid.clone());
         env.storage().persistent().set(&policy_key, &policy);
         env.storage().persistent().extend_ttl(
@@ -1265,7 +1564,7 @@ impl SchemaRegistry {
             token::Client::new(&env, &token).transfer(&owner, &treasury, &value);
         }
 
-        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
+        Self::register_internal(env, owner, schema, resolver, revocable, max_ttl, None)
     }
 
     fn register_internal(
@@ -1275,10 +1574,14 @@ impl SchemaRegistry {
         resolver: Address,
         revocable: bool,
         max_ttl: u64,
+        parent_schema_uid: Option<UID>,
     ) -> UID {
         extend_instance_ttl(&env);
         if let Err(err) = validate_schema_syntax(&env, &schema) {
             panic_with_error!(&env, err);
+        }
+        if let Some(parent) = &parent_schema_uid {
+            validate_parent_schema(&env, &owner, parent);
         }
 
         // Canonical schema identity includes the schema string, resolver
@@ -1298,6 +1601,7 @@ impl SchemaRegistry {
             revocable,
             schema,
             deprecated: false,
+            parent_schema_uid,
         };
         env.storage().persistent().set(&uid, &record);
         env.storage()
@@ -1652,9 +1956,13 @@ impl SchemaRegistry {
 }
 
 #[cfg(test)]
+mod attester_acl_test;
+#[cfg(test)]
 mod authorization_test;
 #[cfg(test)]
 mod owner_multisig_test;
+#[cfg(test)]
+mod schema_lineage_test;
 #[cfg(test)]
 mod test;
 #[cfg(test)]

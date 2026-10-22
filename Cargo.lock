@@ -1245,7 +1245,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "permissive-resolver"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "soroban-sas-common",
  "soroban-sdk",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "sas"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "schema-registry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "soroban-sas-common",
  "soroban-sdk",
@@ -1865,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -1885,7 +1885,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-common"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ed25519-dalek",
  "soroban-sdk",
@@ -1894,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-cross-chain-verifier"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "soroban-sas-common",
  "soroban-sdk",
@@ -1902,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-indexer"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "soroban-sas-common",
  "soroban-sdk",
@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-prometheus-exporter"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "hyper",
@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-sdk"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-workspace"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "ed25519-dalek",
@@ -1955,7 +1955,7 @@ dependencies = [
 
 [[package]]
 name = "soroban-sas-zk-verifier"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "soroban-sas-common",
  "soroban-sdk",

@@ -5,9 +5,10 @@
 | Version / Branch | Supported          | Status             |
 | ---------------- | ------------------ | ------------------ |
 | `main`           | :white_check_mark: | Active Development |
-| `< 0.1.0`        | :x:                | Unsupported        |
+| `1.0.x`          | :white_check_mark: | Current Release    |
+| `< 1.0.0`        | :x:                | Unsupported        |
 
-The project is under active development. Security updates and bug fixes are applied directly to the `main` branch and tagged in release candidates.
+Security updates and bug fixes are applied to the `main` branch and released as patch versions of the current release line. See [docs/releasing.md](docs/releasing.md) for how releases are cut.
 
 ---
 

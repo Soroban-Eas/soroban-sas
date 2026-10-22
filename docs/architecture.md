@@ -846,7 +846,8 @@ The following table is a concise reference of every cross-contract call in the s
 | SAS `init` | Schema Registry | `sasreg()` | probe | Rejects init with `IncompatibleDependency` |
 | Indexer `init` | SAS | `sasv1()` | probe | Rejects init with `IncompatibleDependency` |
 | SAS `attest_internal` | Schema Registry | `get_schema(uid)` | mandatory read | Panics `InvalidSchema` on None |
-| SAS `attest_internal` | Schema Registry | `is_authorized(uid, attester)` | mandatory read | Panics `Unauthorized` on false |
+| SAS `attest_internal` | Schema Registry | `is_authorized(uid, attester)` | mandatory read | Falls through to the ACL probe below on false |
+| SAS `attest_internal` | Schema Registry | `is_attester_authorized(uid, attester)`, then `is_schema_restricted(uid)` | optional read, only after `is_authorized` returned false | Listed attester proceeds; otherwise panics `UnauthorizedAttester` on a restricted schema and `Unauthorized` on an unrestricted one. A registry without these methods counts as "not listed, not restricted" |
 | SAS `attest_internal` | Resolver | `on_attest(attestation)` | mandatory callback | Panics `ResolverRejected` on any error |
 | SAS `attest_internal` | Indexer | `index_attestation(uid, recipient, schema_uid, attester)` | optional write | `IDXFAIL` event (fail-open) or `IndexerUnavailable` (fail-closed) |
 | SAS `revoke_internal` | Schema Registry | `get_schema(uid)` | mandatory read | Panics `InvalidSchema` on None |

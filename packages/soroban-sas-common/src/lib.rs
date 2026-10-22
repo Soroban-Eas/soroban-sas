@@ -166,6 +166,11 @@ pub struct SchemaRecord {
     pub revocable: bool,
     pub schema: String,
     pub deprecated: bool,
+    /// UID of the schema this one supersedes, if any (#442). The parent is
+    /// guaranteed to have been registered when the record was written, and it
+    /// is not part of the UID preimage, so linking a schema to a parent never
+    /// changes its content-addressed identity. `None` for root schemas.
+    pub parent_schema_uid: Option<UID>,
 }
 
 #[contracttype]

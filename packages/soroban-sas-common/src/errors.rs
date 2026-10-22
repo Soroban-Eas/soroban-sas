@@ -30,6 +30,10 @@ pub enum SASError {
     Unauthorized = 301,
     InvalidSignature = 302,
     DelegationReplay = 303,
+    /// The schema has a private attester access control list and the attester
+    /// is neither the schema owner, an authorized delegate, nor a member of
+    /// that list (#443).
+    UnauthorizedAttester = 304,
 
     /// Input validation errors
     InvalidTTL = 401,

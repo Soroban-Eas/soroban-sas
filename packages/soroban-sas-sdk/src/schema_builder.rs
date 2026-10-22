@@ -85,6 +85,7 @@ impl SchemaBuilder {
             revocable: self.revocable,
             schema,
             deprecated: false,
+            parent_schema_uid: None,
         })
     }
 }

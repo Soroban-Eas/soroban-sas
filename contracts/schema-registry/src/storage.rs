@@ -34,6 +34,16 @@ pub const UPGRADE_EVENT: Symbol = symbol_short!("UPGRADE");
 /// Stored under `(AUTHORIZED_DELEGATES, schema_uid, delegate_address) -> bool`.
 pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");
 
+/// Storage key for a schema's attester access control list (#443).
+/// Stored under `(SCHEMA_ACL, schema_uid, attester) -> bool`. A schema whose
+/// list is empty is not restricted by it.
+pub const SCHEMA_ACL: Symbol = symbol_short!("ACL");
+
+/// Number of attesters currently on a schema's access control list (#443).
+/// Stored under `(SCHEMA_ACL_COUNT, schema_uid) -> u32` and removed when the
+/// last attester is removed, so its presence means "restricted".
+pub const SCHEMA_ACL_COUNT: Symbol = symbol_short!("ACLCOUNT");
+
 /// Storage key for a schema's multi-signature owner set (#288).
 /// Stored under `(SCHEMA_OWNERS, schema_uid) -> OwnerSet`.
 pub const SCHEMA_OWNERS: Symbol = symbol_short!("OWNERS");

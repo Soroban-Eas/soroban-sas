@@ -31,6 +31,10 @@ pub const CONTRACT_UPGRADED: Symbol = symbol_short!("UPGRADED");
 pub const SCHEMA_DELEGATE_ADDED: Symbol = symbol_short!("DELADD");
 /// First topic of every `SchemaDelegateRemoved` event.
 pub const SCHEMA_DELEGATE_REMOVED: Symbol = symbol_short!("DELREM");
+/// First topic of every `SchemaAttesterAdded` event (#443).
+pub const SCHEMA_ATTESTER_ADDED: Symbol = symbol_short!("ATTADD");
+/// First topic of every `SchemaAttesterRemoved` event (#443).
+pub const SCHEMA_ATTESTER_REMOVED: Symbol = symbol_short!("ATTREM");
 /// First topic of every `AdminTransferProposed` event.
 pub const ADMIN_TRANSFER_PROPOSED: Symbol = symbol_short!("ADMPROP");
 /// First topic of every `AdminTransferCompleted` event.
@@ -241,6 +245,32 @@ pub struct SchemaDelegateAddedEvent {
 pub struct SchemaDelegateRemovedEvent {
     pub schema_uid: UID,
     pub delegate: Address,
+    pub authorizer: Address,
+}
+
+/// Payload of the `SchemaAttesterAdded` event (#443).
+///
+/// Published with topics `(SCHEMA_ATTESTER_ADDED, schema_uid)` when the schema
+/// owner adds an address to the schema's attester access control list. It is
+/// not published when the address was already on the list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaAttesterAddedEvent {
+    pub schema_uid: UID,
+    pub attester: Address,
+    pub authorizer: Address,
+}
+
+/// Payload of the `SchemaAttesterRemoved` event (#443).
+///
+/// Published with topics `(SCHEMA_ATTESTER_REMOVED, schema_uid)` when the
+/// schema owner removes an address from the schema's attester access control
+/// list. It is not published when the address was not on the list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaAttesterRemovedEvent {
+    pub schema_uid: UID,
+    pub attester: Address,
     pub authorizer: Address,
 }
 

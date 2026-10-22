@@ -89,6 +89,46 @@ fn require_admin(env: &Env) -> Address {
     }
 }
 
+/// Asks the registry whether `attester` is on schema `schema_uid`'s attester
+/// access control list and whether the schema has one at all (#443).
+///
+/// Returns `(on_acl, restricted)`. Both probes are best effort: a registry
+/// that predates ACL support, or any failed call, yields `false` for that
+/// half, which leaves the caller on the original `Unauthorized` path. It is
+/// only consulted after `is_authorized` has already declined an issuer, so
+/// owners and delegates never pay for the extra cross-contract calls.
+fn schema_attester_acl_status(
+    env: &Env,
+    registry: &Address,
+    schema_uid: &UID,
+    attester: &Address,
+) -> (bool, bool) {
+    let on_acl: bool = match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+        registry,
+        &Symbol::new(env, "is_attester_authorized"),
+        soroban_sdk::vec![
+            env,
+            schema_uid.clone().into_val(env),
+            attester.clone().into_val(env),
+        ],
+    ) {
+        Ok(Ok(allowed)) => allowed,
+        _ => false,
+    };
+    if on_acl {
+        return (true, true);
+    }
+    let restricted: bool = match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+        registry,
+        &Symbol::new(env, "is_schema_restricted"),
+        soroban_sdk::vec![env, schema_uid.clone().into_val(env)],
+    ) {
+        Ok(Ok(restricted)) => restricted,
+        _ => false,
+    };
+    (false, restricted)
+}
+
 /// Reads the schema registry recorded by `init`, or panics `NotInitialized`.
 /// Companion to [`require_admin`]; see that guard for the rationale.
 fn require_registry(env: &Env) -> Address {
@@ -778,7 +818,22 @@ impl SAS {
             _ => false,
         };
         if !is_auth {
-            panic_with_error!(&env, SASError::Unauthorized);
+            // Not the owner or a delegate: fall back to the schema's attester
+            // access control list (#443). A schema that has one rejects every
+            // other issuer with the dedicated `UnauthorizedAttester`; a schema
+            // without one keeps the original `Unauthorized`.
+            let (on_acl, restricted) = schema_attester_acl_status(
+                &env,
+                &registry,
+                &attestation.schema_uid,
+                &attestation.attester,
+            );
+            if !on_acl {
+                if restricted {
+                    panic_with_error!(&env, SASError::UnauthorizedAttester);
+                }
+                panic_with_error!(&env, SASError::Unauthorized);
+            }
         }
 
         // Validate policy compliance during attestation creation (#448).
@@ -2194,6 +2249,8 @@ mod test_issue_252;
 mod test_issue_293;
 #[cfg(test)]
 mod test_issue_296;
+#[cfg(test)]
+mod test_issue_443;
 #[cfg(test)]
 mod test_round_trip;
 #[cfg(test)]

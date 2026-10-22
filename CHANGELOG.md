@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-22
+
 ### Contract WASM SHA-256 Checksums
 | Contract | File | SHA-256 Checksum |
 |---|---|---|
@@ -15,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Schema attester access control lists. `add_authorized_attester` and
+  `remove_authorized_attester` let a schema owner grant and revoke issuance
+  rights for a private attester group without an external resolver, and
+  `is_attester_authorized`, `is_schema_restricted` and
+  `get_authorized_attester_count` expose the list. SAS consults it after the
+  owner/delegate check and rejects any other issuer on a restricted schema
+  with the new `SASError::UnauthorizedAttester` (304). The registry emits
+  `SchemaAttesterAdded` and `SchemaAttesterRemoved`. A schema with an empty
+  list behaves exactly as before. (#443)
+- Hierarchical schema versioning. `SchemaRecord` gains an optional
+  `parent_schema_uid`; `register_with_parent` links a new schema to an
+  existing one (`InvalidSchema` for an unknown parent, `Unauthorized` unless
+  the registrant owns the parent or is the registry admin) and
+  `get_schema_lineage` returns a schema's parent, root, depth and ancestors.
+  Chains are capped at 32 links. Records written by earlier builds do not
+  carry the new field, so a registry that already holds schemas needs a
+  storage migration before this build is activated. (#442)
+- Automated release notes. `scripts/release_notes.sh` builds notes from the
+  matching CHANGELOG section and the Conventional Commits since the previous
+  tag, `scripts/check_release_version.sh` gates the release workflow on crate,
+  `Cargo.lock` and CHANGELOG versions agreeing with the tag, and the release
+  workflow publishes the generated notes with the artifact checksums.
+  `scripts/test_release_tooling.sh` covers both scripts in CI. See
+  `docs/releasing.md`. (#379)
+- Release 1.0.0. Every workspace crate is versioned 1.0.0 and
+  `docs/releasing.md` documents how to cut the release. (#378)
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,

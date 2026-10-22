@@ -182,6 +182,37 @@ To support DAOs, enterprise organizations, and multi-issuer systems without shar
 - Authorized delegates can revoke their own attestations via `revoke(uid)`.
 - Authorized delegates and schema owners can revoke any attestation under the schema using `revoke_by_delegate(uid, delegate)` / `revoke_by_authorizer(uid, authorizer)`.
 
+## Private Attester Access Control Lists (#443)
+
+Delegates can both issue and revoke. Some schemas instead stand for a proprietary credential or an organizational permission that only a named group should be able to *issue*, and a custom resolver contract is more machinery than that needs. Each schema therefore carries an optional attester access control list (ACL) in the registry.
+
+### Management
+- `add_authorized_attester(uid: UID, attester: Address)`: Adds an address to the schema's ACL. Requires authorization from the primary schema owner. Fails with `SchemaNotFound` for an unknown schema. Adding an address that is already listed does nothing. Emits `SchemaAttesterAdded`.
+- `remove_authorized_attester(uid: UID, attester: Address)`: Removes an address from the ACL. Requires authorization from the primary schema owner. Removing an address that is not listed does nothing. Emits `SchemaAttesterRemoved`.
+- `is_attester_authorized(uid, attester)`, `is_schema_restricted(uid)` and `get_authorized_attester_count(uid)` are read-only views.
+
+### Enforcement
+- A schema is **restricted** while its ACL has at least one entry. A schema with an empty ACL, which is the default, behaves exactly as described in the previous section: only the owner and its delegates may issue.
+- `attest_internal` first asks `is_authorized(uid, attester)`. When that declines the attester, SAS asks the registry whether the attester is on the ACL. A listed attester may issue.
+- Any other issuer is rejected with `SASError::UnauthorizedAttester` (code `304`) when the schema is restricted, and with the original `SASError::Unauthorized` (code `301`) when it is not.
+- The owner and delegates keep their issuing rights on a restricted schema. Removing the last ACL entry returns the schema to its default state.
+- Listing an address grants issuance only. A listed attester can revoke its own attestations with `revoke(uid)`, but cannot use `revoke_by_authorizer` or `revoke_by_delegate` on other attesters' attestations; add the address as a delegate for that.
+- A deprecated schema authorizes no ACL entries. ACL entries belong to the schema UID, so they survive an ownership transfer and the new owner manages them.
+- A registry deployed before this feature has none of the ACL methods. SAS reads that as "not listed, not restricted" and keeps returning `Unauthorized`.
+
+## Schema Versioning and Lineage (#442)
+
+A newer schema can name the schema it supersedes, so verifiers and migration tools can follow a schema family without off-chain bookkeeping.
+
+- `SchemaRecord.parent_schema_uid` is an optional UID. It is `None` for every schema registered through `register` and its variants.
+- `register_with_parent(owner, schema, resolver, revocable, parent_schema_uid: Option<UID>)` registers a schema that supersedes the parent. `owner` must authorize the call.
+  - An unknown parent is rejected with `SASError::InvalidSchema` and nothing is written.
+  - `owner` must be allowed to act for the parent: its creator, a member of its multi-signature owner set, or the registry admin. Anyone else gets `SASError::Unauthorized`.
+  - A deprecated parent is accepted, since replacing a deprecated schema is the normal upgrade path.
+  - A chain may hold at most 32 parent links; one more is rejected with `SASError::LimitExceeded`. This keeps every lineage walk bounded.
+- `get_schema_lineage(schema_uid)` returns `SchemaLineage { schema_uid, parent, root, depth, ancestors }`. `ancestors` runs from the direct parent up to `root`, `depth` is the number of links to `root`, and a schema without a parent is its own root at depth `0`. Deprecated schemas and ancestors are included. An unknown schema fails with `SchemaNotFound`.
+- The parent is not part of the schema UID (see below). Re-registering an existing definition under a different parent still fails with `SchemaAlreadyExists`.
+
 ## Schema ID Collision Resistance
 
 Schema UID derivation hashes the schema string, resolver address, and revocability boolean flag together using SHA-256. This deterministic formulation guarantees robust ID collision resistance: two independent entities creating the exact same schema structure will not collide if they specify different resolvers or different revocability toggles. Furthermore, strict capitalization boundaries and whitespace trimmings during schema string validation prevent bad actors from intentionally creating semantically identical duplicates disguised by format drift.
