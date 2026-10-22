@@ -1042,6 +1042,11 @@ enum AttestCommands {
             default_value_t = 300
         )]
         max_ledger_skew: u64,
+        #[arg(
+            long,
+            help = "Simulate transaction execution and print resource consumption without submitting"
+        )]
+        dry_run: bool,
     },
     /// Create and submit a new on-chain attestation
     Create {
@@ -1138,6 +1143,11 @@ enum AttestCommands {
         contract_id: String,
         #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
         rpc_url: Option<String>,
+        #[arg(
+            long,
+            help = "Simulate transaction execution and print resource consumption without submitting"
+        )]
+        dry_run: bool,
     },
     /// Verify an on-chain attestation's current validity
     Verify {
@@ -1536,25 +1546,101 @@ fn print_sas_fee_admin_result(
     emit_ok(output, || println!("{human}"), data)
 }
 
-/// Prints a [`soroban_sas_sdk::client::DryRunResult`] (issue #329's
-/// `--dry-run`): no transaction was signed or submitted, so there is no
-/// hash to report — only the simulated resource fee.
+/// Prints a [`soroban_sas_sdk::client::DryRunResult`] (issue #329, #473's
+/// `--dry-run`): no transaction was signed or submitted, displaying exact
+/// resource consumption (CPU instructions, RAM bytes, storage entries, fees).
 fn print_dry_run_result(
     result: soroban_sas_sdk::client::DryRunResult,
     output: OutputFormat,
 ) -> Result<(), String> {
-    let human = format!(
-        "Dry run: `{}` would succeed\nEstimated fee: {} stroops (simulated against ledger {})\nNo transaction was submitted.",
-        result.function_name, result.total_fee, result.latest_ledger
-    );
-    let data = serde_json::json!({
-        "dry_run": true,
-        "function": result.function_name,
-        "estimated_fee_stroops": result.total_fee,
-        "min_resource_fee_stroops": result.min_resource_fee,
-        "simulated_ledger": result.latest_ledger,
-    });
-    emit_ok(output, || println!("{human}"), data)
+    match output {
+        OutputFormat::Human => {
+            println!("Dry run: `{}` simulation succeeded", result.function_name);
+            println!("Simulated against ledger: {}", result.latest_ledger);
+            println!(
+                "Total estimated fee:      {} stroops (min resource fee: {} stroops)",
+                result.total_fee, result.min_resource_fee
+            );
+            if let Some(ref res) = result.resources {
+                println!();
+                println!("Resource Breakdown:");
+                println!("┌───────────────────────┬────────────────────────┬──────────────┐");
+                println!("│ Metric                │ Consumed               │ Limit Status │");
+                println!("├───────────────────────┼────────────────────────┼──────────────┤");
+                println!(
+                    "│ CPU Instructions      │ {:<22} │ {:<12} │",
+                    format!("{} inst", res.cpu_instructions),
+                    if res.cpu_instructions > 80_000_000 {
+                        "WARN (>80%)"
+                    } else {
+                        "OK"
+                    }
+                );
+                println!(
+                    "│ Read Bytes            │ {:<22} │ {:<12} │",
+                    format!("{} B", res.read_bytes),
+                    if res.read_bytes > 160_000 {
+                        "WARN (>80%)"
+                    } else {
+                        "OK"
+                    }
+                );
+                println!(
+                    "│ Write Bytes           │ {:<22} │ {:<12} │",
+                    format!("{} B", res.write_bytes),
+                    if res.write_bytes > 104_000 {
+                        "WARN (>80%)"
+                    } else {
+                        "OK"
+                    }
+                );
+                println!(
+                    "│ Read-Only Keys        │ {:<22} │ {:<12} │",
+                    res.read_only_entries,
+                    if res.read_only_entries + res.read_write_entries > 32 {
+                        "WARN (>80%)"
+                    } else {
+                        "OK"
+                    }
+                );
+                println!(
+                    "│ Read-Write Keys       │ {:<22} │ {:<12} │",
+                    res.read_write_entries,
+                    if res.read_write_entries > 20 {
+                        "WARN (>80%)"
+                    } else {
+                        "OK"
+                    }
+                );
+                println!("└───────────────────────┴────────────────────────┴──────────────┘");
+                if res.approaches_limits {
+                    println!("\n[!] WARNING: Transaction approaches network resource limits (>80% of limit):");
+                    for w in &res.limit_warnings {
+                        println!("    * {w}");
+                    }
+                }
+            }
+            println!("\nNo transaction was broadcast to the network.");
+            Ok(())
+        }
+        OutputFormat::Json => {
+            let data = serde_json::json!({
+                "dry_run": true,
+                "function": result.function_name,
+                "simulated_ledger": result.latest_ledger,
+                "estimated_fee_stroops": result.total_fee,
+                "min_resource_fee_stroops": result.min_resource_fee,
+                "cpu_instructions": result.resources.as_ref().map(|r| r.cpu_instructions),
+                "read_bytes": result.resources.as_ref().map(|r| r.read_bytes),
+                "write_bytes": result.resources.as_ref().map(|r| r.write_bytes),
+                "read_only_entries": result.resources.as_ref().map(|r| r.read_only_entries),
+                "read_write_entries": result.resources.as_ref().map(|r| r.read_write_entries),
+                "approaches_limits": result.resources.as_ref().map(|r| r.approaches_limits).unwrap_or(false),
+                "limit_warnings": result.resources.as_ref().map(|r| &r.limit_warnings),
+            });
+            emit_ok(output, || {}, data)
+        }
+    }
 }
 
 /// A CSV row that has passed every local check, ready to be submitted.
@@ -1638,6 +1724,7 @@ fn run_attest(
             rpc_url,
             allow_local_time,
             max_ledger_skew,
+            dry_run,
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
@@ -1692,6 +1779,13 @@ fn run_attest(
                 data: hex::encode(&data_bytes),
             };
             let attestation = offchain::parse_attestation(&env, &input)?;
+
+            if dry_run {
+                let result = client
+                    .attest_dry_run(&rpc, &seed, attestation)
+                    .map_err(|e| e.to_string())?;
+                return print_dry_run_result(result, output);
+            }
 
             let result = client
                 .attest(&rpc, &network_passphrase, &seed, attestation)
@@ -1969,6 +2063,7 @@ fn run_attest(
             network_passphrase,
             contract_id,
             rpc_url,
+            dry_run,
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
@@ -1978,6 +2073,12 @@ fn run_attest(
             let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            if dry_run {
+                let result = client
+                    .revoke_dry_run(&rpc, &seed, &uid)
+                    .map_err(|e| e.to_string())?;
+                return print_dry_run_result(result, output);
+            }
             let result = client
                 .revoke(&rpc, &network_passphrase, &seed, &uid)
                 .map_err(|e| e.to_string())?;

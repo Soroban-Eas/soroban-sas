@@ -255,6 +255,78 @@ mod tests {
     }
 
     #[test]
+    fn parses_attest_attest_dry_run_flag() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "attest",
+            "attest",
+            "--schema-uid",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "--recipient",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--dry-run",
+        ])
+        .unwrap();
+
+        let Some(Commands::Attest {
+            action: AttestCommands::Attest { dry_run, .. },
+        }) = cli.command
+        else {
+            panic!("expected attest attest command");
+        };
+        assert!(dry_run);
+    }
+
+    #[test]
+    fn parses_attest_revoke_dry_run_flag() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "attest",
+            "revoke",
+            "--uid",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "--dry-run",
+        ])
+        .unwrap();
+
+        let Some(Commands::Attest {
+            action: AttestCommands::Revoke { dry_run, .. },
+        }) = cli.command
+        else {
+            panic!("expected attest revoke command");
+        };
+        assert!(dry_run);
+    }
+
+    #[test]
+    fn print_dry_run_result_table_formatting() {
+        use soroban_sas_sdk::client::{DryRunResult, ResourceBreakdown};
+        let result = DryRunResult {
+            function_name: "attest".to_string(),
+            min_resource_fee: 5000,
+            total_fee: 5100,
+            latest_ledger: 1000,
+            resources: Some(ResourceBreakdown {
+                cpu_instructions: 90_000_000,
+                read_bytes: 50_000,
+                write_bytes: 20_000,
+                read_only_entries: 5,
+                read_write_entries: 2,
+                approaches_limits: true,
+                limit_warnings: vec![
+                    "CPU instructions (90000000) exceed 80% of limit (100,000,000)".to_string(),
+                ],
+            }),
+        };
+        assert!(crate::print_dry_run_result(result.clone(), OutputFormat::Human).is_ok());
+        assert!(crate::print_dry_run_result(result, OutputFormat::Json).is_ok());
+    }
+
+    #[test]
     fn parses_attest_bulk_flags_with_safe_defaults() {
         let cli = Cli::try_parse_from([
             "soroban-sas",
