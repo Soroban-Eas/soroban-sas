@@ -157,6 +157,59 @@ fn commit_upgrade(env: &Env, admin: &Address, new_wasm_hash: &BytesN<32>, new_ve
 
 const MAX_SCAN_BUDGET: u32 = 100;
 
+const MAX_CATEGORY_BYTES: u32 = 32;
+
+/// An empty category is accepted only to represent uncategorized registration.
+/// Nonempty category names must be ASCII letters, digits, or a hyphen.
+fn validate_category(env: &Env, category: &String) {
+    let len = category.len();
+    if len > MAX_CATEGORY_BYTES {
+        panic_with_error!(env, SASError::InvalidValue);
+    }
+    let mut bytes = [0u8; MAX_CATEGORY_BYTES as usize];
+    category.copy_into_slice(&mut bytes[..len as usize]);
+    if bytes[..len as usize]
+        .iter()
+        .any(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-')
+    {
+        panic_with_error!(env, SASError::InvalidValue);
+    }
+}
+
+/// Index a UID only once, after a successful schema registration.
+fn index_category(env: &Env, uid: &UID, category: &String) {
+    let count_key = (CATEGORY_COUNT, category.clone());
+    let count: u32 = if let Some(count) = env.storage().persistent().get(&count_key) {
+        count
+    } else if env
+        .storage()
+        .persistent()
+        .has(&(CATEGORY_INDEX, category.clone(), 0u32))
+    {
+        // A lost count would otherwise overwrite a live index entry.
+        panic_with_error!(env, SASError::CountMetadataExpired);
+    } else {
+        0
+    };
+    let next = count
+        .checked_add(1)
+        .unwrap_or_else(|| panic_with_error!(env, SASError::LimitExceeded));
+    let index_key = (CATEGORY_INDEX, category.clone(), count);
+    let schema_key = (SCHEMA_CATEGORY, uid.clone());
+    env.storage().persistent().set(&schema_key, category);
+    env.storage().persistent().set(&index_key, uid);
+    env.storage().persistent().set(&count_key, &next);
+    env.storage()
+        .persistent()
+        .extend_ttl(&schema_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    env.storage()
+        .persistent()
+        .extend_ttl(&index_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+}
+
 // ===== MULTI-SIGNATURE SCHEMA OWNERS (#288) =====
 
 /// Multi-signature owner configuration for one schema.
@@ -1268,6 +1321,102 @@ impl SchemaRegistry {
         Self::register_internal(env, owner, schema, resolver, revocable, max_ttl)
     }
 
+    /// Registers a schema in an optional, searchable namespace (#535).
+    ///
+    /// Existing registration entrypoints remain unchanged for ABI compatibility;
+    /// categories are indexed in separate persistent keys rather than changing
+    /// the serialized SchemaRecord or its content-addressed UID.
+    pub fn register_with_category(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        category: Option<String>,
+    ) -> UID {
+        owner.require_auth();
+        if let Some(ref name) = category {
+            validate_category(&env, name);
+        }
+        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable, 0);
+        if let Some(name) = category {
+            if !name.is_empty() {
+                index_category(&env, &uid, &name);
+            }
+        }
+        uid
+    }
+
+    /// Returns the namespace of a registered schema, if supplied at creation.
+    pub fn get_schema_category(env: Env, uid: UID) -> Option<String> {
+        extend_instance_ttl(&env);
+        if !env.storage().persistent().has(&uid) {
+            return None;
+        }
+        let key = (SCHEMA_CATEGORY, uid);
+        let category: Option<String> = env.storage().persistent().get(&key);
+        if category.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        category
+    }
+
+    /// Returns active schemas in `category` and the next position to scan.
+    ///
+    /// `cursor` is an offset in the namespace append-only index, not a
+    /// global schema offset. A page scans at most MAX_SCAN_BUDGET entries.
+    /// Call again with the returned cursor until it reaches the index count.
+    pub fn get_schemas_by_category(
+        env: Env,
+        category: String,
+        cursor: u32,
+        limit: u32,
+    ) -> (Vec<SchemaRecord>, u32) {
+        validate_category(&env, &category);
+        extend_instance_ttl(&env);
+        let count_key = (CATEGORY_COUNT, category.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if count > 0 {
+            env.storage().persistent().extend_ttl(
+                &count_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
+        if limit == 0 || cursor >= count {
+            return (Vec::new(&env), cursor.min(count));
+        }
+        let mut items = Vec::new(&env);
+        let mut current = cursor;
+        let mut scanned = 0u32;
+        while current < count && scanned < MAX_SCAN_BUDGET && items.len() < limit {
+            let key = (CATEGORY_INDEX, category.clone(), current);
+            if let Some(uid) = env.storage().persistent().get::<_, UID>(&key) {
+                env.storage().persistent().extend_ttl(
+                    &key,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
+                let deprecated: bool = env
+                    .storage()
+                    .persistent()
+                    .get(&(DEPRECATED, uid.clone()))
+                    .unwrap_or(false);
+                if !deprecated {
+                    if let Some(record) = env.storage().persistent().get::<_, SchemaRecord>(&uid) {
+                        renew_schema_record(&env, &uid);
+                        items.push_back(record);
+                    }
+                }
+            }
+            current += 1;
+            scanned += 1;
+        }
+        (items, current)
+    }
+
     fn register_internal(
         env: Env,
         owner: Address,
@@ -1659,3 +1808,6 @@ mod owner_multisig_test;
 mod test;
 #[cfg(test)]
 mod test_extra;
+
+#[cfg(test)]
+mod category_test;

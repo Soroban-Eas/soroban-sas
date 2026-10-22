@@ -225,6 +225,63 @@ jobs:
       - run: cargo fuzz build attestation_builder_fuzz
       - run: cargo fuzz run attestation_builder_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
 
+  differential-hashing-smoke:
+    name: Smoke · differential_hashing_fuzz and JS/Rust/contract parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz build differential_hashing_fuzz
+      - run: cargo fuzz run differential_hashing_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
+      - run: cargo +stable run --manifest-path fuzz/Cargo.toml --bin differential_fixture_export --quiet > /tmp/sas-hash-parity.ndjson
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/soroban-sas-js/package-lock.json
+      - run: npm ci
+        working-directory: packages/soroban-sas-js
+      - run: npm test -- --run test/differential.test.ts
+        working-directory: packages/soroban-sas-js
+        env:
+          SAS_DIFFERENTIAL_FIXTURES: /tmp/sas-hash-parity.ndjson
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: differential-hashing-crashes
+          path: fuzz/artifacts/differential_hashing_fuzz/
+          if-no-files-found: ignore
+
+  differential-hashing-campaign:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Campaign · differential_hashing_fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-06-13
+      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run differential_hashing_fuzz -- -runs=250000 -seed=${{ matrix.shard }} -max_len=512 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: differential-hashing-crashes-${{ matrix.shard }}
+          path: fuzz/artifacts/differential_hashing_fuzz/
+          if-no-files-found: ignore
+
   # ── Full campaigns (scheduled / manual only) ───────────────────────────────
   # Campaign jobs run on a weekly schedule and on manual dispatch.  They run
   # the fuzz target for a large number of executions (typically 100k–500k),

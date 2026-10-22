@@ -26,6 +26,9 @@ For an in-depth look at how state is managed, the interactions between various s
 
 ## Security and Threat Mitigation
 
+For the authorization matrix, protocol invariants, threat scenarios and emergency runbook, see [Security Model and Threat Analysis](SECURITY_MODEL.md).
+
+
 Details about our security perimeter, administrative capabilities, and known vulnerabilities can be found in the [Security Assumptions and Threat Model](docs/security.md) guide.
 
 Dependency security checks and indexer fuzzing commands are described in [Contributing](CONTRIBUTING.md).

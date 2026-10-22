@@ -1,0 +1,30 @@
+services:
+  stellar:
+    image: stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784
+    command: --standalone --enable-soroban-rpc
+    ports:
+      - "8000:8000"
+    volumes:
+      - localnet:/opt/stellar
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -f -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getHealth\"}' http://localhost:8000/soroban/rpc | grep -q 'healthy'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  issuer:
+    profiles: ["issuer"]
+    build:
+      context: ../..
+      dockerfile: examples/automated_issuer_service/Dockerfile
+    depends_on:
+      stellar:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      RPC_URL: http://stellar:8000/soroban/rpc
+    restart: "no"
+
+volumes:
+  localnet:

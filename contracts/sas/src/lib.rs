@@ -556,6 +556,17 @@ impl SAS {
         Self::attest_internal(env, attestation)
     }
 
+    /// Pure digest oracle for cross-language off-chain signing parity (#489).
+    /// Uses the exact domain of attest_by_delegation but does not mutate state.
+    pub fn hash_delegation_digest(env: Env, attestation: Attestation, nonce: u64) -> BytesN<32> {
+        let domain = soroban_sas_common::AttestationDomain {
+            network_id: env.ledger().network_id(),
+            contract: env.current_contract_address(),
+            nonce,
+        };
+        soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain)
+    }
+
     pub fn attest_by_delegation(
         env: Env,
         attestation: Attestation,

@@ -76,3 +76,10 @@ pub const SCHEMA_OWNER_TRANSFER_CANCELLED: Symbol = symbol_short!("OWNCANC");
 /// cost of every approval scan so a hostile configuration cannot make owner
 /// checks unbounded.
 pub const MAX_OWNER_SET: u32 = 10;
+
+/// (CATEGORY_COUNT, category) -> number of registrations within a namespace.
+pub const CATEGORY_COUNT: Symbol = symbol_short!("CATCOUNT");
+/// (CATEGORY_INDEX, category, offset) -> schema UID (append-only index).
+pub const CATEGORY_INDEX: Symbol = symbol_short!("CATINDEX");
+/// (SCHEMA_CATEGORY, uid) -> optional category kept apart from SchemaRecord.
+pub const SCHEMA_CATEGORY: Symbol = symbol_short!("CATSCHEMA");

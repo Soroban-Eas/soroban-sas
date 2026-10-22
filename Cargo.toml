@@ -33,6 +33,12 @@ ed25519-dalek = "2.0.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 ureq = "2"
 
+# Issue #497 automated issuer: a standard workspace example binary.
+# Use the shared, pinned workspace lockfile and toolchain for this example.
+[[example]]
+name = "automated_issuer_service"
+path = "examples/automated_issuer_service/src/main.rs"
+
 [[bench]]
 name = "hashing_benchmark"
 harness = false

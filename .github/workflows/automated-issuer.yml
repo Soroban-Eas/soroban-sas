@@ -1,0 +1,21 @@
+name: Automated issuer example
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/automated_issuer_service/**'
+      - 'packages/soroban-sas-sdk/**'
+      - '.github/workflows/automated-issuer.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.83.0'
+      - run: cargo test --example automated_issuer_service
+      - run: cargo clippy --example automated_issuer_service -- -D warnings

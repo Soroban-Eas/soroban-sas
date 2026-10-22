@@ -81,6 +81,7 @@ We consider security research conducted under this policy to be authorized. We c
 
 ## Additional Resources
 
+- [Contract Security Model, Authorization Matrix and Incident Runbook](SECURITY_MODEL.md)
 - [Security Assumptions and Threat Model](docs/security.md)
 - [Zero-Knowledge Private Attestations](docs/zk-private-attestations.md)
 - [Contributing Guidelines](CONTRIBUTING.md)
