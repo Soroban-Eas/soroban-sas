@@ -387,5 +387,32 @@ pub struct AttesterKeyStorageKey {
     pub attester: Address,
 }
 
+/// Single schema definition in a batch schema registration (#445).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaBatchItem {
+    pub owner: Address,
+    pub schema: String,
+    pub resolver: Address,
+    pub revocable: bool,
+}
+
+/// Schema creator fee configuration (#434).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaFeeConfig {
+    pub fee_type: u32,
+    pub fixed_amount: i128,
+    pub basis_points: u32,
+}
+
+/// Fee ceilings set by protocol admin (#434).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCeilings {
+    pub max_fixed_fee: i128,
+    pub max_basis_points: u32,
+}
+
 #[cfg(test)]
 mod test;

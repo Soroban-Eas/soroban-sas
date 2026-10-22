@@ -2,7 +2,7 @@ extern crate alloc;
 use crate::{SchemaRegistry, SchemaRegistryClient};
 use alloc::format;
 use alloc::vec::Vec;
-use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sas_common::{SASError, SchemaBatchItem, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
 /// `live_until_ledger` recorded for one persistent contract-data entry, or
@@ -345,4 +345,237 @@ fn test_get_schema_by_content_matches_uid_lookup_and_rejects_invalid_syntax() {
     assert!(client
         .get_schema_by_content(&schema, &resolver, &true)
         .is_none());
+}
+
+#[test]
+fn test_schema_metadata_uri_registration_and_update() {
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let schema = String::from_str(&env, "bool certified");
+    let resolver = Address::generate(&env);
+    let initial_uri = String::from_str(&env, "ipfs://QmInitialMetadataUri");
+
+    // Register with metadata URI
+    let uid = client.register_schema(
+        &owner,
+        &schema,
+        &resolver,
+        &true,
+        &Some(initial_uri.clone()),
+    );
+
+    // Verify metadata lookup
+    assert_eq!(client.get_schema_metadata(&uid), Some(initial_uri.clone()));
+    assert_eq!(client.get_schema_metadata_uri(&uid), Some(initial_uri));
+
+    let with_meta = client.get_schema_with_metadata(&uid).expect("record found");
+    assert_eq!(with_meta.0.schema, schema);
+    assert_eq!(
+        with_meta.1,
+        Some(String::from_str(&env, "ipfs://QmInitialMetadataUri"))
+    );
+
+    // Update metadata URI by owner succeeds
+    let updated_uri = String::from_str(&env, "https://example.com/schema-context.jsonld");
+    client.update_schema_metadata(&uid, &owner, &updated_uri);
+    assert_eq!(client.get_schema_metadata(&uid), Some(updated_uri.clone()));
+
+    // Non-owner cannot update metadata URI
+    let unauthorized_uri = String::from_str(&env, "https://evil.com/fake.jsonld");
+    assert_eq!(
+        client.try_update_schema_metadata(&uid, &stranger, &unauthorized_uri),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
+
+    // Deprecated schema hides metadata URI
+    client.deprecate(&uid, &admin);
+    assert_eq!(client.get_schema_metadata(&uid), None);
+    assert_eq!(client.get_schema_with_metadata(&uid), None);
+}
+
+#[test]
+fn test_schema_metadata_uri_length_limits() {
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let schema = String::from_str(&env, "uint32 score");
+    let resolver = Address::generate(&env);
+
+    // 256 characters should succeed
+    let mut exact_256 = alloc::string::String::with_capacity(256);
+    for _ in 0..256 {
+        exact_256.push('a');
+    }
+    let valid_uri = String::from_str(&env, &exact_256);
+    let uid = client.register_schema(&owner, &schema, &resolver, &false, &Some(valid_uri.clone()));
+    assert_eq!(client.get_schema_metadata(&uid), Some(valid_uri));
+
+    // 257 characters should fail with InvalidValue
+    let mut too_long = alloc::string::String::with_capacity(257);
+    for _ in 0..257 {
+        too_long.push('b');
+    }
+    let invalid_uri = String::from_str(&env, &too_long);
+    let schema2 = String::from_str(&env, "string title");
+    assert_eq!(
+        client.try_register_schema(
+            &owner,
+            &schema2,
+            &resolver,
+            &false,
+            &Some(invalid_uri.clone()),
+        ),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    // Updating to > 256 characters should also fail
+    assert_eq!(
+        client.try_update_schema_metadata(&uid, &owner, &invalid_uri),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+}
+
+#[test]
+fn test_register_schemas_batch_happy_path() {
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner1 = Address::generate(&env);
+    let owner2 = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let resolver = Address::generate(&env);
+    let mut batch = soroban_sdk::Vec::new(&env);
+    batch.push_back(SchemaBatchItem {
+        owner: owner1.clone(),
+        schema: String::from_str(&env, "bool certified"),
+        resolver: resolver.clone(),
+        revocable: true,
+    });
+    batch.push_back(SchemaBatchItem {
+        owner: owner2.clone(),
+        schema: String::from_str(&env, "uint32 score, string badge"),
+        resolver: resolver.clone(),
+        revocable: false,
+    });
+    batch.push_back(SchemaBatchItem {
+        owner: owner1.clone(),
+        schema: String::from_str(&env, "bytes32 commitment"),
+        resolver: resolver.clone(),
+        revocable: true,
+    });
+
+    let uids = client.register_schemas_batch(&batch);
+    assert_eq!(uids.len(), 3);
+
+    // Distinct UIDs generated in matching order
+    let uid0 = uids.get(0).unwrap();
+    let uid1 = uids.get(1).unwrap();
+    let uid2 = uids.get(2).unwrap();
+    assert_ne!(uid0, uid1);
+    assert_ne!(uid1, uid2);
+    assert_ne!(uid0, uid2);
+
+    // Each is retrievable
+    let s0 = client.get_schema(&uid0).expect("schema 0 found");
+    assert_eq!(s0.schema, String::from_str(&env, "bool certified"));
+    assert!(s0.revocable);
+
+    let s1 = client.get_schema(&uid1).expect("schema 1 found");
+    assert_eq!(
+        s1.schema,
+        String::from_str(&env, "uint32 score, string badge")
+    );
+    assert!(!s1.revocable);
+
+    let s2 = client.get_schema(&uid2).expect("schema 2 found");
+    assert_eq!(s2.schema, String::from_str(&env, "bytes32 commitment"));
+    assert!(s2.revocable);
+}
+
+#[test]
+fn test_register_schemas_batch_atomic_rollback() {
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let resolver = Address::generate(&env);
+    let valid_schema = String::from_str(&env, "bool certified");
+    let invalid_schema = String::from_str(&env, "!!!");
+
+    let mut batch = soroban_sdk::Vec::new(&env);
+    batch.push_back(SchemaBatchItem {
+        owner: owner.clone(),
+        schema: valid_schema.clone(),
+        resolver: resolver.clone(),
+        revocable: true,
+    });
+    batch.push_back(SchemaBatchItem {
+        owner: owner.clone(),
+        schema: invalid_schema,
+        resolver: resolver.clone(),
+        revocable: false,
+    });
+
+    // Batch must fail
+    let res = client.try_register_schemas_batch(&batch);
+    assert!(res.is_err());
+
+    // The first valid schema was NOT committed because execution rolled back
+    let expected_uid = soroban_sas_common::schema_uid(&env, &valid_schema, &resolver, true);
+    assert!(client.get_schema(&expected_uid).is_none());
+}
+
+#[test]
+fn test_register_schemas_batch_bounds() {
+    let env = Env::default();
+    let cid = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin);
+
+    let resolver = Address::generate(&env);
+
+    // Empty batch fails with InvalidValue
+    let empty_batch = soroban_sdk::Vec::new(&env);
+    assert_eq!(
+        client.try_register_schemas_batch(&empty_batch),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    // Exceeding MAX_SCHEMA_BATCH_SIZE (50) fails with BatchTooLarge
+    let mut large_batch = soroban_sdk::Vec::new(&env);
+    for i in 0..51 {
+        let field = alloc::format!("uint32 field_{}", i);
+        large_batch.push_back(SchemaBatchItem {
+            owner: owner.clone(),
+            schema: String::from_str(&env, &field),
+            resolver: resolver.clone(),
+            revocable: true,
+        });
+    }
+    assert_eq!(
+        client.try_register_schemas_batch(&large_batch),
+        Err(Ok(SASError::BatchTooLarge.into()))
+    );
 }

@@ -1,6 +1,6 @@
 use crate::{SASClient, SAS};
 use ed25519_dalek::{Signer, SigningKey};
-use soroban_sas_common::{Attestation, SASError, SchemaRecord, UID};
+use soroban_sas_common::{Attestation, FeeCeilings, SASError, SchemaFeeConfig, SchemaRecord, UID};
 use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, String as SorobanString};
 
 pub mod mock_registry {
@@ -12,6 +12,7 @@ pub mod mock_registry {
 
     // Store for active flag: use persistent storage key (DEPRECATED, uid) similarly
     const DEPRECATED: Symbol = soroban_sdk::symbol_short!("DEPRECATE");
+    const CREATOR: Symbol = soroban_sdk::symbol_short!("CREATOR");
 
     #[contractimpl]
     impl MockRegistry {
@@ -39,6 +40,46 @@ pub mod mock_registry {
         }
         pub fn set_deprecated(env: Env, uid: UID, val: bool) {
             env.storage().persistent().set(&(DEPRECATED, uid), &val);
+        }
+        pub fn get_creator(env: Env, uid: UID) -> Option<Address> {
+            env.storage().persistent().get(&(CREATOR, uid))
+        }
+        pub fn set_creator(env: Env, uid: UID, creator: Address) {
+            env.storage().persistent().set(&(CREATOR, uid), &creator);
+        }
+    }
+}
+
+pub mod mock_indexer {
+    use super::*;
+    use soroban_sdk::{contract, contractimpl, Env, Vec};
+
+    #[contract]
+    pub struct MockIndexer;
+
+    #[contractimpl]
+    impl MockIndexer {
+        pub fn index_attestation(
+            env: Env,
+            uid: UID,
+            recipient: Address,
+            _schema_uid: UID,
+            _attester: Address,
+        ) {
+            let mut uids: Vec<UID> = env
+                .storage()
+                .persistent()
+                .get(&recipient)
+                .unwrap_or_else(|| Vec::new(&env));
+            uids.push_back(uid);
+            env.storage().persistent().set(&recipient, &uids);
+        }
+
+        pub fn get_attestations_by_recipient(env: Env, recipient: Address) -> Vec<UID> {
+            env.storage()
+                .persistent()
+                .get(&recipient)
+                .unwrap_or_else(|| Vec::new(&env))
         }
     }
 }
@@ -1049,4 +1090,547 @@ fn test_attest_before_init_returns_not_initialized() {
     };
     let res = sas_client.try_attest(&expired);
     assert_eq!(res, Err(Ok(SASError::NotInitialized.into())));
+}
+
+#[test]
+fn test_broadcast_attest_happy_path_and_reverse_indexing() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let indexer_id = env.register_contract(None, mock_indexer::MockIndexer);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let indexer_client = mock_indexer::MockIndexerClient::new(&env, &indexer_id);
+    let registry_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    sas_client.set_indexer(&indexer_id);
+
+    let resolver_id = env.register_contract(
+        None,
+        resolver_semantics::accepting_resolver::AcceptingResolver,
+    );
+    let schema_uid = UID(BytesN::from_array(&env, &[101u8; 32]));
+    let schema_record = SchemaRecord {
+        uid: schema_uid.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid, &schema_record);
+    registry_client.set_creator(&schema_uid, &creator);
+
+    let recip1 = Address::generate(&env);
+    let recip2 = Address::generate(&env);
+    let recip3 = Address::generate(&env);
+    let mut recipients = soroban_sdk::Vec::new(&env);
+    recipients.push_back(recip1.clone());
+    recipients.push_back(recip2.clone());
+    recipients.push_back(recip3.clone());
+
+    let data = Bytes::from_slice(&env, b"shared broadcast payload");
+    let expiration_time = 5000u64;
+
+    // Call broadcast_attest_by_attester
+    let uids = sas_client.broadcast_attest_by_attester(
+        &attester,
+        &schema_uid,
+        &recipients,
+        &data,
+        &expiration_time,
+        &true,
+    );
+
+    assert_eq!(uids.len(), 3);
+    let uid0 = uids.get(0).unwrap();
+    let uid1 = uids.get(1).unwrap();
+    let uid2 = uids.get(2).unwrap();
+
+    // Deterministic and distinct
+    assert_ne!(uid0, uid1);
+    assert_ne!(uid1, uid2);
+    assert_ne!(uid0, uid2);
+
+    // Each attestation stored and verified in SAS
+    let att0 = sas_client.get_attestation(&uid0).expect("att0 exists");
+    assert_eq!(att0.recipient, recip1);
+    assert_eq!(att0.attester, attester);
+    assert_eq!(att0.schema_uid, schema_uid);
+    assert_eq!(att0.data, data);
+    assert_eq!(att0.expiration_time, expiration_time);
+    assert!(att0.revocable);
+
+    let att1 = sas_client.get_attestation(&uid1).expect("att1 exists");
+    assert_eq!(att1.recipient, recip2);
+    let att2 = sas_client.get_attestation(&uid2).expect("att2 exists");
+    assert_eq!(att2.recipient, recip3);
+
+    // Reverse indexing verified: indexer was notified and indexed each recipient
+    let r1_uids = indexer_client.get_attestations_by_recipient(&recip1);
+    assert!(r1_uids.contains(&uid0));
+    let r2_uids = indexer_client.get_attestations_by_recipient(&recip2);
+    assert!(r2_uids.contains(&uid1));
+    let r3_uids = indexer_client.get_attestations_by_recipient(&recip3);
+    assert!(r3_uids.contains(&uid2));
+
+    // Also test broadcast_attest where attester is inferred as creator
+    let recip4 = Address::generate(&env);
+    let recip5 = Address::generate(&env);
+    let mut batch2 = soroban_sdk::Vec::new(&env);
+    batch2.push_back(recip4.clone());
+    batch2.push_back(recip5.clone());
+
+    let uids2 = sas_client.broadcast_attest(&schema_uid, &batch2, &data, &expiration_time, &true);
+    assert_eq!(uids2.len(), 2);
+    let att4 = sas_client.get_attestation(&uids2.get(0).unwrap()).unwrap();
+    assert_eq!(att4.attester, creator);
+    assert_eq!(att4.recipient, recip4);
+}
+
+#[test]
+fn test_broadcast_attest_atomic_rollback_and_error_cases() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let registry_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let attester = Address::generate(&env);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    // Register a schema with RejectingResolver
+    let rejecting_resolver_id = env.register_contract(
+        None,
+        resolver_semantics::rejecting_resolver::RejectingResolver,
+    );
+    let schema_uid = UID(BytesN::from_array(&env, &[102u8; 32]));
+    let schema_record = SchemaRecord {
+        uid: schema_uid.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: rejecting_resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid, &schema_record);
+    registry_client.set_creator(&schema_uid, &creator);
+
+    let recip1 = Address::generate(&env);
+    let recip2 = Address::generate(&env);
+    let mut recipients = soroban_sdk::Vec::new(&env);
+    recipients.push_back(recip1.clone());
+    recipients.push_back(recip2.clone());
+
+    let data = Bytes::new(&env);
+
+    // Rejection by resolver rolls back entire batch atomically
+    let res = sas_client.try_broadcast_attest(&schema_uid, &recipients, &data, &0, &true);
+    assert_eq!(res, Err(Ok(SASError::ResolverRejected.into())));
+
+    // Verify nothing was stored
+    let expected_uid =
+        soroban_sas_common::attestation_uid(&env, &schema_uid, &recip1, &creator, &data);
+    assert!(sas_client.get_attestation(&expected_uid).is_none());
+
+    // Register an accepting schema for duplicate and self-recipient checks
+    let accepting_resolver_id = env.register_contract(
+        None,
+        resolver_semantics::accepting_resolver::AcceptingResolver,
+    );
+    let schema_uid2 = UID(BytesN::from_array(&env, &[120u8; 32]));
+    let schema_record2 = SchemaRecord {
+        uid: schema_uid2.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: accepting_resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid2, &schema_record2);
+    registry_client.set_creator(&schema_uid2, &creator);
+
+    // Duplicate recipient in batch must fail
+    let mut dup_recipients = soroban_sdk::Vec::new(&env);
+    dup_recipients.push_back(recip1.clone());
+    dup_recipients.push_back(recip1.clone());
+    let res = sas_client.try_broadcast_attest_by_attester(
+        &attester,
+        &schema_uid2,
+        &dup_recipients,
+        &data,
+        &0,
+        &true,
+    );
+    assert_eq!(res, Err(Ok(SASError::DuplicateAttestation.into())));
+
+    // Self-attestation must fail
+    let mut self_recipients = soroban_sdk::Vec::new(&env);
+    self_recipients.push_back(attester.clone());
+    self_recipients.push_back(recip2);
+    let res = sas_client.try_broadcast_attest_by_attester(
+        &attester,
+        &schema_uid2,
+        &self_recipients,
+        &data,
+        &0,
+        &true,
+    );
+    assert_eq!(res, Err(Ok(SASError::InvalidRecipient.into())));
+}
+
+#[test]
+fn test_broadcast_attest_bounds() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let registry_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    let resolver_id = env.register_contract(
+        None,
+        resolver_semantics::accepting_resolver::AcceptingResolver,
+    );
+    let schema_uid = UID(BytesN::from_array(&env, &[103u8; 32]));
+    let schema_record = SchemaRecord {
+        uid: schema_uid.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid, &schema_record);
+    registry_client.set_creator(&schema_uid, &creator);
+
+    let data = Bytes::new(&env);
+
+    // Empty vector fails with InvalidValue
+    let empty_recips = soroban_sdk::Vec::new(&env);
+    assert_eq!(
+        sas_client.try_broadcast_attest(&schema_uid, &empty_recips, &data, &0, &true),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    // Over 100 recipients fails with BatchTooLarge
+    let mut large_recips = soroban_sdk::Vec::new(&env);
+    for _ in 0..101 {
+        large_recips.push_back(Address::generate(&env));
+    }
+    assert_eq!(
+        sas_client.try_broadcast_attest(&schema_uid, &large_recips, &data, &0, &true),
+        Err(Ok(SASError::BatchTooLarge.into()))
+    );
+}
+
+#[test]
+fn test_fee_split_base_only_when_no_creator_fee() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let registry_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+    let token = soroban_sdk::token::Client::new(&env, &token_id);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    token_admin.mint(&attester, &1000);
+    sas_client.set_fee(&token_id, &500);
+
+    let resolver_id = env.register_contract(
+        None,
+        resolver_semantics::accepting_resolver::AcceptingResolver,
+    );
+    let schema_uid = UID(BytesN::from_array(&env, &[104u8; 32]));
+    let schema_record = SchemaRecord {
+        uid: schema_uid.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid, &schema_record);
+    registry_client.set_creator(&schema_uid, &creator);
+
+    let data = Bytes::new(&env);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let attestation = Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1000,
+        expiration_time: 0,
+        valid_from: 0,
+        revocation_time: 0,
+        ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+        recipient,
+        attester: attester.clone(),
+        revocable: true,
+        data,
+    };
+
+    let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
+    assert_eq!(uid, attestation.uid);
+    assert_eq!(token.balance(&attester), 500);
+    assert_eq!(token.balance(&sas_id), 500);
+
+    // Treasury fee balance got full 500, creator fee balance is 0
+    assert_eq!(sas_client.get_treasury_fee_balance(&token_id), 500);
+    assert_eq!(sas_client.get_creator_fee_balance(&creator, &token_id), 0);
+}
+
+#[test]
+fn test_fee_split_fixed_creator_fee_and_withdrawals() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let registry_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury_dest = Address::generate(&env);
+    let creator_dest = Address::generate(&env);
+
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+    let token = soroban_sdk::token::Client::new(&env, &token_id);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    token_admin.mint(&attester, &2000);
+    sas_client.set_fee(&token_id, &300);
+
+    let resolver_id = env.register_contract(
+        None,
+        resolver_semantics::accepting_resolver::AcceptingResolver,
+    );
+    let schema_uid = UID(BytesN::from_array(&env, &[105u8; 32]));
+    let schema_record = SchemaRecord {
+        uid: schema_uid.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid, &schema_record);
+    registry_client.set_creator(&schema_uid, &creator);
+
+    // Schema creator configures a fixed fee of 200 (fee_type = 1)
+    sas_client.set_schema_fee(&schema_uid, &creator, &1u32, &200i128, &0u32);
+    let fee_cfg = SchemaFeeConfig {
+        fee_type: 1,
+        fixed_amount: 200,
+        basis_points: 0,
+    };
+    assert_eq!(sas_client.get_schema_fee(&schema_uid), Some(fee_cfg));
+
+    let data = Bytes::new(&env);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let attestation = Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1000,
+        expiration_time: 0,
+        valid_from: 0,
+        revocation_time: 0,
+        ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+        recipient,
+        attester: attester.clone(),
+        revocable: true,
+        data,
+    };
+
+    // Total required is base (300) + fixed (200) = 500
+    // Paying less than 500 fails
+    assert_eq!(
+        sas_client.try_attest_with_value(&attestation, &token_id, &300),
+        Err(Ok(SASError::FeeMismatch.into()))
+    );
+
+    // Paying exactly 500 succeeds
+    let uid = sas_client.attest_with_value(&attestation, &token_id, &500);
+    assert_eq!(uid, attestation.uid);
+
+    assert_eq!(token.balance(&attester), 1500);
+    assert_eq!(token.balance(&sas_id), 500);
+
+    // Treasury fee balance = 300, creator fee balance = 200
+    assert_eq!(sas_client.get_treasury_fee_balance(&token_id), 300);
+    assert_eq!(sas_client.get_creator_fee_balance(&creator, &token_id), 200);
+
+    // Creator withdraws their fees
+    sas_client.withdraw_creator_fees(&creator, &token_id, &200, &creator_dest);
+    assert_eq!(token.balance(&creator_dest), 200);
+    assert_eq!(sas_client.get_creator_fee_balance(&creator, &token_id), 0);
+    assert_eq!(token.balance(&sas_id), 300);
+
+    // Treasury admin withdraws protocol fees
+    sas_client.withdraw_treasury_fees(&admin, &token_id, &300, &treasury_dest);
+    assert_eq!(token.balance(&treasury_dest), 300);
+    assert_eq!(sas_client.get_treasury_fee_balance(&token_id), 0);
+    assert_eq!(token.balance(&sas_id), 0);
+}
+
+#[test]
+fn test_fee_split_basis_points_and_ceilings() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+    let registry_client = mock_registry::MockRegistryClient::new(&env, &registry_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+    token_admin.mint(&attester, &3000);
+    sas_client.set_fee(&token_id, &1000);
+
+    let resolver_id = env.register_contract(
+        None,
+        resolver_semantics::accepting_resolver::AcceptingResolver,
+    );
+    let schema_uid = UID(BytesN::from_array(&env, &[106u8; 32]));
+    let schema_record = SchemaRecord {
+        uid: schema_uid.clone(),
+        schema: SorobanString::from_str(&env, "bool certified"),
+        resolver: resolver_id,
+        revocable: true,
+        deprecated: false,
+    };
+    registry_client.set_schema(&schema_uid, &schema_record);
+    registry_client.set_creator(&schema_uid, &creator);
+
+    // Admin sets fee ceilings
+    let ceilings = FeeCeilings {
+        max_fixed_fee: 500,
+        max_basis_points: 2500, // max 25%
+    };
+    sas_client.set_fee_ceilings(&500, &2500);
+    assert_eq!(sas_client.get_fee_ceilings(), ceilings);
+
+    // Setting fee that exceeds ceiling fails
+    assert_eq!(
+        sas_client.try_set_schema_fee(&schema_uid, &creator, &2u32, &0i128, &2501u32),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    assert_eq!(
+        sas_client.try_set_schema_fee(&schema_uid, &creator, &1u32, &501i128, &0u32),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    // Valid 2000 bps (20%) succeeds
+    sas_client.set_schema_fee(&schema_uid, &creator, &2u32, &0i128, &2000u32);
+
+    // Attest with 1000 + (1000 * 2000 / 10000) = 1200
+    let data = Bytes::new(&env);
+    let uid = soroban_sas_common::attestation_uid(&env, &schema_uid, &recipient, &attester, &data);
+    let attestation = Attestation {
+        uid: uid.clone(),
+        schema_uid: schema_uid.clone(),
+        time: 1000,
+        expiration_time: 0,
+        valid_from: 0,
+        revocation_time: 0,
+        ref_uid: UID(BytesN::from_array(&env, &[0u8; 32])),
+        recipient,
+        attester: attester.clone(),
+        revocable: true,
+        data,
+    };
+    let uid = sas_client.attest_with_value(&attestation, &token_id, &1200);
+    assert_eq!(uid, attestation.uid);
+
+    assert_eq!(sas_client.get_treasury_fee_balance(&token_id), 1000);
+    assert_eq!(sas_client.get_creator_fee_balance(&creator, &token_id), 200);
+
+    // Clear schema fee restores base fee only
+    sas_client.clear_schema_fee(&schema_uid, &creator);
+    assert_eq!(sas_client.get_schema_fee(&schema_uid), None);
+
+    // Stranger cannot clear schema fee
+    assert_eq!(
+        sas_client.try_clear_schema_fee(&schema_uid, &stranger),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
+}
+
+#[test]
+fn test_withdrawal_error_guards() {
+    let env = Env::default();
+    let registry_id = env.register_contract(None, mock_registry::MockRegistry);
+    let sas_id = env.register_contract(None, SAS);
+    let sas_client = SASClient::new(&env, &sas_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let dest = Address::generate(&env);
+
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    env.mock_all_auths();
+    sas_client.init(&admin, &registry_id);
+
+    // Withdrawing non-positive amount fails
+    assert_eq!(
+        sas_client.try_withdraw_creator_fees(&creator, &token_id, &0, &dest),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+    assert_eq!(
+        sas_client.try_withdraw_treasury_fees(&admin, &token_id, &(-10), &dest),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    // Withdrawing exceeding balance fails
+    assert_eq!(
+        sas_client.try_withdraw_creator_fees(&creator, &token_id, &100, &dest),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+    assert_eq!(
+        sas_client.try_withdraw_treasury_fees(&admin, &token_id, &100, &dest),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    // Stranger attempting treasury withdrawal fails
+    assert_eq!(
+        sas_client.try_withdraw_treasury_fees(&stranger, &token_id, &50, &dest),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
 }

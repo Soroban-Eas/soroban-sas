@@ -269,3 +269,31 @@ pub fn publish_nonces_invalidated(env: &Env, attester: &Address, min_nonce: u64,
         },
     );
 }
+
+/// Publishes the `FeeDistributed` event when fees are split between treasury and schema creator (#434).
+///
+/// Topics: `(FEE_DISTRIBUTED, schema_uid)`.
+pub fn publish_fee_distributed(
+    env: &Env,
+    schema_uid: &UID,
+    token: &Address,
+    total_fee: i128,
+    treasury_amount: i128,
+    creator_amount: i128,
+    creator: &Address,
+) {
+    use soroban_sas_common::events::FEE_DISTRIBUTED;
+    use soroban_sas_common::FeeDistributedEvent;
+
+    env.events().publish(
+        (FEE_DISTRIBUTED, schema_uid.clone()),
+        FeeDistributedEvent {
+            schema_uid: schema_uid.clone(),
+            token: token.clone(),
+            total_fee,
+            treasury_amount,
+            creator_amount,
+            creator: creator.clone(),
+        },
+    );
+}

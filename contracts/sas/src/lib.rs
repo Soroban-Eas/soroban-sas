@@ -6,7 +6,8 @@ extern crate alloc;
 
 use soroban_sas_common::{
     Attestation, CompactAttestation, CompactAttestationKey, ContractUpgradedEvent,
-    DelegationNonceKey, SASError, LEDGERS_IN_ONE_YEAR, MAX_ATTESTATION_DATA_BYTES, UID,
+    DelegationNonceKey, FeeCeilings, SASError, SchemaFeeConfig, LEDGERS_IN_ONE_YEAR,
+    MAX_ATTESTATION_DATA_BYTES, UID,
 };
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, BytesN, Env, IntoVal,
@@ -29,6 +30,20 @@ pub const TREASURY: Symbol = symbol_short!("TREASURY");
 /// Instance key for the `(fee_token, fee_amount)` pair required by
 /// `attest_with_value`. Absent means attestation is fee-free (#164).
 pub const FEE_CONFIG: Symbol = symbol_short!("FEECFG");
+/// Storage key for schema creator custom fee configuration (#434).
+/// Stored under `(SCHEMA_FEE_CONFIG, schema_uid) -> SchemaFeeConfig`.
+pub const SCHEMA_FEE_CONFIG: Symbol = symbol_short!("SCHFEE");
+/// Storage key for accumulated treasury fee balance (#434).
+/// Stored under `(TREASURY_FEES, token) -> i128`.
+pub const TREASURY_FEES: Symbol = symbol_short!("TRSFEE");
+/// Storage key for accumulated schema creator fee balances (#434).
+/// Stored under `(CREATOR_FEES, creator, token) -> i128`.
+pub const CREATOR_FEES: Symbol = symbol_short!("CREFEE");
+/// Storage key for protocol fee ceilings (#434).
+/// Stored under `FEE_CEILINGS -> FeeCeilings`.
+pub const FEE_CEILINGS: Symbol = symbol_short!("FEECMAX");
+/// Protocol maximum allowable basis points for creator royalties (100% = 10,000 bps) (#434).
+pub const MAX_CREATOR_BPS: u32 = 10_000;
 /// Instance key for the fail-closed indexing toggle. When `true`, a failed
 /// Indexer push aborts attestation issuance with `IndexerUnavailable`
 /// instead of emitting `IndexFailed` (#161). Defaults to `false` (fail-open).
@@ -544,6 +559,215 @@ impl SAS {
         }
 
         token_client.transfer(&env.current_contract_address(), &destination, &amount);
+        events::publish_withdrawal(&env, &token, amount, &destination, &authorizer);
+        extend_instance_ttl(&env);
+    }
+
+    /// Admin: set protocol ceilings for creator fee fixed amount and basis points (#434).
+    pub fn set_fee_ceilings(env: Env, max_fixed_fee: i128, max_basis_points: u32) {
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        if max_fixed_fee < 0 || max_basis_points > MAX_CREATOR_BPS {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        let ceilings = FeeCeilings {
+            max_fixed_fee,
+            max_basis_points,
+        };
+        env.storage().instance().set(&FEE_CEILINGS, &ceilings);
+        extend_instance_ttl(&env);
+    }
+
+    /// Returns the currently active protocol fee ceilings (#434).
+    pub fn get_fee_ceilings(env: Env) -> FeeCeilings {
+        extend_instance_ttl(&env);
+        env.storage()
+            .instance()
+            .get(&FEE_CEILINGS)
+            .unwrap_or(FeeCeilings {
+                max_fixed_fee: i128::MAX,
+                max_basis_points: MAX_CREATOR_BPS,
+            })
+    }
+
+    /// Configures creator custom fee for schema `schema_uid` (#434).
+    /// `authorizer` must be schema creator or admin.
+    /// `fee_type`: 1 for Fixed amount, 2 for BasisPoints.
+    pub fn set_schema_fee(
+        env: Env,
+        schema_uid: UID,
+        authorizer: Address,
+        fee_type: u32,
+        fixed_amount: i128,
+        basis_points: u32,
+    ) {
+        extend_instance_ttl(&env);
+        authorizer.require_auth();
+
+        let registry = require_registry(&env);
+        let creator: Option<Address> = match env
+            .try_invoke_contract::<Option<Address>, soroban_sdk::Error>(
+                &registry,
+                &Symbol::new(&env, "get_creator"),
+                soroban_sdk::vec![&env, schema_uid.clone().into_val(&env)],
+            ) {
+            Ok(Ok(c)) => c,
+            _ => None,
+        };
+        let admin = require_admin(&env);
+        if creator.as_ref() != Some(&authorizer) && authorizer != admin {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        let ceilings = Self::get_fee_ceilings(env.clone());
+        if fee_type == 1 {
+            if fixed_amount < 0 || fixed_amount > ceilings.max_fixed_fee {
+                panic_with_error!(&env, SASError::InvalidValue);
+            }
+        } else if fee_type == 2 {
+            if basis_points > ceilings.max_basis_points {
+                panic_with_error!(&env, SASError::InvalidValue);
+            }
+        } else {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let config = SchemaFeeConfig {
+            fee_type,
+            fixed_amount,
+            basis_points,
+        };
+        let key = (SCHEMA_FEE_CONFIG, schema_uid);
+        env.storage().persistent().set(&key, &config);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        extend_instance_ttl(&env);
+    }
+
+    /// Clears creator custom fee for schema `schema_uid` (#434).
+    pub fn clear_schema_fee(env: Env, schema_uid: UID, authorizer: Address) {
+        extend_instance_ttl(&env);
+        authorizer.require_auth();
+
+        let registry = require_registry(&env);
+        let creator: Option<Address> = match env
+            .try_invoke_contract::<Option<Address>, soroban_sdk::Error>(
+                &registry,
+                &Symbol::new(&env, "get_creator"),
+                soroban_sdk::vec![&env, schema_uid.clone().into_val(&env)],
+            ) {
+            Ok(Ok(c)) => c,
+            _ => None,
+        };
+        let admin = require_admin(&env);
+        if creator.as_ref() != Some(&authorizer) && authorizer != admin {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        let key = (SCHEMA_FEE_CONFIG, schema_uid);
+        env.storage().persistent().remove(&key);
+        extend_instance_ttl(&env);
+    }
+
+    /// Returns the creator custom fee configuration for schema `schema_uid` (#434).
+    pub fn get_schema_fee(env: Env, schema_uid: UID) -> Option<SchemaFeeConfig> {
+        extend_instance_ttl(&env);
+        let key = (SCHEMA_FEE_CONFIG, schema_uid);
+        let config: Option<SchemaFeeConfig> = env.storage().persistent().get(&key);
+        if config.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        config
+    }
+
+    /// Returns accumulated treasury fee balance for a token (#434).
+    pub fn get_treasury_fee_balance(env: Env, token: Address) -> i128 {
+        extend_instance_ttl(&env);
+        let key = (TREASURY_FEES, token);
+        env.storage().persistent().get(&key).unwrap_or(0i128)
+    }
+
+    /// Returns accumulated schema creator fee balance for a token (#434).
+    pub fn get_creator_fee_balance(env: Env, creator: Address, token: Address) -> i128 {
+        extend_instance_ttl(&env);
+        let key = (CREATOR_FEES, creator, token);
+        env.storage().persistent().get(&key).unwrap_or(0i128)
+    }
+
+    /// Allows schema creators to withdraw their accumulated fee balance (#434).
+    pub fn withdraw_creator_fees(
+        env: Env,
+        creator: Address,
+        token: Address,
+        amount: i128,
+        destination: Address,
+    ) {
+        extend_instance_ttl(&env);
+        if amount <= 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        creator.require_auth();
+
+        let key = (CREATOR_FEES, creator.clone(), token.clone());
+        let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0i128);
+        if balance < amount {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        env.storage().persistent().set(&key, &(balance - amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+
+        token::Client::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &destination,
+            &amount,
+        );
+        events::publish_withdrawal(&env, &token, amount, &destination, &creator);
+        extend_instance_ttl(&env);
+    }
+
+    /// Allows treasury admin or configured treasury address to withdraw accumulated protocol fees (#434).
+    pub fn withdraw_treasury_fees(
+        env: Env,
+        authorizer: Address,
+        token: Address,
+        amount: i128,
+        destination: Address,
+    ) {
+        extend_instance_ttl(&env);
+        if amount <= 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        let admin = require_admin(&env);
+        let provided_treasury: Option<Address> = env.storage().instance().get(&TREASURY);
+        if authorizer != admin && provided_treasury.as_ref() != Some(&authorizer) {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+        authorizer.require_auth();
+
+        let key = (TREASURY_FEES, token.clone());
+        let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0i128);
+        if balance < amount {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        env.storage().persistent().set(&key, &(balance - amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+
+        token::Client::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &destination,
+            &amount,
+        );
         events::publish_withdrawal(&env, &token, amount, &destination, &authorizer);
         extend_instance_ttl(&env);
     }
@@ -1461,17 +1685,13 @@ impl SAS {
     }
 
     /// Issues an attestation and collects the configured fee from the
-    /// attester into this contract's balance.
+    /// attester into this contract's balance, splitting fees between the
+    /// protocol treasury and schema creator (#164, #434).
     ///
-    /// The required `(token, value)` is fixed by `set_fee` / `clear_fee`, not
-    /// by the caller: a configured fee pins both the asset and the exact
-    /// amount, and with no fee configured the only accepted `value` is zero.
-    /// A wrong token, a short amount, or any attempt to pay a fee that was
-    /// not configured fails with `SASError::FeeMismatch` before anything is
-    /// recorded (#164). `value` must still be non-negative
-    /// (`SASError::InvalidValue`). The transfer happens before the
-    /// attestation is stored, so a failed payment aborts the whole
-    /// invocation.
+    /// If the schema defines a custom creator royalty (fixed or basis points),
+    /// that amount is added on top of the base protocol fee and credited to
+    /// the schema creator's withdrawable balance. Schemas without custom
+    /// fees only incur the base protocol fee. Emits `FeeDistributed`.
     pub fn attest_with_value(
         env: Env,
         attestation: Attestation,
@@ -1488,17 +1708,41 @@ impl SAS {
 
         // Bind payment to authenticated configuration rather than caller input.
         let configured: Option<(Address, i128)> = env.storage().instance().get(&FEE_CONFIG);
-        match configured {
-            Some((fee_token, fee_amount)) => {
-                if token != fee_token || value != fee_amount {
-                    panic_with_error!(&env, SASError::FeeMismatch);
+        let (base_token, base_amount) = match configured {
+            Some((ref fee_token, fee_amount)) => (Some(fee_token.clone()), fee_amount),
+            None => (None, 0i128),
+        };
+
+        // Query schema creator custom fee if set (#434)
+        let schema_fee = Self::get_schema_fee(env.clone(), attestation.schema_uid.clone());
+        let creator_amount = match &schema_fee {
+            Some(cfg) => {
+                if cfg.fee_type == 1 {
+                    cfg.fixed_amount
+                } else if cfg.fee_type == 2 {
+                    if base_amount > 0 {
+                        (base_amount.saturating_mul(cfg.basis_points as i128)) / 10_000
+                    } else {
+                        0i128
+                    }
+                } else {
+                    0i128
                 }
             }
-            None => {
-                if value != 0 {
+            None => 0i128,
+        };
+
+        let total_required = base_amount.saturating_add(creator_amount);
+        if total_required > 0 {
+            if let Some(ref fee_token) = base_token {
+                if &token != fee_token || value != total_required {
                     panic_with_error!(&env, SASError::FeeMismatch);
                 }
+            } else {
+                panic_with_error!(&env, SASError::FeeMismatch);
             }
+        } else if value != 0 {
+            panic_with_error!(&env, SASError::FeeMismatch);
         }
 
         attestation.attester.require_auth();
@@ -1509,9 +1753,160 @@ impl SAS {
                 &env.current_contract_address(),
                 &value,
             );
+
+            // Credit treasury balance
+            if base_amount > 0 {
+                let tr_key = (TREASURY_FEES, token.clone());
+                let cur_tr = env.storage().persistent().get(&tr_key).unwrap_or(0i128);
+                env.storage()
+                    .persistent()
+                    .set(&tr_key, &(cur_tr.saturating_add(base_amount)));
+                env.storage().persistent().extend_ttl(
+                    &tr_key,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
+            }
+
+            let mut creator_addr = env.current_contract_address();
+            if creator_amount > 0 {
+                let registry = require_registry(&env);
+                if let Ok(Ok(Some(c))) = env
+                    .try_invoke_contract::<Option<Address>, soroban_sdk::Error>(
+                        &registry,
+                        &Symbol::new(&env, "get_creator"),
+                        soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+                    )
+                {
+                    creator_addr = c;
+                }
+                let cr_key = (CREATOR_FEES, creator_addr.clone(), token.clone());
+                let cur_cr = env.storage().persistent().get(&cr_key).unwrap_or(0i128);
+                env.storage()
+                    .persistent()
+                    .set(&cr_key, &(cur_cr.saturating_add(creator_amount)));
+                env.storage().persistent().extend_ttl(
+                    &cr_key,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
+            }
+
+            events::publish_fee_distributed(
+                &env,
+                &attestation.schema_uid,
+                &token,
+                value,
+                base_amount,
+                creator_amount,
+                &creator_addr,
+            );
         }
 
         Self::attest_internal(env, attestation)
+    }
+
+    /// Issues an identical attestation payload to multiple recipients in a single atomic transaction (#433).
+    /// The authorizer is the schema creator recorded in the schema registry.
+    pub fn broadcast_attest(
+        env: Env,
+        schema_uid: UID,
+        recipients: soroban_sdk::Vec<Address>,
+        data: soroban_sdk::Bytes,
+        expiration_time: u64,
+        revocable: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        let registry = require_registry(&env);
+        let creator: Option<Address> = match env
+            .try_invoke_contract::<Option<Address>, soroban_sdk::Error>(
+                &registry,
+                &Symbol::new(&env, "get_creator"),
+                soroban_sdk::vec![&env, schema_uid.clone().into_val(&env)],
+            ) {
+            Ok(Ok(c)) => c,
+            _ => None,
+        };
+        let Some(attester) = creator else {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        };
+        Self::broadcast_attest_by_attester(
+            env,
+            attester,
+            schema_uid,
+            recipients,
+            data,
+            expiration_time,
+            revocable,
+        )
+    }
+
+    /// Issues an identical attestation payload to multiple recipients authorized by `attester` (#433).
+    /// Reverts atomically if any recipient address is invalid, duplicate, or resolver rejects.
+    pub fn broadcast_attest_by_attester(
+        env: Env,
+        attester: Address,
+        schema_uid: UID,
+        recipients: soroban_sdk::Vec<Address>,
+        data: soroban_sdk::Bytes,
+        expiration_time: u64,
+        revocable: bool,
+    ) -> soroban_sdk::Vec<UID> {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+
+        let len = recipients.len();
+        if len > MAX_MULTI_ATTEST {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+        if len == 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+
+        attester.require_auth();
+
+        enter_reentrancy_guard(&env);
+        let mut uids = soroban_sdk::Vec::new(&env);
+        let mut seen: soroban_sdk::Map<Address, bool> = soroban_sdk::Map::new(&env);
+        let zero_ref = UID(soroban_sdk::BytesN::from_array(&env, &[0u8; 32]));
+
+        for i in 0..len {
+            let recipient = recipients.get(i).unwrap();
+            if seen.contains_key(recipient.clone()) {
+                panic_with_error!(&env, SASError::DuplicateAttestation);
+            }
+            seen.set(recipient.clone(), true);
+
+            let uid = soroban_sas_common::attestation_uid(
+                &env,
+                &schema_uid,
+                &recipient,
+                &attester,
+                &data,
+            );
+
+            let attestation = Attestation {
+                uid: uid.clone(),
+                schema_uid: schema_uid.clone(),
+                time: 0,
+                expiration_time,
+                revocation_time: 0,
+                ref_uid: zero_ref.clone(),
+                recipient: recipient.clone(),
+                attester: attester.clone(),
+                revocable,
+                data: data.clone(),
+                valid_from: 0,
+            };
+
+            let issued_uid = Self::attest_internal(env.clone(), attestation);
+            uids.push_back(issued_uid);
+        }
+
+        events::publish_batch_attested(&env, uids.len(), 1);
+        exit_reentrancy_guard(&env);
+        uids
     }
 
     /// Revokes up to `MAX_MULTI_REVOKE` attestations atomically.

@@ -76,3 +76,13 @@ pub const SCHEMA_OWNER_TRANSFER_CANCELLED: Symbol = symbol_short!("OWNCANC");
 /// cost of every approval scan so a hostile configuration cannot make owner
 /// checks unbounded.
 pub const MAX_OWNER_SET: u32 = 10;
+
+/// Storage key for a schema's metadata URI (#444).
+/// Stored under `(SCHEMA_METADATA_URI, uid) -> String`.
+pub const SCHEMA_METADATA_URI: Symbol = symbol_short!("METAURI");
+
+/// Maximum character/byte length allowed for a schema's metadata URI (#444).
+pub const MAX_METADATA_URI_LENGTH: u32 = 256;
+
+/// Maximum number of schemas allowed in a single `register_schemas_batch` call (#445).
+pub const MAX_SCHEMA_BATCH_SIZE: u32 = 50;
