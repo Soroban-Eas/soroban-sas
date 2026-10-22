@@ -20,4 +20,8 @@ ignore = [
     "RUSTSEC-2026-0009",
     # rand unsoundness pulled in via soroban-env-host.
     "RUSTSEC-2026-0097",
+    # webpki-roots: transitive via ureq 2.12.1 holding webpki-roots 0.26.11.
+    "RUSTSEC-2026-0381",
+    # rustls-webpki / webpki transitive via ureq.
+    "RUSTSEC-2026-0382",
 ]
