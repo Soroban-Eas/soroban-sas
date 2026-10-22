@@ -808,3 +808,158 @@ fn test_compact_attestation_storage_footprint_reduction_exceeds_15_percent() {
         compact_len
     );
 }
+
+// ---------------------------------------------------------------------------
+// Index-bound Merkle roots for on-chain leaf verification (#529)
+// ---------------------------------------------------------------------------
+
+/// Minimal level-by-level builder mirroring `indexed_merkle_root`, used to
+/// derive independent inclusion proofs for the tests below.
+fn indexed_levels(
+    env: &Env,
+    leaves: &soroban_sdk::Vec<soroban_sdk::Bytes>,
+) -> soroban_sdk::Vec<soroban_sdk::Vec<BytesN<32>>> {
+    use crate::merkle::{indexed_leaf_hash, node_hash};
+
+    let mut levels: soroban_sdk::Vec<soroban_sdk::Vec<BytesN<32>>> = soroban_sdk::Vec::new(env);
+    let mut level: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(env);
+    for (index, leaf) in leaves.iter().enumerate() {
+        level.push_back(indexed_leaf_hash(env, index as u32, &leaf));
+    }
+    levels.push_back(level.clone());
+    while level.len() > 1 {
+        let mut next: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(env);
+        let mut i = 0u32;
+        while i < level.len() {
+            if i + 1 < level.len() {
+                next.push_back(node_hash(
+                    env,
+                    &level.get(i).unwrap(),
+                    &level.get(i + 1).unwrap(),
+                ));
+            } else {
+                next.push_back(level.get(i).unwrap());
+            }
+            i += 2;
+        }
+        levels.push_back(next.clone());
+        level = next;
+    }
+    levels
+}
+
+fn indexed_proof(
+    env: &Env,
+    levels: &soroban_sdk::Vec<soroban_sdk::Vec<BytesN<32>>>,
+    mut index: u32,
+) -> soroban_sdk::Vec<crate::merkle::MerkleProofStep> {
+    use crate::merkle::MerkleProofStep;
+
+    let mut proof = soroban_sdk::Vec::new(env);
+    for depth in 0..levels.len() - 1 {
+        let level = levels.get(depth).unwrap();
+        let sibling = if index % 2 == 0 {
+            if index + 1 < level.len() {
+                Some(index + 1)
+            } else {
+                None
+            }
+        } else {
+            Some(index - 1)
+        };
+        if let Some(sibling_index) = sibling {
+            proof.push_back(MerkleProofStep {
+                sibling: level.get(sibling_index).unwrap(),
+            });
+        }
+        index /= 2;
+    }
+    proof
+}
+
+#[test]
+fn test_indexed_merkle_root_binds_leaf_position() {
+    use crate::merkle::{indexed_leaf_hash, indexed_merkle_root, verify_indexed_proof};
+
+    let env = Env::default();
+    let leaf = soroban_sdk::Bytes::from_slice(&env, b"alice");
+
+    // The same bytes at different positions hash to different leaves.
+    assert_ne!(
+        indexed_leaf_hash(&env, 0, &leaf),
+        indexed_leaf_hash(&env, 1, &leaf)
+    );
+
+    let leaves = soroban_sdk::Vec::from_array(
+        &env,
+        [
+            soroban_sdk::Bytes::from_slice(&env, b"alice"),
+            soroban_sdk::Bytes::from_slice(&env, b"bob"),
+            soroban_sdk::Bytes::from_slice(&env, b"carol"),
+        ],
+    );
+    let root = indexed_merkle_root(&env, &leaves);
+    let levels = indexed_levels(&env, &leaves);
+    assert_eq!(
+        root.0,
+        levels.get(levels.len() - 1).unwrap().get(0).unwrap()
+    );
+
+    for index in 0..leaves.len() {
+        let leaf = leaves.get(index).unwrap();
+        let proof = indexed_proof(&env, &levels, index);
+        assert!(
+            verify_indexed_proof(&env, &root, index, &leaf, &proof),
+            "leaf {index} must verify"
+        );
+        // A valid proof replayed at another index must fail.
+        assert!(!verify_indexed_proof(&env, &root, index + 1, &leaf, &proof));
+        // A tampered leaf must fail.
+        let tampered = soroban_sdk::Bytes::from_slice(&env, b"mallory");
+        assert!(!verify_indexed_proof(&env, &root, index, &tampered, &proof));
+    }
+}
+
+#[test]
+fn test_indexed_merkle_root_rejects_oversized_proof() {
+    use crate::merkle::{indexed_merkle_root, verify_indexed_proof, MerkleProofStep};
+
+    let env = Env::default();
+    let leaf = soroban_sdk::Bytes::from_slice(&env, b"only");
+    let leaves = soroban_sdk::Vec::from_array(&env, [leaf.clone()]);
+    let root = indexed_merkle_root(&env, &leaves);
+
+    let mut proof = soroban_sdk::Vec::new(&env);
+    for _ in 0..=crate::merkle::MAX_MERKLE_PROOF_DEPTH {
+        proof.push_back(MerkleProofStep {
+            sibling: BytesN::from_array(&env, &[0x11u8; 32]),
+        });
+    }
+    assert!(!verify_indexed_proof(&env, &root, 0, &leaf, &proof));
+}
+
+#[test]
+fn test_merkle_root_payload_convention() {
+    use crate::merkle::{
+        merkle_root_from_payload, MerkleRoot, MERKLE_ROOT_PAYLOAD_LEN, MERKLE_ROOT_SCHEMA,
+    };
+
+    let env = Env::default();
+    let root = MerkleRoot(BytesN::from_array(&env, &[0xABu8; 32]));
+
+    let exact = soroban_sdk::Bytes::from_array(&env, &root.0.to_array());
+    assert_eq!(merkle_root_from_payload(&env, &exact), Some(root));
+
+    let short = soroban_sdk::Bytes::from_slice(&env, &[0xABu8; 31]);
+    let long = soroban_sdk::Bytes::from_slice(&env, &[0xABu8; 33]);
+    assert_eq!(merkle_root_from_payload(&env, &short), None);
+    assert_eq!(merkle_root_from_payload(&env, &long), None);
+    assert_eq!(exact.len(), MERKLE_ROOT_PAYLOAD_LEN);
+
+    // The advertised schema string must satisfy the registry's own grammar.
+    let schema = soroban_sdk::String::from_str(&env, MERKLE_ROOT_SCHEMA);
+    assert_eq!(
+        crate::validation::validate_schema_syntax(&env, &schema),
+        Ok(())
+    );
+}
