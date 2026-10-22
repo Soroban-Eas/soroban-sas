@@ -291,6 +291,11 @@ network call or funded key, and prints usage with `--help`.
   ```bash
   cargo run --example delegated_attest -- --dry-run
   ```
+- `examples/academic-credentials` — a full-stack Next.js dApp demonstrating
+  decentralized academic credential issuance and verification on Stellar. Includes
+  a University Admin Portal, public verification badge with cryptographic proof
+  inspector, automated backend issuance API, and pre-loaded mock testnet data.
+  See the [Academic Credentials README](examples/academic-credentials/README.md).
 
 ## Getting Started
 
