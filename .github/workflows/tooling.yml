@@ -40,6 +40,30 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+  soroban-sas-react:
+    name: React hooks (soroban-sas-react)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/soroban-sas-react
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/soroban-sas-react/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Type-check and build
+        run: npm run typecheck && npm run build && npm run build:demo
+
   helm-charts:
     name: Helm charts
     runs-on: ubuntu-latest
