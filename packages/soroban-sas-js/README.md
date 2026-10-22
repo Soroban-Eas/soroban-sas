@@ -85,6 +85,36 @@ const stored = await client.getAttestation(attestation.uid);
 await client.revoke(attestation.uid);
 ```
 
+## RPC failover
+
+`FailoverRpcClient` fronts a pool of Soroban RPC endpoints:
+
+```ts
+import { FailoverRpcClient } from "@soroban-sas/sdk";
+
+const rpc = new FailoverRpcClient({
+  endpoints: ["https://primary.example", "https://backup.example"],
+  timeoutMs: 5_000,
+  circuitBreakerThreshold: 3,
+  circuitCooldownMs: 30_000,
+});
+
+rpc.on((event) => console.warn("rpc", event));
+rpc.startHealthChecks(); // periodic round-robin `getHealth`
+
+const ledger = await rpc.request("getLatestLedger");
+```
+
+- Requests go to the highest-priority available endpoint and fail over on
+  HTTP errors, network errors or timeouts.
+- After `circuitBreakerThreshold` consecutive failures the endpoint's circuit
+  opens for `circuitCooldownMs`; requests skip it instead of adding load.
+- Recovery health checks close the circuit and restore the endpoint's priority.
+- Diagnostics (`failover`, `recovery`, `circuit_open`, `circuit_closed`,
+  `request_failed`) are delivered through `on()`; listener errors are ignored.
+- `fetchImpl`, the clock and the interval functions are injectable for tests
+  and for non-standard runtimes.
+
 ## Scope and limitations
 
 - `hashing.ts` and `delegation.ts` are cross-checked byte-for-byte against
