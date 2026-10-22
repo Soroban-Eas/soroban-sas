@@ -38,7 +38,8 @@ use crate::errors::SdkError;
 use crate::strkey::{parse_address, AddressKind};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use soroban_sas_common::{
-    hash_delegated_revocation, hash_offchain_attestation, Attestation, AttestationDomain, UID,
+    hash_delegated_revocation, hash_offchain_attestation, hash_scoped_attestation, Attestation,
+    AttestationDomain, DelegationAuthorization, DelegationSchemaScope, UID,
 };
 use soroban_sdk::{Address, Bytes, BytesN, Env};
 
@@ -130,6 +131,42 @@ pub fn sign_offchain_attestation(
 
     let domain = delegation_domain(env, network_passphrase, contract_id, nonce)?;
     let digest = attestation_digest(env, attestation, &domain);
+    Ok(DelegationSignature {
+        nonce,
+        public_key,
+        signature: signing_key.sign(&digest).to_bytes(),
+        digest,
+    })
+}
+
+/// Signs a v2 schema-scoped delegation without changing the existing v1 ABI.
+/// Passing `None` authorizes wildcard schemas, but the contract's registered
+/// policy may still narrow that scope (#527).
+pub fn sign_scoped_attestation(
+    env: &Env,
+    secret_seed: &[u8; 32],
+    attestation: &Attestation,
+    nonce: u64,
+    network_passphrase: &str,
+    contract_id: &str,
+    authorization: &DelegationAuthorization,
+) -> Result<DelegationSignature, SdkError> {
+    if authorization.permissions & 1 == 0
+        || matches!(
+            &authorization.schema_scope,
+            DelegationSchemaScope::Only(schema) if schema != &attestation.schema_uid
+        )
+    {
+        return Err(SdkError::ValidationError(
+            "delegation scope does not authorize this attestation".to_string(),
+        ));
+    }
+    let signing_key = SigningKey::from_bytes(secret_seed);
+    let public_key = signing_key.verifying_key().to_bytes();
+    require_attester_key(env, &attestation.attester, &public_key)?;
+
+    let domain = delegation_domain(env, network_passphrase, contract_id, nonce)?;
+    let digest = hash_scoped_attestation(env, attestation, &domain, authorization).to_array();
     Ok(DelegationSignature {
         nonce,
         public_key,

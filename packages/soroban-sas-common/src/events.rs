@@ -79,6 +79,32 @@ pub struct AttestationIssuedEvent {
     pub recipient: Address,
 }
 
+/// Fee-aware issuance event emitted by the opt-in paid path (#526).
+/// The existing `ATTESTED` event is retained for v1 indexer compatibility.
+pub const ATTFEE: Symbol = symbol_short!("ATTFEE");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttestationIssuedWithFeeEvent {
+    pub uid: UID,
+    pub schema_uid: UID,
+    pub attester: Address,
+    pub recipient: Address,
+    pub fee_amount: i128,
+}
+
+/// Detailed protocol circuit-breaker events (#530), emitted in addition to
+/// legacy pause events to preserve the existing wire format.
+pub const PROTOCOL_PAUSED: Symbol = symbol_short!("PRTPAUSED");
+pub const PROTOCOL_UNPAUSED: Symbol = symbol_short!("PRTUNPAUS");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolPauseEvent {
+    pub authorizer: Address,
+    pub timestamp: u64,
+}
+
 /// Payload of the `AttestationRevoked` event.
 ///
 /// Published with topics `(REVOKED, uid)`. `timestamp` is the ledger

@@ -31,6 +31,25 @@ pub fn publish_attested(env: &Env, attestation: &Attestation) {
     );
 }
 
+/// Emits a v2 fee-aware issuance record, preserving the legacy ATTESTED ABI.
+pub fn publish_attestation_with_fee(env: &Env, attestation: &Attestation, fee_amount: i128) {
+    use soroban_sas_common::{AttestationIssuedWithFeeEvent, ATTFEE};
+    env.events().publish(
+        (
+            ATTFEE,
+            attestation.schema_uid.clone(),
+            attestation.attester.clone(),
+        ),
+        AttestationIssuedWithFeeEvent {
+            uid: attestation.uid.clone(),
+            schema_uid: attestation.schema_uid.clone(),
+            attester: attestation.attester.clone(),
+            recipient: attestation.recipient.clone(),
+            fee_amount,
+        },
+    );
+}
+
 /// Publishes the `AttestationRevoked` event.
 ///
 /// Topics: `(REVOKED, uid)`. `timestamp` must match the revocation time
@@ -266,6 +285,30 @@ pub fn publish_nonces_invalidated(env: &Env, attester: &Address, min_nonce: u64,
             attester: attester.clone(),
             min_nonce,
             max_nonce,
+        },
+    );
+}
+
+/// Audit-friendly circuit-breaker events, alongside the v1 contract pause
+/// event stream so existing clients need not change their decoder.
+pub fn publish_protocol_paused(env: &Env, authorizer: Address) {
+    use soroban_sas_common::{ProtocolPauseEvent, PROTOCOL_PAUSED};
+    env.events().publish(
+        (PROTOCOL_PAUSED, authorizer.clone()),
+        ProtocolPauseEvent {
+            authorizer,
+            timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn publish_protocol_unpaused(env: &Env, authorizer: Address) {
+    use soroban_sas_common::{ProtocolPauseEvent, PROTOCOL_UNPAUSED};
+    env.events().publish(
+        (PROTOCOL_UNPAUSED, authorizer.clone()),
+        ProtocolPauseEvent {
+            authorizer,
+            timestamp: env.ledger().timestamp(),
         },
     );
 }

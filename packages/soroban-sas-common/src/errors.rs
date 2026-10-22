@@ -82,6 +82,16 @@ pub enum SASError {
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).
     ContractPaused = 501,
+    /// Core protocol mutation blocked by the emergency circuit breaker (#530).
+    ProtocolPaused = 503,
+    /// The caller did not supply enough tokens for the payload-size fee (#526).
+    InsufficientFee = 504,
+    /// A delegated signature does not authorize this schema or permission (#527).
+    DelegationScopeDenied = 505,
+    /// The configured proof-verifier rejected the supplied credential proof (#531).
+    InvalidZKProof = 506,
+    /// A proof nullifier has already been consumed by this SAS deployment.
+    NullifierAlreadyUsed = 507,
 
     /// Reentrancy errors
     /// A callback (resolver or indexer) re-entered `multi_attest` while the
