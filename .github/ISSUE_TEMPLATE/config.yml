@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Soroban-Eas/soroban-sas/security/policy
+    about: Report vulnerabilities privately by following SECURITY.md. Do not open a public issue.
+  - name: Getting started
+    url: https://github.com/Soroban-Eas/soroban-sas/blob/main/docs/getting-started.md
+    about: Read the guide for DApp developers before asking a usage question.

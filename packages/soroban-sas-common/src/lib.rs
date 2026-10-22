@@ -388,4 +388,6 @@ pub struct AttesterKeyStorageKey {
 }
 
 #[cfg(test)]
+mod merkle_disclosure_test;
+#[cfg(test)]
 mod test;

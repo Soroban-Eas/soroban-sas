@@ -78,6 +78,13 @@ pub enum SASError {
     InvalidTimeRange = 418,
     /// Expiration time exceeds schema's max_ttl or perpetual attestation under capped schema (#441).
     InvalidExpirationTime = 419,
+    /// A timestamp claim does not match the ledger anchor recorded for the
+    /// attestation (wrong sequence, doctored close time, a claim from a ledger
+    /// that has not closed yet, or an attempt to rewrite an anchor), or the
+    /// stored anchors are not monotonic (#436).
+    InvalidTimestamp = 420,
+    /// No issuance or revocation timestamp anchor exists for the UID (#436).
+    TimestampAnchorNotFound = 421,
 
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).

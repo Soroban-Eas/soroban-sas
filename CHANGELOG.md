@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Selective payload disclosure: `verify_merkle_leaf` and
+  `verify_merkle_leaf_keccak` check a disclosed leaf against the 32-byte
+  Merkle root held in a live attestation. The shared verifier
+  `verify_proof_with` supports SHA-256 and Keccak-256 and bounds proofs at 32
+  siblings. See `docs/selective-disclosure.md`. (#435)
+- `check_timestamp`, a strict form of `verify_timestamp` that fails with
+  `InvalidTimestamp` (420) or `TimestampAnchorNotFound` (421), plus
+  diagnostic log lines in test and simulation builds. (#436)
+- `docs/privacy.md`, describing the privacy implications of public
+  attestations, and a feature request issue template. (#371, #372)
+
+### Changed
+- Timestamp anchors are immutable: writing an existing anchor now fails with
+  `InvalidTimestamp`. `verify_timestamp` also returns `false` for a claim
+  from a ledger ahead of the current one and when stored anchors are not
+  monotonic. (#436)
+
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,

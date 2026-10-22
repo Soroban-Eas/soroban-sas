@@ -82,6 +82,37 @@ records the ledger it happened on, as a
 - `verify_timestamp(uid, claim)` — `true` when `claim` is exactly one of
   those anchors, comparing both the sequence number and the close time. It is
   a read: it renews no TTLs, so checking a claim costs no storage rent.
+- `check_timestamp(uid, claim)` — the strict form of `verify_timestamp`. It
+  succeeds on the same claims and otherwise traps with a specific error
+  instead of returning `false` (#436):
+  - `InvalidTimestamp` (420): the claim's sequence or close time does not
+    match a recorded anchor (a doctored close time, or a foreign ledger
+    sequence), the claim names a ledger that is ahead of the ledger the call
+    runs on, or the stored anchors are not monotonic.
+  - `TimestampAnchorNotFound` (421): no anchor exists for the UID.
+
+### Simulated and test environments
+
+Local tests and RPC simulation can execute against a ledger whose sequence
+number and close time are out of step with the ledger an anchor was written
+on, which used to surface as a bare `false` or an unexplained failure. Three
+rules make that visible instead (#436):
+
+- **Anchors are immutable.** An anchor is written once; any attempt to write
+  an existing one fails with `InvalidTimestamp` rather than replacing it.
+- **Sequence and close time must agree and move forward together.** A claim
+  must equal an anchor in both fields. A claim from a ledger that has not
+  closed yet is rejected, and a revocation anchor that precedes its issuance
+  anchor in sequence or in close time makes every claim for that UID fail.
+- **Failures leave a diagnostic.** Each rejection writes a `log!` line saying
+  which rule failed (missing anchor, anchor ahead of the ledger, close time
+  mismatch for a known sequence, sequence not anchored). The lines exist in
+  test and simulation builds and are compiled out of release WASM.
+
+`verify_timestamp` keeps returning a boolean and answers `false` in exactly
+the cases where `check_timestamp` fails, so existing callers are unaffected.
+Use `check_timestamp` in tooling that has to tell a lagging simulation apart
+from a forged timestamp.
 
 A verifier that trusts a ledger header — from an SCP envelope, ledger close
 meta, or an RPC it trusts — confirms that the header's sequence number and
@@ -101,3 +132,10 @@ expires exactly when the record it describes does.
 A rejected revocation leaves no anchor behind: `revoke` on a non-revocable or
 already-revoked attestation panics, which reverts the write along with it, so a
 failed call can never be read back as a revocation that happened.
+
+## Privacy and Selective Disclosure
+
+Everything in an attestation is public and permanent. [Privacy Implications of
+Public Attestations](privacy.md) lists what is exposed and how to avoid it, and
+[Selective Disclosure](selective-disclosure.md) shows how to attest to a Merkle
+root and reveal individual claims with `verify_merkle_leaf`.

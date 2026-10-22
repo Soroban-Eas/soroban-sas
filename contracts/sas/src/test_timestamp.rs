@@ -341,3 +341,228 @@ fn replace_attestation_anchors_both_transitions_of_the_same_call() {
     );
     assert!(h.client.get_revocation_timestamp(&new_uid).is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Hardening against inconsistent simulated ledgers (#436)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn check_timestamp_accepts_both_recorded_anchors() {
+    let h = Harness::new();
+    let uid = h.issue(20, true);
+
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(ISSUANCE_LEDGER, ISSUANCE_TIME)),
+        Ok(Ok(()))
+    );
+
+    h.revoke_at(&uid, REVOCATION_LEDGER, REVOCATION_TIME);
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(REVOCATION_LEDGER, REVOCATION_TIME)),
+        Ok(Ok(()))
+    );
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(ISSUANCE_LEDGER, ISSUANCE_TIME)),
+        Ok(Ok(()))
+    );
+}
+
+#[test]
+fn check_timestamp_reports_a_doctored_close_time_as_invalid_timestamp() {
+    let h = Harness::new();
+    let uid = h.issue(21, true);
+
+    // Earlier than the recorded close time, same sequence.
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(ISSUANCE_LEDGER, ISSUANCE_TIME - 1)),
+        Err(Ok(SASError::InvalidTimestamp.into()))
+    );
+    // Later than the recorded close time (also ahead of this ledger).
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(ISSUANCE_LEDGER, ISSUANCE_TIME + 1)),
+        Err(Ok(SASError::InvalidTimestamp.into()))
+    );
+}
+
+#[test]
+fn check_timestamp_reports_a_foreign_ledger_sequence_as_invalid_timestamp() {
+    let h = Harness::new();
+    let uid = h.issue(22, true);
+    h.move_to(REVOCATION_LEDGER, REVOCATION_TIME);
+
+    // The right close time attached to a ledger that was not the issuer.
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(ISSUANCE_LEDGER - 1, ISSUANCE_TIME)),
+        Err(Ok(SASError::InvalidTimestamp.into()))
+    );
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(ISSUANCE_LEDGER + 1, ISSUANCE_TIME)),
+        Err(Ok(SASError::InvalidTimestamp.into()))
+    );
+    // A ledger that exists but never touched this uid.
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&uid, &anchor(REVOCATION_LEDGER, REVOCATION_TIME)),
+        Err(Ok(SASError::InvalidTimestamp.into()))
+    );
+}
+
+#[test]
+fn a_revocation_cannot_borrow_the_issuance_sequence_or_time() {
+    let h = Harness::new();
+    let uid = h.issue(23, true);
+    h.revoke_at(&uid, REVOCATION_LEDGER, REVOCATION_TIME);
+
+    // Mixed halves of the two real anchors are not an anchor.
+    for claim in [
+        anchor(ISSUANCE_LEDGER, REVOCATION_TIME),
+        anchor(REVOCATION_LEDGER, ISSUANCE_TIME),
+    ] {
+        assert_eq!(
+            h.client.try_check_timestamp(&uid, &claim),
+            Err(Ok(SASError::InvalidTimestamp.into()))
+        );
+        assert!(!h.client.verify_timestamp(&uid, &claim));
+    }
+}
+
+#[test]
+fn a_claim_from_a_ledger_that_has_not_closed_yet_is_rejected() {
+    let h = Harness::new();
+    let uid = h.issue(24, true);
+    let genuine = anchor(ISSUANCE_LEDGER, ISSUANCE_TIME);
+    assert!(h.client.verify_timestamp(&uid, &genuine));
+
+    // A simulation running behind the network: the contract is executing on
+    // a ledger that predates the recorded anchor. The anchor is real, but a
+    // verdict computed here would be a verdict about the future.
+    h.move_to(ISSUANCE_LEDGER - 10, ISSUANCE_TIME - 50);
+    assert_eq!(
+        h.client.try_check_timestamp(&uid, &genuine),
+        Err(Ok(SASError::InvalidTimestamp.into()))
+    );
+    assert!(!h.client.verify_timestamp(&uid, &genuine));
+
+    // Back on a consistent ledger the same claim verifies again.
+    h.move_to(ISSUANCE_LEDGER, ISSUANCE_TIME);
+    assert!(h.client.verify_timestamp(&uid, &genuine));
+}
+
+#[test]
+fn check_timestamp_distinguishes_a_missing_anchor_from_a_bad_claim() {
+    let h = Harness::new();
+    let unknown = UID(BytesN::from_array(&h.env, &[9u8; 32]));
+
+    assert_eq!(
+        h.client
+            .try_check_timestamp(&unknown, &anchor(ISSUANCE_LEDGER, ISSUANCE_TIME)),
+        Err(Ok(SASError::TimestampAnchorNotFound.into()))
+    );
+    assert!(!h
+        .client
+        .verify_timestamp(&unknown, &anchor(ISSUANCE_LEDGER, ISSUANCE_TIME)));
+}
+
+#[test]
+fn stored_anchors_that_run_backwards_fail_closed() {
+    let h = Harness::new();
+    let uid = h.issue(25, true);
+    h.revoke_at(&uid, REVOCATION_LEDGER, REVOCATION_TIME);
+
+    // Forge the state a mismatched simulated ledger could have produced: a
+    // revocation anchor from before the issuance ledger.
+    let corrupt = anchor(ISSUANCE_LEDGER - 1, ISSUANCE_TIME - 1);
+    h.env.as_contract(&h.client.address, || {
+        h.env.storage().persistent().set(
+            &crate::timestamp::TimestampAnchorKey {
+                uid: uid.clone(),
+                revocation: true,
+            },
+            &corrupt,
+        );
+    });
+
+    // Neither anchor is trusted any more, including the genuine issuance one.
+    for claim in [anchor(ISSUANCE_LEDGER, ISSUANCE_TIME), corrupt.clone()] {
+        assert_eq!(
+            h.client.try_check_timestamp(&uid, &claim),
+            Err(Ok(SASError::InvalidTimestamp.into()))
+        );
+        assert!(!h.client.verify_timestamp(&uid, &claim));
+    }
+}
+
+#[test]
+fn verify_timestamp_stays_a_boolean_and_agrees_with_check_timestamp() {
+    let h = Harness::new();
+    let uid = h.issue(26, true);
+
+    for claim in [
+        anchor(ISSUANCE_LEDGER, ISSUANCE_TIME),
+        anchor(ISSUANCE_LEDGER, ISSUANCE_TIME - 1),
+        anchor(ISSUANCE_LEDGER + 1, ISSUANCE_TIME),
+        anchor(0, 0),
+    ] {
+        let strict = h.client.try_check_timestamp(&uid, &claim).is_ok();
+        assert_eq!(h.client.verify_timestamp(&uid, &claim), strict);
+    }
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #420)")]
+fn an_issuance_anchor_cannot_be_rewritten() {
+    let h = Harness::new();
+    let uid = h.issue(27, true);
+    h.move_to(REVOCATION_LEDGER, REVOCATION_TIME);
+
+    h.env.as_contract(&h.client.address, || {
+        crate::timestamp::write_anchor(&h.env, &uid, false, 1_000);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #420)")]
+fn a_revocation_anchor_cannot_be_rewritten() {
+    let h = Harness::new();
+    let uid = h.issue(28, true);
+    h.revoke_at(&uid, REVOCATION_LEDGER, REVOCATION_TIME);
+
+    h.env.as_contract(&h.client.address, || {
+        crate::timestamp::write_anchor(&h.env, &uid, true, 1_000);
+    });
+}
+
+#[test]
+fn rejected_reissue_and_rerevoke_leave_the_anchors_untouched() {
+    let h = Harness::new();
+    let attestation = h.attestation(29, true);
+    let uid = h.client.attest(&attestation);
+
+    h.move_to(REVOCATION_LEDGER, REVOCATION_TIME);
+    assert_eq!(
+        h.client.try_attest(&attestation),
+        Err(Ok(SASError::DuplicateAttestation.into()))
+    );
+    assert_eq!(
+        h.client.get_issuance_timestamp(&uid).unwrap(),
+        anchor(ISSUANCE_LEDGER, ISSUANCE_TIME)
+    );
+
+    h.client.revoke(&uid);
+    h.move_to(REVOCATION_LEDGER + 500, REVOCATION_TIME + 500);
+    assert_eq!(
+        h.client.try_revoke(&uid),
+        Err(Ok(SASError::AlreadyRevoked.into()))
+    );
+    assert_eq!(
+        h.client.get_revocation_timestamp(&uid).unwrap(),
+        anchor(REVOCATION_LEDGER, REVOCATION_TIME)
+    );
+}

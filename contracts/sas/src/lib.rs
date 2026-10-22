@@ -14,6 +14,7 @@ use soroban_sdk::{
 };
 
 mod events;
+mod merkle_disclosure;
 mod timestamp;
 
 // v1.0.0 State Schema Frozen
@@ -2123,11 +2124,79 @@ impl SAS {
     ///
     /// This is a read: unlike the two readers above it renews nothing, so
     /// checking a claim costs no storage rent.
+    ///
+    /// Beyond equality (#436): `false` is also returned when the claim names a
+    /// ledger ahead of the current one (a simulation running behind the
+    /// network) or when the stored anchors are not monotonic. Use
+    /// `check_timestamp` to learn which of those it was.
     pub fn verify_timestamp(env: Env, uid: UID, claim: timestamp::TimestampAnchor) -> bool {
         extend_instance_ttl(&env);
-        let issuance = timestamp::read_anchor(&env, &uid, false);
-        let revocation = timestamp::read_anchor(&env, &uid, true);
-        issuance == Some(claim.clone()) || revocation == Some(claim)
+        timestamp::check_claim(&env, &uid, &claim).is_ok()
+    }
+
+    /// Strict form of `verify_timestamp` that reports why a claim fails (#436).
+    ///
+    /// Succeeds only when `claim` equals a recorded anchor in both ledger
+    /// sequence and close time. Otherwise it traps with
+    /// `SASError::InvalidTimestamp` (doctored close time, foreign or
+    /// not-yet-closed ledger sequence, non-monotonic stored anchors) or
+    /// `SASError::TimestampAnchorNotFound` (nothing recorded for `uid`), and
+    /// leaves a diagnostic log line in test and simulation builds. Prefer it
+    /// in tooling that must not mistake a lagging simulation for a forged
+    /// timestamp. A read: it renews no storage TTL.
+    pub fn check_timestamp(
+        env: Env,
+        uid: UID,
+        claim: timestamp::TimestampAnchor,
+    ) -> Result<(), SASError> {
+        extend_instance_ttl(&env);
+        timestamp::check_claim(&env, &uid, &claim)
+    }
+
+    /// Verifies that `leaf` is committed to by the Merkle root held in
+    /// attestation `uid`'s `data`, using SHA-256 (#435).
+    ///
+    /// `proof` is the list of sibling hashes from the leaf level up. The tree
+    /// format is the canonical one in `soroban_sas_common::merkle`: leaf hash
+    /// `sha256(0x00 || leaf)`, node hash `sha256(0x01 || min || max)`, an odd
+    /// node promoted unchanged. Returns `false`, never traps, when the
+    /// attestation is missing, revoked, expired or not yet valid, when its
+    /// `data` is not exactly 32 bytes, when the proof is longer than 32
+    /// siblings, and for any proof that does not reproduce the root. A read
+    /// that only renews TTLs, like `verify_attestation`. See
+    /// docs/selective-disclosure.md.
+    pub fn verify_merkle_leaf(
+        env: Env,
+        uid: UID,
+        leaf: soroban_sdk::Bytes,
+        proof: soroban_sdk::Vec<BytesN<32>>,
+    ) -> bool {
+        extend_instance_ttl(&env);
+        merkle_disclosure::verify_leaf(
+            &env,
+            &uid,
+            &leaf,
+            &proof,
+            soroban_sas_common::MerkleHash::Sha256,
+        )
+    }
+
+    /// Same as `verify_merkle_leaf` for trees built with Keccak-256, as
+    /// produced by Ethereum-style Merkle tooling (#435).
+    pub fn verify_merkle_leaf_keccak(
+        env: Env,
+        uid: UID,
+        leaf: soroban_sdk::Bytes,
+        proof: soroban_sdk::Vec<BytesN<32>>,
+    ) -> bool {
+        extend_instance_ttl(&env);
+        merkle_disclosure::verify_leaf(
+            &env,
+            &uid,
+            &leaf,
+            &proof,
+            soroban_sas_common::MerkleHash::Keccak256,
+        )
     }
 
     /// Returns the highest delegation nonce consumed for `attester`, or `None`
@@ -2194,6 +2263,8 @@ mod test_issue_252;
 mod test_issue_293;
 #[cfg(test)]
 mod test_issue_296;
+#[cfg(test)]
+mod test_merkle_disclosure;
 #[cfg(test)]
 mod test_round_trip;
 #[cfg(test)]

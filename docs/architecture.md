@@ -714,6 +714,26 @@ limitations, and the SDK signing helpers.
 
 ---
 
+### Timestamp anchors
+
+Each issuance and revocation records the ledger it ran on as an immutable
+`TimestampAnchor` (sequence and close time) in its own persistent entry.
+`verify_timestamp` answers whether a claim equals an anchor; `check_timestamp`
+reports why it does not (`InvalidTimestamp`, `TimestampAnchorNotFound`),
+including claims from a ledger ahead of the current one, which is what a
+simulation running behind the network produces. See
+[Verifiable Timestamps](attestations.md#verifiable-timestamps).
+
+### Merkle root attestations
+
+An attestation whose `data` is a 32-byte Merkle root supports selective
+disclosure: `verify_merkle_leaf` and `verify_merkle_leaf_keccak` read the
+root of a live attestation and check one disclosed leaf against it, using the
+shared tree format in `soroban-sas-common`. See
+[Selective Disclosure](selective-disclosure.md).
+
+---
+
 ## Attestation Lifecycle and State Machine
 
 An attestation within the Soroban SAS framework flows through several definitive states managed strictly by the core SAS smart contract:
@@ -860,6 +880,8 @@ The following table is a concise reference of every cross-contract call in the s
 
 ## Further Documentation
 
+- [Privacy Implications of Public Attestations](privacy.md): what is public, what revocation and expiry do not remove, and how to keep sensitive facts off-chain.
+- [Selective Disclosure with Merkle Root Attestations](selective-disclosure.md): `verify_merkle_leaf`, the tree format, leaf-formatting rules, and Rust and TypeScript examples.
 - [Fee Collection and Treasury Mechanics](fee-collection-and-treasury.md): Detailed specification of fee configuration, treasury routing, and token withdrawals.
 - [Soroban Mainnet Launch Preparation](mainnet-launch-preparation.md): Launch phases, key custody, reproducible builds, and operational runbooks.
 - [Internationalization (i18n) and Translation Guidelines](i18n-translation-guidelines.md): Localization conventions, glossary, and contribution guidelines.

@@ -26,9 +26,28 @@
 //! change the XDR layout every indexer, SDK and stored record decodes — and a
 //! side entry with the attestation's own TTL expires exactly when the record
 //! it describes does.
+//!
+//! # Hardening for simulated environments (#436)
+//!
+//! Local tests and RPC simulation can run against a ledger whose close time
+//! and sequence number do not line up with the ledger the anchor was written
+//! on. Three rules keep that from turning into a silently wrong verdict:
+//!
+//! * **Immutability.** An anchor is written once. [`write_anchor`] refuses to
+//!   replace an existing entry, so a later call cannot rewrite history.
+//! * **Monotonicity.** A revocation anchor cannot precede its issuance anchor
+//!   in sequence or in close time, and a claim cannot name a ledger that is
+//!   ahead of the ledger the contract is running on.
+//! * **Sequence and close time travel together.** A claim is accepted only
+//!   if both fields equal a recorded anchor; every mismatch is reported as
+//!   [`SASError::InvalidTimestamp`], never as a quiet `false`, by
+//!   `SAS::check_timestamp`.
+//!
+//! Failures also write a diagnostic log line (`log!`), which is compiled out of
+//! release builds and visible in test and simulation runs.
 
-use soroban_sas_common::{LEDGERS_IN_ONE_YEAR, UID};
-use soroban_sdk::{contracttype, Env};
+use soroban_sas_common::{SASError, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sdk::{contracttype, log, panic_with_error, Env};
 
 /// The ledger a timestamp came from: the sequence number of the ledger whose
 /// close time was stamped, and that close time itself.
@@ -73,9 +92,20 @@ fn anchor_key(uid: &UID, revocation: bool) -> TimestampAnchorKey {
 /// write a timestamp — so every entry point that reaches either (direct,
 /// delegated, batch, paid, replacement, authorizer) is anchored by
 /// construction rather than by remembering to anchor it.
+///
+/// Anchors are immutable: if one is already recorded under the key this panics
+/// with [`SASError::InvalidTimestamp`] instead of overwriting it (#436).
 pub fn write_anchor(env: &Env, uid: &UID, revocation: bool, ttl: u32) {
     let storage = env.storage().persistent();
     let key = anchor_key(uid, revocation);
+    if storage.has(&key) {
+        log!(
+            env,
+            "timestamp anchor is immutable: already recorded, ledger sequence {}",
+            env.ledger().sequence()
+        );
+        panic_with_error!(env, SASError::InvalidTimestamp);
+    }
     storage.set(
         &key,
         &TimestampAnchor {
@@ -107,4 +137,84 @@ pub fn read_and_renew_anchor(env: &Env, uid: &UID, revocation: bool) -> Option<T
             .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
     }
     anchor
+}
+
+/// Checks `claim` against the anchors recorded for `uid` and says *why* it
+/// fails, for `SAS::check_timestamp` and (as a boolean) `SAS::verify_timestamp`
+/// (#436).
+///
+/// * [`SASError::TimestampAnchorNotFound`]: no issuance or revocation anchor
+///   exists for `uid`.
+/// * [`SASError::InvalidTimestamp`]: the stored anchors are not monotonic, the
+///   claim names a ledger ahead of the current one, or the claim does not
+///   equal a recorded anchor in both sequence and close time.
+///
+/// A read only: nothing is written and no TTL is renewed.
+pub fn check_claim(env: &Env, uid: &UID, claim: &TimestampAnchor) -> Result<(), SASError> {
+    let issuance = read_anchor(env, uid, false);
+    let revocation = read_anchor(env, uid, true);
+
+    if issuance.is_none() && revocation.is_none() {
+        log!(
+            env,
+            "timestamp check: no anchor recorded for this uid, claimed sequence {}",
+            claim.ledger_sequence
+        );
+        return Err(SASError::TimestampAnchorNotFound);
+    }
+
+    // Revocation cannot happen before issuance. Stored anchors that say
+    // otherwise were written under an inconsistent ledger, so nothing about
+    // this uid can be trusted.
+    if let (Some(issued), Some(revoked)) = (&issuance, &revocation) {
+        if revoked.ledger_sequence < issued.ledger_sequence
+            || revoked.ledger_timestamp < issued.ledger_timestamp
+        {
+            log!(
+                env,
+                "timestamp check: revocation anchor precedes issuance anchor, revocation sequence {}",
+                revoked.ledger_sequence
+            );
+            return Err(SASError::InvalidTimestamp);
+        }
+    }
+
+    // A ledger that has not closed yet cannot be the source of an anchor. This
+    // is what a simulation running behind the network looks like.
+    if claim.ledger_sequence > env.ledger().sequence()
+        || claim.ledger_timestamp > env.ledger().timestamp()
+    {
+        log!(
+            env,
+            "timestamp check: claim is ahead of the current ledger, claimed sequence {}, current sequence {}",
+            claim.ledger_sequence,
+            env.ledger().sequence()
+        );
+        return Err(SASError::InvalidTimestamp);
+    }
+
+    let mut sequence_known = false;
+    for recorded in [&issuance, &revocation].into_iter().flatten() {
+        if recorded == claim {
+            return Ok(());
+        }
+        if recorded.ledger_sequence == claim.ledger_sequence {
+            sequence_known = true;
+        }
+    }
+
+    if sequence_known {
+        log!(
+            env,
+            "timestamp check: close time does not match the recorded anchor for sequence {}",
+            claim.ledger_sequence
+        );
+    } else {
+        log!(
+            env,
+            "timestamp check: sequence {} is not a ledger this uid was anchored on",
+            claim.ledger_sequence
+        );
+    }
+    Err(SASError::InvalidTimestamp)
 }

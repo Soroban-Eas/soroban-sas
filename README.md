@@ -346,6 +346,8 @@ TMPDIR=/tmp cargo test --workspace
 - [Batch Attestations (Merkle Commitments)](docs/batch-attestations.md):
   when to use off-chain Merkle batching instead of on-chain `multi_attest`,
   the normative leaf/node hashing rules, and a selective-disclosure example.
+- [Selective Disclosure (Merkle Root Attestations)](docs/selective-disclosure.md): attest to a Merkle root and reveal single claims with `verify_merkle_leaf`.
+- [Privacy Implications of Public Attestations](docs/privacy.md): what a public ledger exposes and how to keep sensitive data off-chain.
 - [Bulk Attestation Creation from CSV](docs/bulk-csv-attestations.md): the
   `attest bulk` CSV format, the validate-everything-before-submitting
   guarantee, `--dry-run`, and when to prefer Merkle batching instead.
