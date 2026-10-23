@@ -13,6 +13,8 @@ pub type ContractId = [u8; 32];
 
 /// First topic of a `SchemaRegistered` event.
 pub const TOPIC_SCHEMA_REGISTERED: &[u8] = b"REGISTER";
+/// First topic of a `SchemaDeprecated` event.
+pub const TOPIC_SCHEMA_DEPRECATED: &[u8] = b"SCHDEP";
 /// First topic of an `AttestationIssued` event.
 pub const TOPIC_ATTESTATION_ISSUED: &[u8] = b"ATTESTED";
 /// First topic of an `AttestationRevoked` event.
@@ -27,6 +29,13 @@ pub const TOPIC_BATCH_REVOKED: &[u8] = b"BATCHREV";
 pub struct SchemaRegistered {
     pub schema_uid: [u8; 32],
     pub owner: ScAddress,
+}
+
+/// Decoded `SchemaDeprecated` event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaDeprecated {
+    pub schema_uid: [u8; 32],
+    pub deprecated_by: ScAddress,
 }
 
 /// Decoded `AttestationIssued` event.
@@ -88,6 +97,7 @@ pub struct IndexerStrictUpdated {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SasEvent {
     SchemaRegistered(SchemaRegistered),
+    SchemaDeprecated(SchemaDeprecated),
     AttestationIssued(AttestationIssued),
     AttestationRevoked(AttestationRevoked),
     BatchAttested(BatchAttested),
@@ -176,6 +186,19 @@ pub fn parse_event(topics: &[ScVal], data: &ScVal) -> Result<SasEvent, EventPars
             Ok(SasEvent::SchemaRegistered(SchemaRegistered {
                 schema_uid: schema_uid_from_payload,
                 owner: decode_address(map_get(map, b"owner")?)?,
+            }))
+        }
+        n if n == TOPIC_SCHEMA_DEPRECATED => {
+            // Topics: `(SCHEMA_DEPRECATED, schema_uid)`; data is the
+            // authorizing address.
+            if topics.len() != 2 {
+                return Err(EventParseError::MalformedPayload(
+                    "schema deprecation event must have two topics",
+                ));
+            }
+            Ok(SasEvent::SchemaDeprecated(SchemaDeprecated {
+                schema_uid: decode_uid(&topics[1])?,
+                deprecated_by: decode_address(data)?,
             }))
         }
         n if n == TOPIC_ATTESTATION_ISSUED => {
@@ -279,7 +302,7 @@ pub struct TrustedContracts {
     /// The SAS core contract — emits `AttestationIssued` and
     /// `AttestationRevoked`.
     pub sas: Option<ContractId>,
-    /// The Schema Registry contract — emits `SchemaRegistered`.
+    /// The Schema Registry contract — emits schema registration/deprecation events.
     pub schema_registry: Option<ContractId>,
     /// The Indexer contract. Reserved: the Indexer emits no standardized SAS
     /// event today, but callers can still record its ID in the allowlist.
@@ -307,7 +330,9 @@ impl TrustedContracts {
     /// from.
     fn expected_source(&self, event: &SasEvent) -> (&'static str, Option<ContractId>) {
         match event {
-            SasEvent::SchemaRegistered(_) => ("schema_registry", self.schema_registry),
+            SasEvent::SchemaRegistered(_) | SasEvent::SchemaDeprecated(_) => {
+                ("schema_registry", self.schema_registry)
+            }
             SasEvent::AttestationIssued(_)
             | SasEvent::AttestationRevoked(_)
             | SasEvent::BatchAttested(_)

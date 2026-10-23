@@ -6,6 +6,46 @@ This guide explains how to integrate with the SAS Schema Registry using the Inde
 
 The Soroban Attestation Service (SAS) stores attestation schemas in a Schema Registry contract. The Indexer contract provides efficient query capabilities to look up schemas and their associated attestations. This guide walks through the integration process.
 
+## SDK Schema Cache
+
+The Rust SDK can cache schema records (including negative lookups) in a
+thread-safe, bounded LRU cache. Fresh cache hits avoid an RPC call. When an
+entry expires, `SASClient::fetch_schema` returns the stale value immediately
+and starts one background refresh for that UID; refresh failures are available
+through the cache statistics.
+
+```rust
+use soroban_sas_sdk::{SASClient, SchemaCache};
+use std::time::Duration;
+
+let cache = SchemaCache::new(1_000, Duration::from_secs(300));
+let client = SASClient::new(client_id)
+    .with_rpc(rpc)
+    .with_registry(registry_id)
+    .with_schema_cache(cache.clone());
+
+let schema = client.fetch_schema(&schema_uid)?;
+let stats = cache.stats();
+```
+
+Cache instances should be scoped to the registry configured on the client.
+Registry event consumers should invalidate entries after processing trusted
+schema registration/update or deprecation events:
+
+```rust
+if let Ok(event) = soroban_sas_sdk::events::parse_contract_event(&contract_event) {
+    cache.invalidate_for_event(&event);
+}
+```
+
+Invalidation also prevents any older in-flight background refresh from
+repopulating that UID. `SchemaCache::stats` exposes hit, miss, expiration,
+eviction, and refresh counters.
+
+Run `cargo bench --bench schema_cache_benchmark` to compare cached hits with
+uncached lookups against a loopback RPC stub at 1, 4, and 16 concurrent
+workers. The benchmark does not contact a live network.
+
 ## Schema Registry Contract
 
 The Schema Registry stores schema definitions and maintains their metadata. Each schema has:

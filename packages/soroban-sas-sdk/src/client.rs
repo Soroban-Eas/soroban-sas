@@ -3,6 +3,7 @@
 use crate::account;
 use crate::errors::SdkError;
 use crate::rpc::{GetTransactionResult, LedgerEntryResult, RpcClient};
+use crate::schema_cache::SchemaCache;
 use crate::sequence::SequenceManager;
 use crate::signature;
 use crate::simulate;
@@ -19,6 +20,7 @@ use soroban_sdk::xdr::{
 };
 use soroban_sdk::{Address, BytesN, Env, String as SorobanString};
 use std::sync::Arc;
+use std::thread;
 
 /// Distinguishes live, missing, and archived attestations — the
 /// SDK-supported view that keeps live entries from expiring. Fetching
@@ -172,6 +174,8 @@ pub struct SASClient {
     secret_seed: Option<[u8; 32]>,
     /// Optional configured Schema Registry contract ID.
     registry_contract_id: Option<String>,
+    /// Optional shared cache for configured schema lookups.
+    schema_cache: Option<SchemaCache>,
 }
 
 impl SASClient {
@@ -186,6 +190,7 @@ impl SASClient {
             network_passphrase: None,
             secret_seed: None,
             registry_contract_id: None,
+            schema_cache: None,
         }
     }
 
@@ -229,6 +234,15 @@ impl SASClient {
     /// Required for schema operations such as [`fetch_schema`](Self::fetch_schema).
     pub fn with_registry(mut self, registry_contract_id: impl Into<String>) -> Self {
         self.registry_contract_id = Some(registry_contract_id.into());
+        self
+    }
+
+    /// Enables shared cached schema lookups for this client.
+    ///
+    /// Expired entries are returned stale while one background refresh runs.
+    /// The cache should be scoped to the configured registry.
+    pub fn with_schema_cache(mut self, cache: SchemaCache) -> Self {
+        self.schema_cache = Some(cache);
         self
     }
 
@@ -406,6 +420,14 @@ impl SASClient {
         registry_contract_id: &str,
         uid: &[u8; 32],
     ) -> Result<Option<SchemaRecord>, SdkError> {
+        Self::get_schema_from_registry(rpc, registry_contract_id, uid)
+    }
+
+    fn get_schema_from_registry(
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        uid: &[u8; 32],
+    ) -> Result<Option<SchemaRecord>, SdkError> {
         let env = &Env::default();
         let uid = UID(BytesN::from_array(env, uid));
         let arg = simulate::encode_arg(env, &uid)?;
@@ -494,8 +516,55 @@ impl SASClient {
                 "RPC client is required on SASClient; configure it via with_rpc(...)".to_string(),
             )
         })?;
-        let _env = Env::default();
-        self.get_schema(rpc, registry_id, schema_uid)
+        let Some(cache) = &self.schema_cache else {
+            return self.get_schema(rpc, registry_id, schema_uid);
+        };
+
+        let (cached, expired) = cache.lookup(schema_uid)?;
+        if !expired {
+            if let Some(value) = cached {
+                return Ok(value);
+            }
+        } else if let Some(value) = cached {
+            if let Some(refresh_token) = cache.start_refresh(*schema_uid) {
+                let cache = cache.clone();
+                let refresh_rpc = rpc.clone();
+                let registry_id = registry_id.to_owned();
+                let uid = *schema_uid;
+                let refresh_cache = cache.clone();
+                let refresh = thread::Builder::new()
+                    .name("schema-cache-refresh".to_string())
+                    .spawn(move || {
+                        let result = SASClient::get_schema_from_registry(
+                            &refresh_rpc,
+                            &registry_id,
+                            &uid,
+                        );
+                        refresh_cache.finish_refresh(uid, refresh_token, result);
+                    });
+                if refresh.is_err() {
+                    cache.cancel_refresh(schema_uid, refresh_token);
+                    return self.refresh_schema(rpc, &registry_id, schema_uid, &cache);
+                }
+            }
+            return Ok(value);
+        }
+
+        let result = self.get_schema(rpc, registry_id, schema_uid)?;
+        cache.insert(*schema_uid, result.clone())?;
+        Ok(result)
+    }
+
+    fn refresh_schema(
+        &self,
+        rpc: &RpcClient,
+        registry_id: &str,
+        schema_uid: &[u8; 32],
+        cache: &SchemaCache,
+    ) -> Result<Option<SchemaRecord>, SdkError> {
+        let result = self.get_schema(rpc, registry_id, schema_uid)?;
+        cache.insert(*schema_uid, result.clone())?;
+        Ok(result)
     }
 
     /// Fetches a schema record by its raw definition from the configured
@@ -527,7 +596,14 @@ impl SASClient {
                 "RPC client is required on SASClient; configure it via with_rpc(...)".to_string(),
             )
         })?;
-        self.get_schema_by_content(rpc, registry_id, schema, resolver, revocable)
+        let result = self.get_schema_by_content(rpc, registry_id, schema, resolver, revocable)?;
+        if let Some(cache) = &self.schema_cache {
+            let uid = Self::compute_schema_uid(schema, resolver, revocable)
+                .0
+                .to_array();
+            cache.insert(uid, result.clone())?;
+        }
+        Ok(result)
     }
 
     /// Fetches the full `Attestation` record for `uid` via the

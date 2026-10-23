@@ -13,6 +13,7 @@ pub mod delegation;
 pub mod limits;
 pub mod rpc;
 pub mod schema_builder;
+pub mod schema_cache;
 pub mod sequence;
 pub mod signature;
 pub mod simulate;
@@ -26,6 +27,7 @@ pub mod schema_macro;
 pub use attestation_builder::AttestationRequestBuilder;
 pub use rpc::{RateLimitPolicy, RpcBackend};
 pub use schema_builder::SchemaBuilder;
+pub use schema_cache::{SchemaCache, SchemaCacheStats};
 pub use schema_macro::SchemaType;
 pub use simulate::{
     build_invoke_transaction, build_simulate_transaction_xdr, decode_result, encode_arg,
