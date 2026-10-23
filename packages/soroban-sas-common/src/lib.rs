@@ -157,6 +157,20 @@ impl From<bool> for RevocationPolicy {
     }
 }
 
+/// Lifecycle of a schema record (#539).
+///
+/// `Quarantined` pauses new attestations while leaving historical ones
+/// readable. Stored beside the record so existing `SchemaRecord` bytes stay
+/// compatible.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SchemaStatus {
+    Active = 0,
+    Deprecated = 1,
+    Quarantined = 2,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)] // Optimize storage serialization (#284)

@@ -28,6 +28,9 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 hex = "0.4"
 stellar-strkey = "0.0.8"
 ed25519-dalek = "2.0.0"
+serde_json = "1"
+sas = { path = "contracts/sas" }
+schema-registry = { path = "contracts/schema-registry" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

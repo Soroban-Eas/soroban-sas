@@ -5,9 +5,11 @@ mod cache;
 mod hardware;
 mod identity;
 mod io_safety;
+mod json_schema;
 mod manpage;
 mod network;
 mod offchain;
+mod wizard;
 
 /// Resolves a subcommand's own flag against the global `--network` shorthand
 /// (issue #174): an explicit flag (already merged with its environment
@@ -264,6 +266,7 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
     };
 
     let mut field_count = 0u32;
+    let mut seen_names: Vec<String> = Vec::new();
     while start < end {
         let mut field_end = start;
         while field_end < end && schema[field_end] != b',' {
@@ -319,6 +322,13 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
                 "schema must use comma-separated `name Type` field definitions".to_string(),
             );
         }
+        let name_norm = std::str::from_utf8(name).unwrap_or("").to_ascii_lowercase();
+        if seen_names.iter().any(|existing| existing == &name_norm) {
+            return Err(format!(
+                "schema field `{name_norm}` collides with an earlier field and would break serialization"
+            ));
+        }
+        seen_names.push(name_norm);
         field_count += 1;
 
         if field_end >= end {
@@ -686,6 +696,14 @@ enum OffchainCommands {
 
 #[derive(Subcommand)]
 enum SchemaCommands {
+    /// Export a SAS schema as JSON Schema Draft-7 and print compatibility warnings (#537).
+    Lint {
+        #[arg(
+            long,
+            help = "Schema definition string, e.g. `name string, active bool`"
+        )]
+        schema: String,
+    },
     /// Register a new schema. The registration is signed and submitted by
     /// --secret-key's account, which becomes the schema's owner.
     Register {
@@ -732,6 +750,49 @@ enum SchemaCommands {
     /// answer; `--secret-key` / `--registry-contract-id` still come from
     /// flags or environment variables, matching `register` (#326).
     Interactive {
+        #[arg(
+            long,
+            help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Interactive registration wizard (#469): prompts for a schema name,
+    /// field-by-field definitions, revocability, an optional resolver
+    /// address, and a metadata URI — validating each answer the moment it is
+    /// entered — then shows a summary with the estimated network fee and
+    /// submits the registration once confirmed. Needs a terminal for the
+    /// dialoguer prompts; when stdin is not a TTY it falls back to reading
+    /// one answer per line from stdin in the same order (name, fields
+    /// ending in a blank line, `y/n` revocable, resolver, metadata URI,
+    /// final `y/N` confirmation). `name` and the metadata URI are off-chain
+    /// labels echoed in the result: the registry identifies a schema by the
+    /// `(schema, resolver, revocable)` tuple alone. `--resolver` /
+    /// SAS_RESOLVER_CONTRACT_ID prefills the resolver so its prompt can be
+    /// skipped with a blank answer.
+    Wizard {
+        #[arg(
+            long,
+            help = "Default resolver contract address (C...), used when the wizard's resolver \
+                    prompt is left blank",
+            env = "SAS_RESOLVER_CONTRACT_ID"
+        )]
+        resolver: Option<String>,
         #[arg(
             long,
             help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
@@ -2289,6 +2350,44 @@ fn print_schema_registration_result(
     Ok(())
 }
 
+/// Success reporting for `schema wizard` (#469): the same status/UID/hash
+/// lines as [`print_schema_registration_result`] plus the off-chain labels
+/// the wizard collected, with the JSON half wrapped in the standard
+/// `{"status":"ok","data":…}` envelope (`--output json`).
+fn print_wizard_registration_result(
+    result: soroban_sas_sdk::rpc::GetTransactionResult,
+    uid_hex: &str,
+    answers: &wizard::WizardAnswers,
+    output: OutputFormat,
+) -> Result<(), String> {
+    if result.status != "SUCCESS" {
+        return Err(format!(
+            "schema registration failed with status {}",
+            result.status
+        ));
+    }
+    emit_ok(
+        output,
+        || {
+            println!("Schema registered: {uid_hex}");
+            if let Some(hash) = &result.hash {
+                println!("Transaction hash:  {hash}");
+            }
+            println!("Name:             {}", answers.name);
+            if let Some(uri) = &answers.metadata_uri {
+                println!("Metadata URI:     {uri}");
+            }
+        },
+        serde_json::json!({
+            "submitted": true,
+            "schema_uid": uid_hex,
+            "hash": result.hash.clone(),
+            "name": answers.name.clone(),
+            "metadata_uri": answers.metadata_uri.clone(),
+        }),
+    )
+}
+
 fn print_transaction_result(
     result: soroban_sas_sdk::rpc::GetTransactionResult,
     output: OutputFormat,
@@ -2642,6 +2741,27 @@ fn run_schema(
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
+        SchemaCommands::Lint { schema } => {
+            let linted = json_schema::lint_schema(&schema)?;
+            let round_tripped = json_schema::round_trip_schema(&schema)?;
+            let pretty = serde_json::to_string_pretty(&linted.document)
+                .map_err(|e| format!("serialization failed: {e}"))?;
+            let warnings = linted.warnings.clone();
+            emit_ok(
+                output,
+                || {
+                    for warning in &warnings {
+                        eprintln!("warning: {warning}");
+                    }
+                    println!("{pretty}");
+                },
+                serde_json::json!({
+                    "json_schema": linted.document,
+                    "warnings": linted.warnings,
+                    "sas_schema": round_tripped,
+                }),
+            )
+        }
         SchemaCommands::Register {
             schema,
             resolver,
@@ -2721,6 +2841,97 @@ fn run_schema(
                 )
                 .map_err(|e| e.to_string())?;
             print_schema_registration_result(result, &uid_hex, output)
+        }
+        SchemaCommands::Wizard {
+            resolver,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            use std::io::BufRead;
+            // Everything sourced from flags/environment resolves *before* the
+            // first prompt (#469): a missing credential or endpoint should
+            // fail fast, not after every answer has been typed.
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
+            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+
+            let mode = wizard::Mode::detect();
+            let stdin = std::io::stdin();
+            let mut lines = stdin.lock().lines();
+            let answers = wizard::collect(mode, &mut lines, resolver.as_deref())?;
+
+            // The UID preimage is exactly (schema, resolver, revocable), so
+            // computing it locally also validates the resolver as a C...
+            // contract address before any RPC call is made.
+            let uid_hex = compute_schema_uid_hex(
+                &env,
+                &answers.schema,
+                &answers.resolver,
+                answers.revocable,
+            )?;
+
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            // Estimate the network fee by simulating the exact call a real
+            // submission would send (#329's dry run): no signature, no
+            // sequence consumed, nothing submitted. An unavailable estimate
+            // is reported but never blocks — the submission itself still
+            // simulates before signing, so a doomed call fails there with the
+            // same on-chain reason.
+            let fee_estimate = match client.register_schema_dry_run(
+                &rpc,
+                &seed,
+                &registry_contract_id,
+                &answers.schema,
+                &answers.resolver,
+                answers.revocable,
+            ) {
+                Ok(dry_run) => Some(dry_run.total_fee),
+                Err(error) => {
+                    let reason = humanize_rpc_failure(&error.to_string());
+                    let reason = reason.lines().next().unwrap_or("unknown error");
+                    eprintln!("warning: network fee estimate unavailable: {reason}");
+                    None
+                }
+            };
+
+            wizard::print_summary(
+                &answers,
+                &uid_hex,
+                fee_estimate,
+                &network_passphrase,
+                &registry_contract_id,
+            );
+
+            if !wizard::confirm(mode, &mut lines)? {
+                return emit_ok(
+                    output,
+                    || println!("Aborted: no transaction was submitted."),
+                    serde_json::json!({
+                        "submitted": false,
+                        "schema_uid": uid_hex,
+                        "name": answers.name.clone(),
+                        "metadata_uri": answers.metadata_uri.clone(),
+                    }),
+                );
+            }
+
+            let result = client
+                .register_schema(
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    &answers.schema,
+                    &answers.resolver,
+                    answers.revocable,
+                )
+                .map_err(|e| e.to_string())?;
+            print_wizard_registration_result(result, &uid_hex, &answers, output)
         }
         SchemaCommands::Get {
             uid,

@@ -98,6 +98,71 @@ fn require_registry(env: &Env) -> Address {
     }
 }
 
+/// Splits an attestation fee between the protocol treasury and the schema
+/// creator (#538).
+///
+/// Creator share is `value * bps / 10_000`, rounded down. The remainder stays
+/// with the treasury, so the two shares always add back to `value`. A registry
+/// that does not expose royalty (or a schema with `0` bps and no treasury)
+/// leaves the fee on this contract, matching the pre-split withdraw path.
+fn distribute_attestation_fee(env: &Env, schema_uid: &UID, token: &Address, value: i128) {
+    let Ok(registry) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&SCHEMA_REGISTRY)
+        .ok_or(())
+    else {
+        return;
+    };
+    let bps: u32 = match env.try_invoke_contract::<u32, soroban_sdk::Error>(
+        &registry,
+        &Symbol::new(env, "get_creator_royalty"),
+        soroban_sdk::vec![env, schema_uid.clone().into_val(env)],
+    ) {
+        Ok(Ok(bps)) => bps,
+        _ => return,
+    };
+    if bps > 5_000 {
+        panic_with_error!(env, SASError::InvalidValue);
+    }
+    let creator_amount = value
+        .checked_mul(i128::from(bps))
+        .and_then(|product| product.checked_div(10_000))
+        .unwrap_or_else(|| panic_with_error!(env, SASError::InvalidValue));
+    let treasury_amount = value
+        .checked_sub(creator_amount)
+        .unwrap_or_else(|| panic_with_error!(env, SASError::InvalidValue));
+
+    let treasury: Option<Address> = env.storage().instance().get(&TREASURY);
+    if treasury.is_none() && creator_amount == 0 {
+        return;
+    }
+    let treasury = treasury.unwrap_or_else(|| panic_with_error!(env, SASError::TreasuryNotSet));
+    let token_client = token::Client::new(env, token);
+    if treasury_amount > 0 {
+        token_client.transfer(&env.current_contract_address(), &treasury, &treasury_amount);
+    }
+    if creator_amount > 0 {
+        let creator = match env.try_invoke_contract::<Option<Address>, soroban_sdk::Error>(
+            &registry,
+            &Symbol::new(env, "get_creator"),
+            soroban_sdk::vec![env, schema_uid.clone().into_val(env)],
+        ) {
+            Ok(Ok(Some(creator))) => creator,
+            _ => panic_with_error!(env, SASError::SchemaNotFound),
+        };
+        token_client.transfer(&env.current_contract_address(), &creator, &creator_amount);
+    }
+
+    env.events().publish(
+        (
+            soroban_sas_common::events::FEE_DISTRIBUTED,
+            schema_uid.clone(),
+        ),
+        (treasury_amount, creator_amount),
+    );
+}
+
 /// Checks if the contract is paused. Returns `true` if paused, `false` otherwise.
 fn is_paused_status(env: &Env) -> bool {
     env.storage().instance().get(&PAUSED).unwrap_or(false)
@@ -741,6 +806,21 @@ impl SAS {
         let Some(schema) = schema_opt else {
             panic_with_error!(&env, SASError::InvalidSchema);
         };
+
+        // Quarantine blocks new issuances only. Reads of existing attestations
+        // do not come through this path (#539). A registry that predates the
+        // method is treated as not quarantined.
+        let quarantined: bool = match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+            &registry,
+            &Symbol::new(&env, "is_schema_quarantined"),
+            soroban_sdk::vec![&env, attestation.schema_uid.clone().into_val(&env)],
+        ) {
+            Ok(Ok(flag)) => flag,
+            _ => false,
+        };
+        if quarantined {
+            panic_with_error!(&env, SASError::SchemaQuarantined);
+        }
 
         // Maximum expiration window limit per schema (#441):
         let max_ttl: u64 = match env.try_invoke_contract::<u64, soroban_sdk::Error>(
@@ -1509,6 +1589,7 @@ impl SAS {
                 &env.current_contract_address(),
                 &value,
             );
+            distribute_attestation_fee(&env, &attestation.schema_uid, &token, value);
         }
 
         Self::attest_internal(env, attestation)
@@ -2194,6 +2275,8 @@ mod test_issue_252;
 mod test_issue_293;
 #[cfg(test)]
 mod test_issue_296;
+#[cfg(test)]
+mod test_issue_491;
 #[cfg(test)]
 mod test_round_trip;
 #[cfg(test)]

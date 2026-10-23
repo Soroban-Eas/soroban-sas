@@ -56,6 +56,11 @@ pub const CURRENT_WASM_HASH: Symbol = symbol_short!("WASMHASH");
 /// to activate. Increase only as part of a reviewed release.
 pub const MAX_KNOWN_VERSION: u32 = 2;
 const MAX_CHUNK_SIZE: u32 = 100;
+const CHUNK_ALLOCATED: Symbol = symbol_short!("CHKALLOC");
+const CHUNK_FULL: Symbol = symbol_short!("CHKFULL");
+const DIM_RECIPIENT: Symbol = symbol_short!("recipient");
+const DIM_SCHEMA: Symbol = symbol_short!("schema");
+const DIM_ATTESTER: Symbol = symbol_short!("attester");
 const MAX_QUERIES_PER_BLOCK: u32 = 1000;
 const RECIPIENT_TOTAL: Symbol = symbol_short!("RCOUNT");
 const SCHEMA_TOTAL: Symbol = symbol_short!("SCOUNT");
@@ -256,7 +261,21 @@ where
     chunk
 }
 
-fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
+fn emit_chunk_allocated(env: &Env, dimension: Symbol, key: Val, chunk_index: u32) {
+    env.events().publish(
+        (CHUNK_ALLOCATED, dimension, chunk_index),
+        (key, env.ledger().sequence()),
+    );
+}
+
+fn emit_chunk_full(env: &Env, dimension: Symbol, key: Val, chunk_index: u32, total_items: u32) {
+    env.events().publish(
+        (CHUNK_FULL, dimension, chunk_index, total_items),
+        (key, total_items),
+    );
+}
+
+fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol, dimension: Symbol) {
     let count_key = (total_key, key.clone());
     let mut total = index_total(env, &count_key);
     let mut chunk_index = total / MAX_CHUNK_SIZE;
@@ -265,15 +284,30 @@ fn index_address_uid(env: &Env, key: &Address, uid: &UID, total_key: Symbol) {
         .persistent()
         .get(&(key.clone(), chunk_index))
         .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    let mut allocated = chunk.is_empty();
     if chunk.len() >= MAX_CHUNK_SIZE {
+        emit_chunk_full(
+            env,
+            dimension.clone(),
+            key.into_val(env),
+            chunk_index,
+            chunk.len(),
+        );
         chunk_index += 1;
         chunk = env
             .storage()
             .persistent()
             .get(&(key.clone(), chunk_index))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        allocated = true;
     }
     chunk.push_back(uid.clone());
+    if allocated {
+        emit_chunk_allocated(env, dimension.clone(), key.into_val(env), chunk_index);
+    }
+    if chunk.len() == MAX_CHUNK_SIZE {
+        emit_chunk_full(env, dimension, key.into_val(env), chunk_index, chunk.len());
+    }
     let storage_key = (key.clone(), chunk_index);
     env.storage().persistent().set(&storage_key, &chunk);
     env.storage()
@@ -319,7 +353,7 @@ fn index_recipient_attestation(env: &Env, recipient: &Address, uid: &UID) {
     extend_instance_ttl(env);
 }
 
-fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
+fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol, dimension: Symbol) {
     let count_key = (total_key, key.clone());
     let mut total = index_total(env, &count_key);
     let mut chunk_index = total / MAX_CHUNK_SIZE;
@@ -328,15 +362,30 @@ fn index_uid_uid(env: &Env, key: &UID, uid: &UID, total_key: Symbol) {
         .persistent()
         .get(&(key.clone(), chunk_index))
         .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    let mut allocated = chunk.is_empty();
     if chunk.len() >= MAX_CHUNK_SIZE {
+        emit_chunk_full(
+            env,
+            dimension.clone(),
+            key.into_val(env),
+            chunk_index,
+            chunk.len(),
+        );
         chunk_index += 1;
         chunk = env
             .storage()
             .persistent()
             .get(&(key.clone(), chunk_index))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        allocated = true;
     }
     chunk.push_back(uid.clone());
+    if allocated {
+        emit_chunk_allocated(env, dimension.clone(), key.into_val(env), chunk_index);
+    }
+    if chunk.len() == MAX_CHUNK_SIZE {
+        emit_chunk_full(env, dimension, key.into_val(env), chunk_index, chunk.len());
+    }
     let storage_key = (key.clone(), chunk_index);
     env.storage().persistent().set(&storage_key, &chunk);
     env.storage()
@@ -660,10 +709,10 @@ impl Indexer {
             LEDGERS_IN_ONE_YEAR,
         );
 
-        index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
+        index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL, DIM_RECIPIENT);
         index_recipient_attestation(&env, &recipient, &uid);
-        index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL);
-        index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL);
+        index_uid_uid(&env, &schema_uid, &uid, SCHEMA_TOTAL, DIM_SCHEMA);
+        index_address_uid(&env, &attester, &uid, ATTESTER_TOTAL, DIM_ATTESTER);
 
         // Progress for off-chain consumers (issue #315). Emitted only on the
         // first successful index of this UID, after the counters have moved.
