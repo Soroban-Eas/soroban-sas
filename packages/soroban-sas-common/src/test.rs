@@ -623,6 +623,148 @@ fn test_offchain_signature_wrong_key() {
     verify_offchain_signature(&env, &payload_hash, &wrong_key, &signature);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// #492 — Ed25519 signature malleability (canonical scalar `S < L`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Ed25519 group order `L` in little-endian byte order (the encoding `S`
+/// uses inside a 64-byte signature). Mirrors the constant embedded in
+/// `typed_data::verify_offchain_signature`'s malleability guard.
+const ED25519_L_LE: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+];
+
+/// Adds the group order `L` to the `S` half of `sig` (little-endian,
+/// no wraparound). Honest signatures satisfy `S < L`, so `S + L < 2^253`
+/// always fits in 32 bytes.
+fn malleate_s_add_group_order(sig: &[u8; 64]) -> [u8; 64] {
+    let mut out = *sig;
+    let mut carry = 0u16;
+    for i in 0..32 {
+        let sum = out[32 + i] as u16 + ED25519_L_LE[i] as u16 + carry;
+        out[32 + i] = sum as u8;
+        carry = sum >> 8;
+    }
+    assert_eq!(carry, 0, "S + L must fit in 256 bits for honest signatures");
+    out
+}
+
+#[test]
+fn test_signature_scalar_canonicity_boundary() {
+    use crate::typed_data::signature_scalar_is_canonical;
+    let env = Env::default();
+
+    let signing_key = SigningKey::from_bytes(&[31u8; 32]);
+    let attester = account_address(&env, &signing_key.verifying_key().to_bytes());
+    let attestation = sample_attestation(&env, attester);
+    let domain = sample_domain(&env, 1);
+    let payload_hash = hash_offchain_attestation(&env, &attestation, &domain);
+    let valid = signing_key.sign(&payload_hash.to_array()).to_bytes();
+
+    let valid_sig = BytesN::from_array(&env, &valid);
+    assert!(
+        signature_scalar_is_canonical(&valid_sig),
+        "honest signatures satisfy S < L"
+    );
+
+    // S = L exactly: the smallest non-canonical scalar.
+    let mut at_order = valid;
+    at_order[32..].copy_from_slice(&ED25519_L_LE);
+    assert!(!signature_scalar_is_canonical(&BytesN::from_array(
+        &env, &at_order
+    )));
+
+    // S = L - 1: still canonical — the bound is strictly S < L.
+    let mut below_order = valid;
+    below_order[32..].copy_from_slice(&ED25519_L_LE);
+    below_order[32] -= 1;
+    assert!(signature_scalar_is_canonical(&BytesN::from_array(
+        &env,
+        &below_order
+    )));
+
+    // S = 2^256 - 1: far outside the valid range.
+    let mut max_s = valid;
+    max_s[32..].fill(0xff);
+    assert!(!signature_scalar_is_canonical(&BytesN::from_array(
+        &env, &max_s
+    )));
+}
+
+#[test]
+#[should_panic]
+fn test_offchain_signature_s_plus_l_rejected() {
+    // Signature malleability vector (#492): (R, S + L) verifies under a
+    // naive ed25519 equation check but is non-canonical; the guard must
+    // fail closed before any host verification.
+    let env = Env::default();
+    let signing_key = SigningKey::from_bytes(&[31u8; 32]);
+    let attester = account_address(&env, &signing_key.verifying_key().to_bytes());
+    let attestation = sample_attestation(&env, attester);
+    let domain = sample_domain(&env, 1);
+    let payload_hash = hash_offchain_attestation(&env, &attestation, &domain);
+
+    let valid = signing_key.sign(&payload_hash.to_array()).to_bytes();
+    let malleated = malleate_s_add_group_order(&valid);
+    let public_key = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+
+    verify_offchain_signature(
+        &env,
+        &payload_hash,
+        &public_key,
+        &BytesN::from_array(&env, &malleated),
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_offchain_signature_scalar_at_group_order_rejected() {
+    let env = Env::default();
+    let signing_key = SigningKey::from_bytes(&[31u8; 32]);
+    let attester = account_address(&env, &signing_key.verifying_key().to_bytes());
+    let attestation = sample_attestation(&env, attester);
+    let domain = sample_domain(&env, 1);
+    let payload_hash = hash_offchain_attestation(&env, &attestation, &domain);
+
+    let mut at_order = signing_key.sign(&payload_hash.to_array()).to_bytes();
+    at_order[32..].copy_from_slice(&ED25519_L_LE);
+    let public_key = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+
+    verify_offchain_signature(
+        &env,
+        &payload_hash,
+        &public_key,
+        &BytesN::from_array(&env, &at_order),
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_offchain_signature_canonical_but_wrong_s_fails_verification() {
+    // S = L - 1 is canonical (passes the malleability guard) but is not the
+    // correct scalar for this (R, message, key), so host verification must
+    // still reject it — pinning the exact S < L boundary.
+    let env = Env::default();
+    let signing_key = SigningKey::from_bytes(&[31u8; 32]);
+    let attester = account_address(&env, &signing_key.verifying_key().to_bytes());
+    let attestation = sample_attestation(&env, attester);
+    let domain = sample_domain(&env, 1);
+    let payload_hash = hash_offchain_attestation(&env, &attestation, &domain);
+
+    let mut below_order = signing_key.sign(&payload_hash.to_array()).to_bytes();
+    below_order[32..].copy_from_slice(&ED25519_L_LE);
+    below_order[32] -= 1;
+    let public_key = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+
+    verify_offchain_signature(
+        &env,
+        &payload_hash,
+        &public_key,
+        &BytesN::from_array(&env, &below_order),
+    );
+}
+
 #[test]
 fn test_merkle_root_generation() {
     let env = Env::default();

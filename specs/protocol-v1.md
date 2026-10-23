@@ -125,25 +125,54 @@ the schema-identity derivation to ensure XDR stability across all platform imple
 ## Off-Chain Typed Data Hashing and Delegation Signing
 
 Delegated attestations via `attest_by_delegation` and `revoke_by_delegation` require an
-Ed25519 signature over a structured typed-data message. The signature preimage is:
+Ed25519 signature over a structured typed-data message (EIP-712-style, two-level
+SHA-256). The exact preimage layout — locked by golden vectors in
+`packages/soroban-sas-common/src/typed_data.rs` — is:
+
 ```
-message_hash = SHA256(
-    "SAS_ATTESTATION_V1" ||           // Domain separator (ASCII)
-    network_id ||                      // Soroban network_id (32 bytes)
-    contract_address ||                // This SAS contract address (XDR-encoded)
-    nonce (u64, big-endian) ||         // Monotonic per-attester nonce
-    XDR(attestation_struct)            // Full Attestation being signed
+payload_hash = SHA256(
+    "\x19SorobanSAS\x01" ||          // PAYLOAD_PREFIX (13 bytes)
+    domain_hash ||                   // 32 bytes, see below
+    struct_hash ||                   // 32 bytes (attestation) or action body
+)
+
+domain_hash = SHA256(
+    "SorobanSAS Domain v1(network_id,contract,nonce)" ||  // DOMAIN_TYPE_TAG
+    network_id ||                    // SHA-256 of the network passphrase (32 bytes)
+    contract ||                      // ScVal XDR of env.current_contract_address()
+    nonce                            // u64, big-endian
+)
+
+struct_hash = SHA256(
+    "SorobanSAS Attestation v1(uid,schema_uid,time,expiration_time,ref_uid,recipient,attester,revocable,data)" ||
+    uid || schema_uid ||             // 32 bytes each
+    time || expiration_time ||       // u64, big-endian each
+    ref_uid ||                       // 32 bytes
+    recipient || attester ||         // ScVal XDR of each address
+    revocable ||                     // 1 byte (0 or 1)
+    SHA256(data)                     // 32 bytes
 )
 ```
-Where `attestation_struct` contains:
-- uid, schema_uid, recipient, attester (addresses/UIDs)
-- time, expiration_time, revocation_time (u64 timestamps, seconds since epoch)
-- revocable (bool)
-- data (Bytes, max 10,000 bytes)
 
-The domain separator "SAS_ATTESTATION_V1" and network_id prevent cross-network replay attacks.
-The nonce prevents replay of the same message on the same network. The signature is
-verified using Ed25519 public key cryptography.
+Where the domain fields are taken from the live contract state at verification
+time — callers cannot supply them:
+- `network_id`: `env.ledger().network_id()`, i.e. the SHA-256 hash of the network
+  passphrase (`"Test SDF Network ; September 2015"` for Testnet,
+  `"Public Global Stellar Network ; September 2015"` for Mainnet)
+- `contract`: `env.current_contract_address()`, XDR-encoded
+- `nonce`: the monotonic per-attester nonce passed to the entry point
+
+The domain separator and network_id prevent cross-network and
+cross-contract (cross-instance) replay attacks. The nonce prevents replay of
+the same message on the same network against the same contract. The
+signature is verified using Ed25519 public key cryptography with canonical
+scalar enforcement: non-canonical scalars (`S >= L`, where
+`L = 2^252 + 27742317777372353535851937790883648493` is the prime order of
+the ed25519 group) are rejected with `SASError::InvalidSignature` before
+host verification, and the host's `verify_strict` rejects any remaining
+cryptographically invalid signatures (see docs/security.md's "Ed25519
+signature malleability"). `revocation_time` is deliberately excluded from
+the digest because it is mutated on-chain by revocation.
 
 **Rationale**: Including the network and contract in the preimage ensures signatures
 cannot be replayed across deployments or networks. Including the full attestation data

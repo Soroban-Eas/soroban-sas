@@ -181,16 +181,57 @@ pub fn hash_delegated_nonce_invalidation(
     env.crypto().sha256(&buf).into()
 }
 
+/// Ed25519 group order `L = 2^252 + 27742317777372353535851937790883648493`,
+/// encoded little-endian — the byte order the scalar `S` uses inside a
+/// 64-byte signature (`R || S`, each half 32 bytes).
+const ED25519_GROUP_ORDER_L_LE: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+];
+
+/// Returns `true` when the scalar `S` in the second half of a 64-byte ed25519
+/// signature is canonical, i.e. `S < L` where `L` is the prime order of the
+/// ed25519 group (#492).
+///
+/// Ed25519 signatures are malleable by construction unless this bound is
+/// enforced: for any valid `(R, S)` with `S < L`, the pair `(R, S + L)` (when
+/// it fits in 256 bits) verifies under a naive equation check, yielding two
+/// distinct valid byte encodings of "the same" signature. Canonical
+/// verification — including the Soroban host's `ed25519_verify`, which uses
+/// ed25519-dalek's `verify_strict` — rejects `S >= L`; this helper exposes
+/// the same predicate so callers (and the guard inside
+/// [`verify_offchain_signature`]) can enforce it explicitly and
+/// deterministically, independent of host behaviour.
+pub fn signature_scalar_is_canonical(signature: &BytesN<64>) -> bool {
+    // `S` is little-endian; compare big-endian interpretations so a plain
+    // lexicographic array compare matches numeric order.
+    let sig = signature.to_array();
+    let mut s_be: [u8; 32] = sig[32..].try_into().expect("S half is 32 bytes");
+    s_be.reverse();
+    let mut l_be = ED25519_GROUP_ORDER_L_LE;
+    l_be.reverse();
+    s_be < l_be
+}
+
 /// Verifies an ed25519 signature over a payload digest.
 ///
-/// Traps (host error) if the signature does not verify, matching the
-/// semantics of `Env::crypto().ed25519_verify`.
+/// Rejects non-canonical scalars (`S >= L`, the signature-malleability
+/// vector) with `SASError::InvalidSignature` *before* invoking the host, so
+/// malleated inputs fail closed with a typed error deterministically (#492).
+///
+/// For canonical inputs, traps (host error) if the signature does not verify,
+/// matching the semantics of `Env::crypto().ed25519_verify` (which uses
+/// ed25519-dalek `verify_strict` and additionally rejects weak keys and
+/// small-order components).
 pub fn verify_offchain_signature(
     env: &Env,
     payload_hash: &BytesN<32>,
     public_key: &BytesN<32>,
     signature: &BytesN<64>,
 ) {
+    if !signature_scalar_is_canonical(signature) {
+        env.panic_with_error(crate::SASError::InvalidSignature);
+    }
     let message = Bytes::from_slice(env, &payload_hash.to_array());
     env.crypto().ed25519_verify(public_key, &message, signature);
 }

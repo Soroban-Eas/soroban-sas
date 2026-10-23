@@ -138,6 +138,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fuzz targets exercising schema validation, typed-data hashing, event
   decoding, CLI JSON parsing, and XDR decoding. (#182)
 
+### Security
+- Signature malleability and cross-network replay audit (#492):
+  `verify_offchain_signature` now rejects non-canonical Ed25519 scalars
+  (`S >= L`, where `L = 2^252 + 27742317777372353535851937790883648493`) with
+  the typed `SASError::InvalidSignature` before host verification, making
+  malleation rejection a deterministic contract-level guarantee. New
+  regression tests (`contracts/sas/src/test_issue_492.rs`) prove that
+  delegated signatures are strictly bound to the contract address and the
+  network passphrase hash: Testnet-signed payloads are rejected on simulated
+  Mainnet instances and vice versa, signatures bound to one contract
+  instance are rejected by every other instance, and malleated signatures
+  (`S + L`, `S = L`, `S = 2^256 - 1`) fail closed on both the attestation
+  and revocation paths. The domain separator byte layout and preimage
+  construction are documented in `docs/security.md` (with a completed
+  audit-checklist item) and corrected in `specs/protocol-v1.md`, which had
+  described a stale preimage layout.
+
 ### Removed
 - `soroban_sas_sdk::init()`: the undocumented no-op entry point has been
   removed. Callers should instantiate `SASClient` and builders directly. (#180)

@@ -164,6 +164,96 @@ AttestationDomain {
   submit an attestation "from" an attester using a key that address doesn't
   actually correspond to.
 
+### Domain separator byte layout
+
+The domain separator and the full signed digest are computed in
+`soroban_sas_common::typed_data` with the following exact preimage layout
+(all multi-byte integers big-endian; addresses encoded as ScVal XDR):
+
+```text
+payload_hash = sha256(
+    PAYLOAD_PREFIX                # b"\x19SorobanSAS\x01" (13 bytes)
+    || domain_hash                # 32 bytes
+    || struct_hash                # 32 bytes (attestation) or action-specific body
+)
+
+domain_hash = sha256(
+    DOMAIN_TYPE_TAG               # b"SorobanSAS Domain v1(network_id,contract,nonce)"
+    || network_id                 # sha256(network passphrase), 32 bytes
+    || contract                   # ScVal XDR of the verifying contract's
+                                  # ScAddress (SCV_ADDRESS discriminant, then
+                                  # the 32-byte contract id)
+    || nonce                      # u64, big-endian (8 bytes)
+)
+```
+
+- `network_id` is `env.ledger().network_id()` on-chain — i.e. the SHA-256
+  hash of the network passphrase (e.g.
+  `"Test SDF Network ; September 2015"` for Testnet,
+  `"Public Global Stellar Network ; September 2015"` for Mainnet).
+- `contract` is `env.current_contract_address()` on-chain, XDR-encoded via
+  `ToXdr`, so the separator commits to the exact verifying instance.
+- Every delegated entry point (`attest_by_delegation`,
+  `multi_attest_by_delegation`, `revoke_by_delegation`,
+  `multi_revoke_by_delegation`, `invalidate_nonces_by_delegation`, and the
+  read-only `verify_offchain_attestation`) constructs this domain from the
+  live ledger values — callers cannot supply their own network id or
+  contract binding.
+
+The digest for an attestation additionally commits to every attestation
+field (`ATTESTATION_TYPE_TAG || uid || schema_uid || time || expiration_time
+|| ref_uid || recipient || attester || revocable || sha256(data)`); see
+[offchain-attestations.md](offchain-attestations.md#typed-data-hashing) for
+the struct layout and the golden vectors that pin it. Regression tests in
+`contracts/sas/src/test_issue_492.rs` exercise cross-network and
+cross-contract replay at the entry-point level and pin the exact rejection
+error surfaces.
+
+### Ed25519 signature malleability
+
+An ed25519 signature is the 64-byte encoding `R || S`, where `S` is a scalar
+that must satisfy `S < L` with
+`L = 2^252 + 27742317777372353535851937790883648493` (the prime order of the
+ed25519 group). Unless this bound is enforced, signatures are *malleable*:
+for any valid `(R, S)`, the pair `(R, S + L)` (when it fits in 256 bits)
+satisfies the ed25519 verification equation under a naive implementation,
+so one logical signature would have two valid byte encodings.
+
+SAS enforces canonicity at two independent layers:
+
+1. **Contract-level guard** — `verify_offchain_signature` (the single
+   verification entry point used by every delegated path) checks `S < L`
+   against the embedded little-endian encoding of `L` *before* invoking the
+   host, and rejects non-canonical inputs with the typed
+   `SASError::InvalidSignature` (error code 302). This makes malleability
+   rejection a deterministic contract-level guarantee, independent of host
+   behaviour.
+2. **Host verification** — the Soroban host's `ed25519_verify` uses
+   ed25519-dalek's `verify_strict`, which additionally rejects non-canonical
+   scalars, small-order components, and weak keys. A canonical but
+   cryptographically invalid signature (e.g. `S = L - 1`) fails here with a
+   host trap; through a `try_` client this surfaces as the non-contract host
+   error `Context/InvalidAction` in the test environment.
+
+Both layers fail closed: a rejected signature aborts the whole invocation
+before `consume_delegation_nonce` runs, so no nonce is consumed and no
+state is written. Regression tests cover `S + L`, `S = L`, `S = 2^256 - 1`,
+and the canonical boundary `S = L - 1` for both the attestation and
+revocation paths (`contracts/sas/src/test_issue_492.rs`, with unit-level
+coverage in `packages/soroban-sas-common/src/test.rs`).
+
+## Security Audit Checklist
+
+- [x] **Signature malleability and cross-network replay audit (#492)** —
+  domain separator confirmed to bind `env.current_contract_address()` and
+  `env.ledger().network_id()` at every delegated entry point; cross-network
+  (Testnet↔Mainnet) and cross-contract replay attempts verified to fail
+  closed; non-canonical Ed25519 scalars (`S >= L`) rejected deterministically
+  with `SASError::InvalidSignature` by the contract-level guard and by the
+  host's `verify_strict`. Regression tests:
+  `contracts/sas/src/test_issue_492.rs` (11 tests) and
+  `packages/soroban-sas-common/src/test.rs` (malleability unit tests).
+
 See [offchain-attestations.md](offchain-attestations.md) for the full
 signing/hashing scheme.
 
