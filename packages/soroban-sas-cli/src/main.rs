@@ -2,6 +2,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 mod bulk;
 mod cache;
+mod decoder;
 mod hardware;
 mod identity;
 mod io_safety;
@@ -546,6 +547,23 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum SasCommands {
+    /// Decode an attestation payload using its registered schema.
+    Decode {
+        #[arg(long, help = "32-byte attestation UID, hex encoded")]
+        uid: String,
+        #[arg(long, help = "SAS contract address (C...)", env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+        #[arg(long, help = "Emit the decoded fields as JSON")]
+        json: bool,
+    },
     /// Read the currently configured attestation fee, if any.
     #[command(name = "get-fee")]
     Get {
@@ -1488,6 +1506,70 @@ fn run_sas(
 ) -> Result<(), String> {
     let _env = soroban_sdk::Env::default();
     match action {
+        SasCommands::Decode {
+            uid,
+            contract_id,
+            registry_contract_id,
+            rpc_url,
+            json,
+        } => {
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let uid = parse_uid(&uid)?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let attestation = client
+                .get_attestation(&rpc, &uid)
+                .map_err(|e| format!("failed to fetch attestation: {e}"))?
+                .ok_or_else(|| "attestation not found".to_string())?;
+            let schema = client
+                .get_schema(
+                    &rpc,
+                    &registry_contract_id,
+                    &attestation.schema_uid.0.to_array(),
+                )
+                .map_err(|e| format!("failed to fetch schema: {e}"))?
+                .ok_or_else(|| {
+                    format!(
+                        "schema {} not found for attestation",
+                        hex::encode(attestation.schema_uid.0.to_array())
+                    )
+                })?;
+            let schema_text = soroban_string_to_std(&schema.schema);
+            let mut payload = vec![0u8; attestation.data.len() as usize];
+            attestation.data.copy_into_slice(&mut payload);
+            let fields = decoder::decode_payload(&schema_text, &payload)
+                .map_err(|e| format!("failed to decode attestation payload: {e}"))?;
+            let data = serde_json::json!({
+                "uid": hex::encode(uid),
+                "schema_uid": hex::encode(attestation.schema_uid.0.to_array()),
+                "schema": schema_text,
+                "fields": fields.iter().map(|field| serde_json::json!({
+                    "name": field.name,
+                    "type": field.field_type,
+                    "value": field.value,
+                })).collect::<Vec<_>>(),
+            });
+            let output = if json { OutputFormat::Json } else { output };
+            emit_ok(
+                output,
+                || {
+                    println!("Attestation: {}", data["uid"].as_str().unwrap_or_default());
+                    println!(
+                        "Schema:      {}",
+                        data["schema"].as_str().unwrap_or_default()
+                    );
+                    println!("\nField                 Type       Value");
+                    println!("--------------------  ---------  ------------------------------");
+                    for field in &fields {
+                        println!(
+                            "{:<20}  {:<9}  {}",
+                            field.name, field.field_type, field.value
+                        );
+                    }
+                },
+                data,
+            )
+        }
         SasCommands::Get {
             contract_id,
             rpc_url,

@@ -16,6 +16,23 @@ first_name String, last_name String, document_id Bytes
 This keeps the on-chain representation compact while still giving the
 contracts and CLI enough structure to reject malformed inputs.
 
+### Decoding attestation payloads
+
+The CLI can decode a stored payload using the schema referenced by the
+attestation:
+
+```bash
+soroban-sas-cli sas decode --uid "$ATTESTATION_UID" \
+  --contract-id "$SAS_CONTRACT_ID" \
+  --registry-contract-id "$SCHEMA_REGISTRY_CONTRACT_ID" \
+  --rpc-url "$SOROBAN_RPC_URL" --json
+```
+
+Payload fields are encoded in schema order, with each field represented by its
+Soroban `ScVal` XDR encoding. The decoder rejects unsupported types, invalid
+UTF-8, type mismatches, truncated values, malformed XDR, and trailing bytes
+rather than returning a partial result.
+
 ### Creating a Schema
 When registering a schema, the caller provides a deterministic UID and the
 schema string above. The validator rejects whitespace-only values, entries
