@@ -84,3 +84,7 @@ new_without_default = "allow"
 [package.metadata.docs]
 all-features = true
 documentation = "https://soroban-sas.github.io/soroban-sas-sdk/"
+
+[[bench]]
+name = "batch_scaling_benchmark"
+harness = false
