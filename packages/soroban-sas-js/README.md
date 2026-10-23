@@ -85,6 +85,30 @@ const stored = await client.getAttestation(attestation.uid);
 await client.revoke(attestation.uid);
 ```
 
+### Endpoint fallback
+
+Pass several endpoints (with priority weights) instead of one `rpcUrl`:
+
+```ts
+const client = new SASClient({
+  contractId: "C...",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  endpoints: [
+    { url: "https://primary-rpc.example", weight: 10 },
+    { url: "https://backup-rpc.example", weight: 1 },
+  ],
+  resilience: { timeoutMs: 8000, maxAttempts: 3, backoffBaseMs: 200 },
+});
+
+client.transport.on((e) => console.log(e.type)); // endpointStateChange, connectionStateChange, retry, failover
+client.transport.health(); // per-endpoint score and state
+```
+
+- **Reads** (`getAttestation`, `getSchema`) fail over to the next-best endpoint on HTTP 429/502/503/504, timeouts and network errors, with full-jitter exponential backoff.
+- **Writes** (`attest`, `attestByDelegation`, `revoke`, `registerSchema`) are sent to the single healthiest endpoint **once** and are never retried or sent to a second node, so a transaction cannot be duplicated. After a failed write, look the transaction up by hash before resubmitting.
+- Endpoints are ranked by `weight × health score` (an EWMA of recent successes/failures); after `failureThreshold` consecutive failures an endpoint's circuit opens for `cooldownMs`.
+- `ResilientTransport` can also be used directly with `kind: "indexer"` endpoints for GraphQL/indexer reads.
+
 ## Scope and limitations
 
 - `hashing.ts` and `delegation.ts` are cross-checked byte-for-byte against
