@@ -36,14 +36,16 @@ the set," use a Merkle commitment — it moves the entire storage and
 per-item-indexing cost off-chain while keeping the same cryptographic
 guarantee.
 
-Note that as of this writing, `soroban-sas-common` provides the Merkle
-primitives themselves (root computation and proof verification) as a
-library; there is no dedicated SAS contract entry point that stores a
-`BatchAttestation` in contract storage on your behalf. Callers currently
-persist the computed `MerkleRoot` themselves — for example inside their own
-contract's storage, or as the `data` payload of a single on-chain attestation
-issued via `attest` — and use `verify_proof` (on-chain or off-chain) to check
-individual claims against it.
+`soroban-sas-common` provides the Merkle primitives themselves (root
+computation and proof verification) as a library. Callers that want to keep
+the commitment entirely in their own contract storage can persist a
+`MerkleRoot` and use `verify_proof`. Callers that want the root anchored to an
+SAS attestation — so its issuance time, expiry, and revocation govern the
+commitment — can store the root as the `data` payload of a single attestation
+and verify disclosed leaves on-chain with
+[`SAS::verify_merkle_leaf`](#on-chain-merkle-root-attestations-sasverify_merkle_leaf).
+The next section defines the payload and tree conventions that entry point
+verifies.
 
 ## Normative hash specification
 
@@ -159,6 +161,147 @@ fn build_and_verify(env: &Env) {
 In production, the off-chain service builds the full tree once (retaining
 every intermediate level, not just the root) so it can answer "give me
 index i's proof" for any `i` without recomputing the whole tree per request.
+
+## On-chain Merkle root attestations (`SAS::verify_merkle_leaf`)
+
+A Merkle-root attestation commits to an off-chain batch without storing any
+leaf data on-chain. The issuer creates one ordinary SAS attestation whose
+`data` payload is the 32-byte root; verifying a disclosed member is then a
+single read-only contract call:
+
+```rust
+pub fn verify_merkle_leaf(
+    env: Env,
+    attestation_uid: UID,
+    leaf: Bytes,
+    proof: Vec<MerkleProofStep>,
+    index: u32,
+) -> bool
+```
+
+The parent attestation's lifecycle controls the commitment: once it is
+revoked or expired (or before its `valid_from`), every leaf proof against it
+stops verifying. Replacing the attestation's data changes the UID, so the
+root is as immutable as the attestation record itself.
+
+### Payload convention: 32 raw bytes
+
+`Attestation.data` must be **exactly 32 raw bytes**, the root itself, with no
+prefix, length field, encoding wrapper, or leaf count. Anything else fails
+verification (the helper returns `false`; it never guesses at a different
+encoding). Off-chain clients can build the payload directly from the root
+hash, for example `Bytes::from_array(env, &root.to_array())`.
+
+The canonical schema string for such a schema is:
+
+```text
+bytes32 merkle_root
+```
+
+`MERKLE_ROOT_SCHEMA` in `soroban-sas-common` exports this literal. It follows
+the registry's `type name` field grammar, so it registers unchanged. The
+schema string is advisory — clients and indexers use it to recognise the
+payload format — while the on-chain helper enforces the 32-byte length
+directly rather than paying for a cross-contract schema lookup.
+
+### Index-bound leaf format
+
+SAS leaf verification uses an **index-bound** tree. The leaf preimage includes
+the leaf's position, so the `index` argument is authenticated rather than
+trusted:
+
+```text
+leaf_hash(index, data) = sha256(0x00 || index_be_u32 || data)
+node_hash(left, right)  = sha256(0x01 || smaller || larger)
+odd level               = last unpaired node promoted unchanged
+```
+
+`index` is a fixed-width big-endian `u32`, making the preimage unambiguous for
+any leaf payload length. Node hashing sorts its two inputs by byte value,
+so proofs need no left/right flags and the same proof layout as the generic
+format applies.
+
+The index binding is what makes the disclosed position meaningful:
+
+- A valid proof for position `i` cannot be replayed as position `j`; the
+  verifier hashes `(j, leaf)` and reaches a different root.
+- Moving a leaf between positions changes the root, so a batch cannot be
+  silently reordered after commitment.
+- The `0x00` leaf / `0x01` node domain separation prevents an internal node
+  hash from being presented as a leaf (second-preimage protection).
+- Odd nodes are promoted, never duplicated, avoiding duplicated-leaf forgery
+  classes.
+
+Use `indexed_merkle_root` from `soroban-sas-common` to build a matching root;
+it hashes leaf `i` with `indexed_leaf_hash(i, leaf)` and folds the tree with
+the same promotion rule. Both functions are public so off-chain tooling can
+reproduce the exact bytes without duplicating the algorithm.
+
+> **Note:** this is deliberately a different leaf format from the generic
+> `merkle_root` / `verify_proof` pair documented above, which hashes bare
+> leaves (`sha256(0x00 || data)`) and has no notion of position. Build a
+> Merkle-root attestation with `indexed_merkle_root` and verify it with
+> `verify_merkle_leaf`; use `merkle_root` / `verify_proof` for commitments
+> your own contract stores directly.
+
+### Verification semantics
+
+`verify_merkle_leaf` is read-only: it performs no storage writes and does not
+renew TTLs, so it is cheap and safe in simulation or view contexts. It
+returns `false` — never a panic — for every rejection:
+
+| Condition | Result |
+|---|---|
+| Unknown / never-issued `attestation_uid` | `false` |
+| Parent revoked (`revocation_time != 0`) | `false` |
+| Parent expired at the current ledger time | `false` |
+| Parent not yet valid (`valid_from` in the future) | `false` |
+| `data` payload is not exactly 32 bytes | `false` |
+| Proof deeper than `MAX_MERKLE_PROOF_DEPTH` (32) | `false` |
+| Tampered leaf, tampered sibling, wrong index, or wrong root | `false` |
+
+Archived parent entries trap at the host layer before the helper runs,
+exactly as with `get_attestation` / `verify_attestation`; callers should map
+an "archived" simulation error to a restore-footprint flow rather than to
+`false`.
+
+### Gas
+
+The proof depth is capped at 32 (the full `u32` index space), and verification
+performs one SHA-256 per level after the leaf hash with no storage access.
+The contract test suite measures a worst-case 32-step proof at roughly
+**563k CPU instructions and 30 KB of memory**, well under one percent of the
+default 100M-instruction Soroban transaction budget. Shorter proofs (the
+common case: 10–20 levels for realistic batch sizes) cost proportionally
+less. The test `test_merkle::leaf_verification_gas_is_bounded` enforces the
+ceiling and prints the measured values.
+
+### Worked example
+
+```rust
+use soroban_sas_common::{indexed_merkle_root, MerkleProofStep};
+use soroban_sdk::{Bytes, Env, Vec};
+
+fn commit_batch(env: &Env, sas: &SASClient, leaf_data: [Bytes; 3]) {
+    let leaves: Vec<Bytes> = Vec::from_array(env, leaf_data);
+    let root = indexed_merkle_root(env, &leaves);
+
+    // Issue one ordinary attestation whose payload is the root. Use the
+    // canonical "bytes32 merkle_root" schema so clients recognise it.
+    let attestation = /* build as usual, with data = Bytes::from_array(env, &root.0.to_array()) */;
+    let uid = sas.attest(&attestation);
+
+    // Off-chain: hand each member their raw leaf plus its sibling path.
+    // On-chain, anyone can then check a disclosure:
+    let proof: Vec<MerkleProofStep> = /* siblings from the builder */;
+    let is_member = sas.verify_merkle_leaf(&uid, &leaves.get(1).unwrap(), &proof, &1);
+    assert!(is_member);
+}
+```
+
+Revoking the parent attestation (`SAS::revoke(uid)`) immediately invalidates
+every outstanding leaf proof, which is the intended kill switch for a
+compromised or superseded batch.
 
 ## Selective disclosure: proving membership without revealing the batch
 

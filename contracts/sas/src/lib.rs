@@ -291,6 +291,19 @@ fn extend_attestation_ttl(env: &Env, uid: &UID, ttl: u32) {
     }
 }
 
+/// Whether an attestation is currently usable: issued (already read), not
+/// revoked, past its `valid_from` activation time (when set), and not
+/// expired. Read-only; callers decide whether to renew the entry's TTL.
+fn attestation_is_live(env: &Env, attestation: &Attestation) -> bool {
+    if attestation.revocation_time != 0 {
+        return false;
+    }
+    if attestation.valid_from != 0 && env.ledger().timestamp() < attestation.valid_from {
+        return false;
+    }
+    validate_expiration(env, attestation.expiration_time).is_ok()
+}
+
 /// Shared verdict for a single attestation UID (#297).
 ///
 /// Both the single-UID entrypoint ([`SAS::verify_attestation`]) and the batch
@@ -2097,6 +2110,49 @@ impl SAS {
         read_attestation(&env, &uid)
     }
 
+    /// Verifies that `leaf` is committed at position `index` in the Merkle
+    /// root stored as the payload of attestation `attestation_uid` (#529).
+    ///
+    /// The parent attestation's `data` must be exactly 32 raw bytes: the
+    /// index-bound Merkle root defined by
+    /// [`soroban_sas_common::indexed_merkle_root`] (leaf
+    /// `sha256(0x00 || index_be_u32 || leaf)`, nodes
+    /// `sha256(0x01 || smaller || larger)`, unpaired nodes promoted). `leaf`
+    /// is the raw leaf payload, not a pre-hashed leaf, and `proof` carries one
+    /// sibling hash per level.
+    ///
+    /// Verification is read-only (no storage writes and no TTL renewal) and
+    /// returns `false` for every rejection: unknown parent, revoked or
+    /// expired parent, parent not yet valid at `valid_from`, a payload that
+    /// is not exactly 32 bytes, a proof deeper than
+    /// [`soroban_sas_common::MAX_MERKLE_PROOF_DEPTH`], and any leaf, sibling,
+    /// index, or root mismatch. The index is bound into the leaf preimage, so
+    /// a proof for one position cannot be replayed at another and a leaf
+    /// cannot be relocated without changing the root.
+    ///
+    /// See `docs/batch-attestations.md` for the payload and tree
+    /// conventions, including the canonical `bytes32 merkle_root` schema
+    /// string.
+    pub fn verify_merkle_leaf(
+        env: Env,
+        attestation_uid: UID,
+        leaf: soroban_sdk::Bytes,
+        proof: soroban_sdk::Vec<soroban_sas_common::MerkleProofStep>,
+        index: u32,
+    ) -> bool {
+        let Some(attestation) = read_attestation(&env, &attestation_uid) else {
+            return false;
+        };
+        if !attestation_is_live(&env, &attestation) {
+            return false;
+        }
+        let Some(root) = soroban_sas_common::merkle_root_from_payload(&env, &attestation.data)
+        else {
+            return false;
+        };
+        soroban_sas_common::verify_indexed_proof(&env, &root, index, &leaf, &proof)
+    }
+
     /// Pure read-only variant of [`SAS::verify_attestation`] that does
     /// **not** renew the entry's TTL. Suitable for SDK async wrappers that
     /// need a side-effect-free verdict.
@@ -2104,13 +2160,7 @@ impl SAS {
         let Some(attestation) = read_attestation(&env, &uid) else {
             return false;
         };
-        if attestation.revocation_time != 0 {
-            return false;
-        }
-        if attestation.valid_from != 0 && env.ledger().timestamp() < attestation.valid_from {
-            return false;
-        }
-        validate_expiration(&env, attestation.expiration_time).is_ok()
+        attestation_is_live(&env, &attestation)
     }
 
     /// Exposes the `valid_from` activation timestamp for an attestation (#439).
@@ -2275,6 +2325,8 @@ mod test_issue_252;
 mod test_issue_293;
 #[cfg(test)]
 mod test_issue_296;
+#[cfg(test)]
+mod test_merkle;
 #[cfg(test)]
 mod test_round_trip;
 #[cfg(test)]

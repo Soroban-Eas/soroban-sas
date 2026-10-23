@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- Off-chain Merkle root attestations with on-chain leaf verification (#529):
+  a SAS attestation's `data` may carry exactly 32 raw bytes — an index-bound
+  Merkle root — and `SAS::verify_merkle_leaf(attestation_uid, leaf, proof,
+  index)` verifies a disclosed leaf against it. Verification is read-only,
+  returns `false` for a missing, revoked, expired, or not-yet-valid parent,
+  a non-32-byte payload, an over-deep proof (capped at 32 siblings), or any
+  tampered leaf/sibling/index/root, and binds the index into the leaf
+  preimage so a proof cannot be replayed at another position.
+  `soroban-sas-common::merkle` gains `indexed_leaf_hash`, public
+  `node_hash`, `indexed_merkle_root`, `verify_indexed_proof`,
+  `merkle_root_from_payload`, and the canonical `MERKLE_ROOT_SCHEMA`
+  (`bytes32 merkle_root`) convention. `docs/batch-attestations.md` documents
+  the payload, tree, and verification semantics.
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,
