@@ -17,6 +17,7 @@
 // packages/soroban-sas-js/README.md's "Scope and limitations" section.
 
 import { Client as ContractClient, basicNodeSigner } from "@stellar/stellar-sdk/contract";
+import type { ClientOptions } from "@stellar/stellar-sdk/contract";
 import { Keypair } from "@stellar/stellar-sdk";
 import type { Attestation, DelegatedAttestation, SchemaRecord, UID } from "./types.js";
 
@@ -25,12 +26,18 @@ export interface SASClientConfig {
   contractId: string;
   /** Schema Registry contract id (C...); required for schema methods. */
   registryContractId?: string;
+  /** Indexer contract id (C...); required for recipient attestation queries. */
+  indexerContractId?: string;
   rpcUrl: string;
   networkPassphrase: string;
   /** Account (G...) that pays for and authorizes submitted transactions. */
   publicKey?: string;
   /** ed25519 secret seed (S...) for `publicKey`; enables signAndSend. */
   secret?: string;
+  /** SEP-43 signer callback (e.g. Freighter). Never expose secret seeds in dApps. */
+  signTransaction?: ClientOptions["signTransaction"];
+  /** Optional SEP-43 authorization signer for delegated/multi-auth invocations. */
+  signAuthEntry?: ClientOptions["signAuthEntry"];
 }
 
 export interface SubmitResult {
@@ -60,15 +67,21 @@ function attestationArg(a: Attestation): Record<string, unknown> {
 export class SASClient {
   private sasClient?: ContractClient;
   private registryClient?: ContractClient;
+  private indexerClient?: ContractClient;
 
   constructor(private readonly config: SASClientConfig) {}
 
-  private signer() {
-    if (!this.config.secret) return undefined;
-    return basicNodeSigner(
-      Keypair.fromSecret(this.config.secret),
-      this.config.networkPassphrase,
-    );
+  private signer(): Pick<ClientOptions, "signTransaction" | "signAuthEntry"> {
+    if (this.config.secret && (this.config.signTransaction || this.config.signAuthEntry)) {
+      throw new Error("Specify either a Node secret signer or wallet callbacks, not both");
+    }
+    if (this.config.secret) {
+      return basicNodeSigner(Keypair.fromSecret(this.config.secret), this.config.networkPassphrase);
+    }
+    return {
+      signTransaction: this.config.signTransaction,
+      signAuthEntry: this.config.signAuthEntry,
+    };
   }
 
   private publicKey(): string | undefined {
@@ -102,6 +115,39 @@ export class SASClient {
       });
     }
     return this.registryClient;
+  }
+
+  private async indexer(): Promise<ContractClient> {
+    if (!this.config.indexerContractId) {
+      throw new Error("SASClientConfig.indexerContractId is required for recipient queries");
+    }
+    if (!this.indexerClient) {
+      this.indexerClient = await ContractClient.from({
+        contractId: this.config.indexerContractId,
+        rpcUrl: this.config.rpcUrl,
+        networkPassphrase: this.config.networkPassphrase,
+        publicKey: this.publicKey(),
+      });
+    }
+    return this.indexerClient;
+  }
+
+  /** Reads indexed UIDs for a recipient without submitting a transaction. */
+  async getRecipientAttestations(recipient: string): Promise<UID[]> {
+    const client = await this.indexer();
+    // The contract's Vec<UID> decodes to one-element arrays of 32-byte buffers.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tx = await (client as any).get_attestations_by_recipient({ recipient });
+    if (!Array.isArray(tx.result)) {
+      throw new Error("Indexer returned malformed recipient attestation UIDs");
+    }
+    return tx.result.map((value: unknown): UID => {
+      const bytes = Array.isArray(value) && value.length === 1 ? value[0] : null;
+      if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
+        throw new Error("Indexer returned a malformed attestation UID");
+      }
+      return Buffer.from(bytes).toString("hex");
+    });
   }
 
   /** Calls `SchemaRegistry::register(owner, schema, resolver, revocable)`. */

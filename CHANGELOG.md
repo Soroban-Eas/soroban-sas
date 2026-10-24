@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validator and `validate_schema_syntax` both replay the shared golden
   vectors in `packages/soroban-sas-common/test_vectors/schema_syntax.tsv`.
   Built and tested in the *Developer Tooling* workflow. (#346)
+- `soroban-sas schema wizard`: interactive schema registration that prompts
+  for a name, field-by-field definitions, revocability, an optional resolver
+  address, and a metadata URI, validating every answer as it is typed
+  (dialoguer prompts on a TTY; a line-based fallback reads piped stdin when
+  not). It estimates the network fee by simulating the exact call, shows a
+  summary for confirmation, and only then signs and submits the
+  registration. The name and metadata URI are off-chain labels echoed in the
+  result, since the registry identifies schemas by the
+  `(schema, resolver, revocable)` tuple alone. (#469)
 
 ### Fixed
 - Missing recipients are handled gracefully. `AttestationRequestBuilder` no

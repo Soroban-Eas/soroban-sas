@@ -38,9 +38,10 @@ use crate::errors::SdkError;
 use crate::strkey::{parse_address, AddressKind};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use soroban_sas_common::{
-    hash_delegated_revocation, hash_offchain_attestation, Attestation, AttestationDomain, UID,
+    hash_delegated_revocation, hash_offchain_attestation, Attestation, AttestationDomain,
+    MAX_ATTESTATION_DATA_BYTES, MAX_MULTI_ATTEST, UID,
 };
-use soroban_sdk::{Address, Bytes, BytesN, Env};
+use soroban_sdk::{xdr::ToXdr, Address, Bytes, BytesN, Env};
 
 /// Derives the Soroban network id from a network passphrase:
 /// `sha256(network_passphrase)`.
@@ -103,6 +104,166 @@ pub struct DelegationSignature {
     /// The 32-byte payload digest that was signed. Surfaced so callers can
     /// transport or log it alongside the signature.
     pub digest: [u8; 32],
+}
+
+/// A batch of signatures and their matching attestations, ready to submit via
+/// `SAS::multi_attest_by_delegation`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelegatedBatchSignaturePacket {
+    pub attestations: Vec<Attestation>,
+    pub nonces: Vec<u64>,
+    pub signatures: Vec<[u8; 64]>,
+    pub public_keys: Vec<[u8; 32]>,
+    pub digests: Vec<[u8; 32]>,
+}
+
+impl DelegatedBatchSignaturePacket {
+    /// Encodes the packet as JSON. Attestations are represented as hex-encoded
+    /// XDR; signatures, public keys, and digests are lowercase hex strings.
+    /// The XDR values can be decoded with `Attestation::from_xdr`.
+    pub fn to_json(&self, env: &Env) -> serde_json::Result<String> {
+        let attestations_xdr = self
+            .attestations
+            .iter()
+            .map(|attestation| {
+                let bytes = attestation.clone().to_xdr(env);
+                let mut buf = vec![0u8; bytes.len() as usize];
+                bytes.copy_into_slice(&mut buf);
+                hex_encode(buf)
+            })
+            .collect::<Vec<_>>();
+
+        serde_json::to_string(&serde_json::json!({
+            "version": 1,
+            "attestations_xdr": attestations_xdr,
+            "nonces": self.nonces,
+            "signatures": self.signatures.iter().map(hex_encode_array).collect::<Vec<_>>(),
+            "public_keys": self.public_keys.iter().map(hex_encode_array).collect::<Vec<_>>(),
+            "digests": self.digests.iter().map(hex_encode_array).collect::<Vec<_>>(),
+        }))
+    }
+}
+
+/// Offline signer for batches of delegated attestations.
+///
+/// Signing and packet serialization are local operations: neither requires
+/// an RPC client or network access. The supplied `Env` is used only for the
+/// same deterministic hashing and XDR encoding used by the SAS contract.
+pub struct DelegatedBatchSigner {
+    signing_key: SigningKey,
+}
+
+impl DelegatedBatchSigner {
+    /// Creates a signer from an ed25519 secret seed.
+    pub fn new(secret_seed: &[u8; 32]) -> Self {
+        Self {
+            signing_key: SigningKey::from_bytes(secret_seed),
+        }
+    }
+
+    /// Returns the signer's ed25519 public key.
+    pub fn public_key(&self) -> [u8; 32] {
+        self.signing_key.verifying_key().to_bytes()
+    }
+
+    /// Signs attestations for offline relay through
+    /// `SAS::multi_attest_by_delegation`.
+    ///
+    /// All attestations must name this signer's account, carry a valid
+    /// content-addressed UID, have no revocation timestamp, and fit within
+    /// the protocol payload limit. Nonces must be strictly increasing in
+    /// batch order, matching the contract's per-attester high-watermark.
+    pub fn sign_batch(
+        &self,
+        env: &Env,
+        attestations: &[Attestation],
+        nonces: &[u64],
+        network_passphrase: &str,
+        contract_id: &str,
+    ) -> Result<DelegatedBatchSignaturePacket, SdkError> {
+        if attestations.len() != nonces.len() {
+            return Err(SdkError::ValidationError(format!(
+                "attestations and nonces must have the same length ({} != {})",
+                attestations.len(),
+                nonces.len()
+            )));
+        }
+        if attestations.len() > MAX_MULTI_ATTEST as usize {
+            return Err(SdkError::ValidationError(format!(
+                "batch contains {} items; the maximum is {MAX_MULTI_ATTEST}",
+                attestations.len()
+            )));
+        }
+        if nonces.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(SdkError::ValidationError(
+                "nonces must be strictly increasing".to_string(),
+            ));
+        }
+
+        let public_key = self.public_key();
+        let base_domain = delegation_domain(env, network_passphrase, contract_id, 0)?;
+        let mut packet = DelegatedBatchSignaturePacket {
+            attestations: attestations.to_vec(),
+            nonces: nonces.to_vec(),
+            signatures: Vec::with_capacity(attestations.len()),
+            public_keys: Vec::with_capacity(attestations.len()),
+            digests: Vec::with_capacity(attestations.len()),
+        };
+
+        for (attestation, nonce) in attestations.iter().zip(nonces.iter().copied()) {
+            if attestation.revocation_time != 0 {
+                return Err(SdkError::ValidationError(
+                    "delegated attestation must have a zero revocation_time".to_string(),
+                ));
+            }
+            if attestation.data.len() > MAX_ATTESTATION_DATA_BYTES {
+                return Err(SdkError::ValidationError(format!(
+                    "attestation data exceeds the {MAX_ATTESTATION_DATA_BYTES}-byte protocol limit"
+                )));
+            }
+
+            let expected_uid = soroban_sas_common::attestation_uid(
+                env,
+                &attestation.schema_uid,
+                &attestation.recipient,
+                &attestation.attester,
+                &attestation.data,
+            );
+            if expected_uid != attestation.uid {
+                return Err(SdkError::ValidationError(
+                    "attestation UID does not match its content".to_string(),
+                ));
+            }
+
+            require_attester_key(env, &attestation.attester, &public_key)?;
+            let domain = AttestationDomain {
+                nonce,
+                ..base_domain.clone()
+            };
+            let digest = attestation_digest(env, attestation, &domain);
+            packet
+                .signatures
+                .push(self.signing_key.sign(&digest).to_bytes());
+            packet.public_keys.push(public_key);
+            packet.digests.push(digest);
+        }
+
+        Ok(packet)
+    }
+}
+
+fn hex_encode_array<const N: usize>(bytes: &[u8; N]) -> String {
+    hex_encode(bytes.to_vec())
+}
+
+fn hex_encode(bytes: Vec<u8>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 /// Derives the ed25519 public key for `secret_seed`.
@@ -304,6 +465,89 @@ mod tests {
             signed.digest,
             attestation_digest(&env, &attestation, &domain)
         );
+    }
+
+    #[test]
+    fn batch_signer_creates_contract_compatible_packets_offline() {
+        let env = Env::default();
+        let key = signing_key([41u8; 32]);
+        let attester = attester(&env, &key);
+        let attestations = vec![
+            fixture(&env, &attester, &Address::generate(&env)),
+            fixture(&env, &attester, &Address::generate(&env)),
+        ];
+        let nonces = [7, 8];
+        let signer = DelegatedBatchSigner::new(&key.to_bytes());
+
+        let packet = signer
+            .sign_batch(&env, &attestations, &nonces, NETWORK, &contract_id())
+            .unwrap();
+
+        assert_eq!(packet.attestations, attestations);
+        assert_eq!(packet.nonces, nonces);
+        assert_eq!(packet.public_keys, vec![signer.public_key(); 2]);
+        assert_eq!(packet.signatures.len(), 2);
+        assert_eq!(packet.digests.len(), 2);
+        for index in 0..attestations.len() {
+            let domain = delegation_domain(&env, NETWORK, &contract_id(), nonces[index]).unwrap();
+            assert!(verify_offchain_attestation(
+                &env,
+                &attestations[index],
+                &domain,
+                &packet.public_keys[index],
+                &packet.signatures[index],
+            )
+            .is_ok());
+            assert_eq!(
+                packet.digests[index],
+                attestation_digest(&env, &attestations[index], &domain)
+            );
+        }
+
+        let serialized: serde_json::Value =
+            serde_json::from_str(&packet.to_json(&env).unwrap()).unwrap();
+        assert_eq!(serialized["version"], 1);
+        assert_eq!(serialized["nonces"], serde_json::json!([7, 8]));
+        assert_eq!(serialized["attestations_xdr"].as_array().unwrap().len(), 2);
+        assert_eq!(serialized["signatures"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn batch_signer_rejects_invalid_lengths_nonces_and_attestations() {
+        let env = Env::default();
+        let key = signing_key([41u8; 32]);
+        let attester = attester(&env, &key);
+        let attestation = fixture(&env, &attester, &Address::generate(&env));
+        let signer = DelegatedBatchSigner::new(&key.to_bytes());
+
+        assert!(matches!(
+            signer.sign_batch(&env, &[attestation.clone()], &[], NETWORK, &contract_id()),
+            Err(SdkError::ValidationError(_))
+        ));
+        assert!(matches!(
+            signer.sign_batch(
+                &env,
+                &[attestation.clone(), attestation.clone()],
+                &[3, 3],
+                NETWORK,
+                &contract_id()
+            ),
+            Err(SdkError::ValidationError(_))
+        ));
+
+        let mut revoked = attestation.clone();
+        revoked.revocation_time = 1;
+        assert!(matches!(
+            signer.sign_batch(&env, &[revoked], &[4], NETWORK, &contract_id()),
+            Err(SdkError::ValidationError(_))
+        ));
+
+        let mut invalid_uid = attestation;
+        invalid_uid.uid = UID(BytesN::from_array(&env, &[9u8; 32]));
+        assert!(matches!(
+            signer.sign_batch(&env, &[invalid_uid], &[4], NETWORK, &contract_id()),
+            Err(SdkError::ValidationError(_))
+        ));
     }
 
     #[test]

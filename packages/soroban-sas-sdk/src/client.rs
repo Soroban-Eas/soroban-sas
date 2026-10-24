@@ -9,7 +9,7 @@ use crate::simulate;
 use crate::strkey::{parse_address, AddressKind};
 use crate::transaction::{SubmissionPolicy, TransactionSubmitter};
 use serde::{Deserialize, Serialize};
-use soroban_sas_common::{Attestation, SchemaRecord, UID};
+use soroban_sas_common::{Attestation, ExpirationStatus, SchemaRecord, UID};
 use soroban_sdk::xdr::{
     ContractDataDurability, ExtensionPoint, Hash, LedgerEntryData, LedgerKey,
     LedgerKeyContractData, Limits, Memo, MuxedAccount, Operation, OperationBody, Preconditions,
@@ -54,12 +54,31 @@ pub struct ArchivedInfo {
 /// simulation reports is added on top.
 const BASE_FEE: u32 = 100;
 
+/// Detailed resource consumption and limits breakdown for a simulated transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceBreakdown {
+    /// CPU instructions consumed during simulation.
+    pub cpu_instructions: u32,
+    /// Memory/ledger read bytes.
+    pub read_bytes: u32,
+    /// Memory/ledger write bytes.
+    pub write_bytes: u32,
+    /// Count of ledger keys in read-only footprint.
+    pub read_only_entries: u32,
+    /// Count of ledger keys in read-write footprint.
+    pub read_write_entries: u32,
+    /// Whether any metric exceeds 80% of network limits.
+    pub approaches_limits: bool,
+    /// Warning messages for metrics exceeding 80% of limits.
+    pub limit_warnings: Vec<String>,
+}
+
 /// Outcome of simulating a write call without signing or submitting it
-/// (issue #329's `--dry-run`): the resource footprint/fee a real submission
+/// (issue #329, #473's `--dry-run`): the resource footprint/fee a real submission
 /// would need to carry, obtained from the same `simulateTransaction` draft
 /// step `SASClient::submit_write` runs before it ever builds a signed
 /// envelope. No sequence number is consumed and no signature is produced.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DryRunResult {
     /// The contract function that was simulated.
     pub function_name: String,
@@ -71,6 +90,8 @@ pub struct DryRunResult {
     pub total_fee: i64,
     /// The ledger the simulation ran against.
     pub latest_ledger: u32,
+    /// Detailed breakdown of CPU, RAM bytes, and storage footprint entries.
+    pub resources: Option<ResourceBreakdown>,
 }
 
 /// Configurable fee policy for simulated write transactions.
@@ -98,7 +119,11 @@ pub enum FeePolicy {
 
 /// Applies the `FeePolicy` to a raw `BASE_FEE + resource_fee` sum and
 /// returns the fee that will be written into the transaction.
-fn apply_fee_policy(base_fee: u32, resource_fee: i64, policy: &FeePolicy) -> Result<u32, SdkError> {
+pub(crate) fn apply_fee_policy(
+    base_fee: u32,
+    resource_fee: i64,
+    policy: &FeePolicy,
+) -> Result<u32, SdkError> {
     let base = i64::from(base_fee);
     let raw = match policy {
         FeePolicy::Default => base + resource_fee,
@@ -1541,6 +1566,20 @@ impl SASClient {
         )
     }
 
+    /// Simulates `attest` without signing or submitting to estimate fees and resource usage.
+    pub fn attest_dry_run(
+        &self,
+        rpc: &RpcClient,
+        secret_seed: &[u8; 32],
+        attestation: Attestation,
+    ) -> Result<DryRunResult, SdkError> {
+        let env = attestation.attester.env();
+        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        let arg = simulate::encode_arg(env, &attestation)?;
+        let public_key = signature::derive_public_key(secret_seed);
+        dry_run_write(rpc, &self.contract_id, "attest", vec![arg], &public_key)
+    }
+
     /// Calls `SAS::attest_with_value(attestation, token, value)`: like
     /// [`attest`](Self::attest), but pays the configured attestation fee
     /// (a Stellar Asset Contract transfer of `value` units of `token`) as
@@ -1660,6 +1699,20 @@ impl SASClient {
             vec![arg],
             fee_policy,
         )
+    }
+
+    /// Simulates `revoke` without signing or submitting to estimate fees and resource usage.
+    pub fn revoke_dry_run(
+        &self,
+        rpc: &RpcClient,
+        secret_seed: &[u8; 32],
+        uid: &[u8; 32],
+    ) -> Result<DryRunResult, SdkError> {
+        let env = &Env::default();
+        let uid = UID(BytesN::from_array(env, uid));
+        let arg = simulate::encode_arg(env, &uid)?;
+        let public_key = signature::derive_public_key(secret_seed);
+        dry_run_write(rpc, &self.contract_id, "revoke", vec![arg], &public_key)
     }
 
     /// Calls `SAS::multi_revoke(uids)`: encodes each UID into one Soroban
@@ -2416,6 +2469,25 @@ impl IndexerClient {
             vec![arg],
         )
     }
+
+    /// Calls `Indexer::get_count_by_expiration(expiration_status)` via
+    /// `simulateTransaction`. See [`IndexerClient::get_count_by_recipient`]
+    /// for semantics.
+    pub fn get_count_by_expiration(
+        &self,
+        rpc: &RpcClient,
+        expiration_status: ExpirationStatus,
+    ) -> Result<u32, SdkError> {
+        let env = &Env::default();
+        let arg = simulate::encode_arg(env, &expiration_status)?;
+        invoke_read_only(
+            env,
+            rpc,
+            &self.contract_id,
+            "get_count_by_expiration",
+            vec![arg],
+        )
+    }
 }
 
 /// Decodes the first entry of a `getLedgerEntries` response as a
@@ -2809,6 +2881,7 @@ impl SASClient {
                     error_result_xdr,
                 }) if attempt == 0 && is_bad_sequence(error_result_xdr.as_deref()) => {
                     reservation.failed();
+                    let _ = manager.sync_on_chain(rpc, &public_key);
                     let _ = status;
                     continue;
                 }
@@ -2866,11 +2939,66 @@ fn dry_run_write(
         .unwrap_or("0")
         .parse()
         .map_err(|e| SdkError::RpcError(format!("invalid simulated minResourceFee: {e:?}")))?;
+
+    let mut resources = None;
+    if let Some(ref b64) = sim.transaction_data {
+        if let Ok(data) = SorobanTransactionData::from_xdr_base64(
+            b64,
+            crate::limits::default_rpc_response_limits(),
+        ) {
+            let cpu = data.resources.instructions;
+            let read_bytes = data.resources.read_bytes;
+            let write_bytes = data.resources.write_bytes;
+            let ro_entries = data.resources.footprint.read_only.len() as u32;
+            let rw_entries = data.resources.footprint.read_write.len() as u32;
+            let total_entries = ro_entries + rw_entries;
+
+            let mut warnings = Vec::new();
+            if cpu > 80_000_000 {
+                warnings.push(format!(
+                    "CPU instructions ({cpu}) exceed 80% of limit (100,000,000)"
+                ));
+            }
+            if read_bytes > 160_000 {
+                warnings.push(format!(
+                    "Read bytes ({read_bytes} B) exceed 80% of limit (200,000 B)"
+                ));
+            }
+            if write_bytes > 104_000 {
+                warnings.push(format!(
+                    "Write bytes ({write_bytes} B) exceed 80% of limit (130,000 B)"
+                ));
+            }
+            if total_entries > 32 {
+                warnings.push(format!(
+                    "Total storage keys ({total_entries}) exceed 80% of limit (40)"
+                ));
+            }
+            if rw_entries > 20 {
+                warnings.push(format!(
+                    "Write storage keys ({rw_entries}) exceed 80% of limit (25)"
+                ));
+            }
+
+            let approaches_limits = !warnings.is_empty();
+            resources = Some(ResourceBreakdown {
+                cpu_instructions: cpu,
+                read_bytes,
+                write_bytes,
+                read_only_entries: ro_entries,
+                read_write_entries: rw_entries,
+                approaches_limits,
+                limit_warnings: warnings,
+            });
+        }
+    }
+
     Ok(DryRunResult {
         function_name: function_name.to_string(),
         min_resource_fee,
         total_fee: i64::from(BASE_FEE) + min_resource_fee,
         latest_ledger: sim.latest_ledger,
+        resources,
     })
 }
 
