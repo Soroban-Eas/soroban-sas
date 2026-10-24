@@ -146,6 +146,20 @@ exactly the ed25519 key of the declared `attester` account (by comparing
 against the address's XDR encoding), and that the attestation's UID has not
 been revoked on-chain.
 
+## Signature malleability
+
+Ed25519 signatures encode the scalar half `S` of `R || S` with the
+requirement `S < L`, where `L = 2^252 + 27742317777372353535851937790883648493`
+is the prime order of the ed25519 group. Verifiers that skip this bound
+accept two distinct byte encodings ("malleated" signatures) for one logical
+signature. The on-chain verifier in `soroban_sas_common::verify_offchain_signature`
+enforces the bound explicitly — non-canonical inputs are rejected with
+`SASError::InvalidSignature` before the host's `verify_strict` runs — so a
+signature has exactly one accepted encoding. Off-chain verifiers using
+ed25519-dalek's `verify`/`verify_strict` inherit the same guarantee. See
+[security.md](security.md#ed25519-signature-malleability) for the full
+analysis and regression-test coverage (#492).
+
 ## On-chain verification
 
 ```rust

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-22
+
 ### Contract WASM SHA-256 Checksums
 | Contract | File | SHA-256 Checksum |
 |---|---|---|
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Off-chain Merkle root attestations with on-chain leaf verification (#529):
   a SAS attestation's `data` may carry exactly 32 raw bytes — an index-bound
-  Merkle root — and `SAS::verify_merkle_leaf(attestation_uid, leaf, proof,
+  Merkle root — and `SAS::verify_indexed_merkle_leaf(attestation_uid, leaf, proof,
   index)` verifies a disclosed leaf against it. Verification is read-only,
   returns `false` for a missing, revoked, expired, or not-yet-valid parent,
   a non-32-byte payload, an over-deep proof (capped at 32 siblings), or any
@@ -28,6 +30,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `merkle_root_from_payload`, and the canonical `MERKLE_ROOT_SCHEMA`
   (`bytes32 merkle_root`) convention. `docs/batch-attestations.md` documents
   the payload, tree, and verification semantics.
+- Schema attester access control lists. `add_authorized_attester` and
+  `remove_authorized_attester` let a schema owner grant and revoke issuance
+  rights for a private attester group without an external resolver, and
+  `is_attester_authorized`, `is_schema_restricted` and
+  `get_authorized_attester_count` expose the list. SAS consults it after the
+  owner/delegate check and rejects any other issuer on a restricted schema
+  with the new `SASError::UnauthorizedAttester` (304). The registry emits
+  `SchemaAttesterAdded` and `SchemaAttesterRemoved`. A schema with an empty
+  list behaves exactly as before. (#443)
+- Hierarchical schema versioning. `SchemaRecord` gains an optional
+  `parent_schema_uid`; `register_with_parent` links a new schema to an
+  existing one (`InvalidSchema` for an unknown parent, `Unauthorized` unless
+  the registrant owns the parent or is the registry admin) and
+  `get_schema_lineage` returns a schema's parent, root, depth and ancestors.
+  Chains are capped at 32 links. Records written by earlier builds do not
+  carry the new field, so a registry that already holds schemas needs a
+  storage migration before this build is activated. (#442)
+- Automated release notes. `scripts/release_notes.sh` builds notes from the
+  matching CHANGELOG section and the Conventional Commits since the previous
+  tag, `scripts/check_release_version.sh` gates the release workflow on crate,
+  `Cargo.lock` and CHANGELOG versions agreeing with the tag, and the release
+  workflow publishes the generated notes with the artifact checksums.
+  `scripts/test_release_tooling.sh` covers both scripts in CI. See
+  `docs/releasing.md`. (#379)
+- Release 1.0.0. Every workspace crate is versioned 1.0.0 and
+  `docs/releasing.md` documents how to cut the release. (#378)
+- Selective payload disclosure: `verify_merkle_leaf` and
+  `verify_merkle_leaf_keccak` check a disclosed leaf against the 32-byte
+  Merkle root held in a live attestation. The shared verifier
+  `verify_proof_with` supports SHA-256 and Keccak-256 and bounds proofs at 32
+  siblings. See `docs/selective-disclosure.md`. (#435)
+- `check_timestamp`, a strict form of `verify_timestamp` that fails with
+  `InvalidTimestamp` (420) or `TimestampAnchorNotFound` (421), plus
+  diagnostic log lines in test and simulation builds. (#436)
+- `docs/privacy.md`, describing the privacy implications of public
+  attestations, and a feature request issue template. (#371, #372)
+
+### Changed
+- Timestamp anchors are immutable: writing an existing anchor now fails with
+  `InvalidTimestamp`. `verify_timestamp` also returns `false` for a claim
+  from a ledger ahead of the current one and when stored anchors are not
+  monotonic. (#436)
+
+- FROST threshold endorsement for delegated attestations (#534). A schema may
+  declare a required Ed25519 FROST group with
+  `SchemaRegistry::set_schema_frost_group` (`get_schema_frost_group` /
+  `clear_schema_frost_group` round out the API), authenticated to the schema
+  owner or registry admin and emitted as `SchemaFrostGroupUpdated`. When a
+  group is declared, `attest_by_delegation`, `multi_attest_by_delegation`,
+  `revoke_by_delegation`, `multi_revoke_by_delegation`, and
+  `verify_offchain_attestation` accept only the group public key and verify the
+  single 64-byte aggregate with one ordinary Ed25519 verification. The calldata
+  footprint and verification cost are therefore identical to single-signature
+  delegated attestations, while aggregates made with fewer than `threshold`
+  shares fail validation. Golden vectors for 2-of-3 and 3-of-5 groups live in
+  `packages/soroban-sas-common/test_vectors/frost_threshold.tsv` and are
+  exercised end-to-end against the real contracts.
+- `contracts/time-window-resolver`, a schema resolver that enforces a
+  configurable `cooldown_period_seconds` between attestations issued to the
+  same recipient. It records `last_attested_time` per recipient in persistent
+  storage, rejects issuance while `last + cooldown` is still in the future
+  with the new `SASError::CooldownActive` (code `421`), and lets the resolver
+  admin change the window with authorization (`COOLDOWN_UPDATED` event).
+  Different recipients have independent windows; exactly-at-boundary issuance
+  succeeds and refreshes the timestamp. See
+  [`docs/time-window-resolver.md`](docs/time-window-resolver.md). (#549)
+- Newest-first convenience reads for every lookup dimension:
+  `get_atts_by_recipient_recent`, `get_atts_by_schema_recent`, and
+  `get_atts_by_attester_recent` return the newest `limit` UIDs (newest
+  first) without a cursor, deriving the start position from the tail
+  counter and reading backward across chunk boundaries. The
+  `get_recipient_recent_filtered` / `get_schema_recent_filtered` /
+  `get_attester_recent_filtered` variants add `include_revoked` so the
+  active-only view keeps descending order while skipping revoked/replaced
+  UIDs. (#450)
+- `Indexer::is_attestation_indexed(uid)`: a fast existence check that reads
+  the UID's `(INDEXED_KEY, uid)` idempotency record directly instead of
+  walking recipient, schema, or attester chunks. It renews the instance TTL
+  (and the record's TTL when present), writes nothing, creates no storage for
+  unknown UIDs, and does not count toward the per-ledger query limit. A unit
+  test meters it against a paginated chunk walk over the same UIDs and
+  requires at least 70% fewer CPU instructions. (#542)
+>>>>>>> origin/main
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,
@@ -89,6 +174,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validator and `validate_schema_syntax` both replay the shared golden
   vectors in `packages/soroban-sas-common/test_vectors/schema_syntax.tsv`.
   Built and tested in the *Developer Tooling* workflow. (#346)
+- Nullifier set management in the ZK verifier contract. Checking and
+  recording a nullifier is now a single atomic step: a nullifier is spent
+  only when the whole proof verification succeeds, so a rejected proof never
+  burns its nullifier, and a nullifier that was already spent is rejected
+  with `ZKError::NullifierSpent` (the contract error type `ZkVerifierError`
+  is aliased as `ZKError`). Nullifier records are renewed with the contract
+  instance's own TTL policy, so a spent nullifier never expires before the
+  instance that guards it. The new `are_nullifiers_used` query lets
+  off-chain clients check a whole batch of nullifiers with a single contract
+  call instead of one call per nullifier. (#547)
+- WebAssembly build of the Rust SDK for serverless edge runtimes
+  (`wasm32-unknown-unknown`). The new `wasm` feature replaces the native
+  `ureq` transport with a `web-sys` `fetch` implementation, so RPC calls are
+  awaited through the runtime's global `fetch` instead of blocking the event
+  loop; the synchronous RPC methods are wasm-only errors that point at their
+  `*_async` counterparts. Host-only APIs (`SASClient`, the `Val` bridge
+  helpers) are compiled out for wasm, and the new
+  `soroban_sas_sdk::attestation` module decodes attestations straight from
+  the XDR wire format into a JSON-serializable `AttestationRecord`, so edge
+  runtimes can read attestations without a Soroban host environment.
+  `examples/cloudflare-worker` is a deployable Worker template that answers
+  `GET /attestation/{uid}` from a Soroban RPC node, `docs/edge-runtime.md`
+  documents the feature and the deployment steps, and CI keeps the edge build
+  working through the new `wasm-sdk` job. (#553)
+- `soroban-sas schema wizard`: interactive schema registration that prompts
+  for a name, field-by-field definitions, revocability, an optional resolver
+  address, and a metadata URI, validating every answer as it is typed
+  (dialoguer prompts on a TTY; a line-based fallback reads piped stdin when
+  not). It estimates the network fee by simulating the exact call, shows a
+  summary for confirmation, and only then signs and submits the
+  registration. The name and metadata URI are off-chain labels echoed in the
+  result, since the registry identifies schemas by the
+  `(schema, resolver, revocable)` tuple alone. (#469)
 
 ### Fixed
 - Missing recipients are handled gracefully. `AttestationRequestBuilder` no
@@ -141,6 +259,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   testnet submission. (#181)
 - Fuzz targets exercising schema validation, typed-data hashing, event
   decoding, CLI JSON parsing, and XDR decoding. (#182)
+
+### Security
+- Signature malleability and cross-network replay audit (#492):
+  `verify_offchain_signature` now rejects non-canonical Ed25519 scalars
+  (`S >= L`, where `L = 2^252 + 27742317777372353535851937790883648493`) with
+  the typed `SASError::InvalidSignature` before host verification, making
+  malleation rejection a deterministic contract-level guarantee. New
+  regression tests (`contracts/sas/src/test_issue_492.rs`) prove that
+  delegated signatures are strictly bound to the contract address and the
+  network passphrase hash: Testnet-signed payloads are rejected on simulated
+  Mainnet instances and vice versa, signatures bound to one contract
+  instance are rejected by every other instance, and malleated signatures
+  (`S + L`, `S = L`, `S = 2^256 - 1`) fail closed on both the attestation
+  and revocation paths. The domain separator byte layout and preimage
+  construction are documented in `docs/security.md` (with a completed
+  audit-checklist item) and corrected in `specs/protocol-v1.md`, which had
+  described a stale preimage layout.
 
 ### Removed
 - `soroban_sas_sdk::init()`: the undocumented no-op entry point has been

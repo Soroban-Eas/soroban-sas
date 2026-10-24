@@ -1,0 +1,71 @@
+name: Schema Documentation Generator
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'contracts/schema-registry/**'
+      - 'tools/sas-docgen/**'
+      - '.github/workflows/schema-docgen.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'contracts/schema-registry/**'
+      - 'tools/sas-docgen/**'
+      - '.github/workflows/schema-docgen.yml'
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'Target Stellar network (testnet, mainnet)'
+        required: false
+        default: 'testnet'
+      registry_contract_id:
+        description: 'Schema Registry Contract ID (optional if using fixture)'
+        required: false
+
+jobs:
+  generate-schema-docs:
+    name: Generate Schema Markdown Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-docgen-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-docgen-
+
+      - name: Generate Schema Documentation
+        env:
+          STELLAR_NETWORK: ${{ github.event.inputs.network || 'testnet' }}
+          SCHEMA_REGISTRY_CONTRACT_ID: ${{ github.event.inputs.registry_contract_id || '' }}
+        run: |
+          if [ -n "$SCHEMA_REGISTRY_CONTRACT_ID" ]; then
+            echo "Generating docs from on-chain registry: $SCHEMA_REGISTRY_CONTRACT_ID"
+            cargo run -p sas-docgen -- \
+              --network "$STELLAR_NETWORK" \
+              --registry-contract-id "$SCHEMA_REGISTRY_CONTRACT_ID" \
+              --output-dir docs/schemas-generated
+          else
+            echo "Generating docs from default schema fixtures..."
+            cargo run -p sas-docgen -- \
+              --from-file tools/sas-docgen/fixtures/sample-schemas.json \
+              --output-dir docs/schemas-generated
+          fi
+
+      - name: Upload Generated Schema Docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sas-schema-documentation
+          path: docs/schemas-generated
+          retention-days: 14

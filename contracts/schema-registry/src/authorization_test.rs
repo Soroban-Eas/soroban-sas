@@ -107,6 +107,72 @@ fn remove_delegate_cannot_be_authorized_by_a_non_owner() {
 }
 
 #[test]
+fn add_delegate_with_expiry_cannot_be_authorized_by_a_non_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = deploy(&env);
+
+    let owner = Address::generate(&env);
+    let uid = register_schema(&env, &client, &owner);
+    let stranger = Address::generate(&env);
+    let delegate = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_delegate_with_expiry",
+            args: (uid.clone(), delegate.clone(), 5000u64).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let result = client.try_add_delegate_with_expiry(&uid, &delegate, &5000);
+    assert!(
+        result.is_err(),
+        "add_delegate_with_expiry must reject a call authorized by anyone other than the schema owner"
+    );
+    assert!(
+        !client.is_delegate(&uid, &delegate),
+        "a rejected add_delegate_with_expiry call must not have taken effect"
+    );
+}
+
+#[test]
+fn self_revoke_delegate_cannot_be_authorized_by_a_stranger() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = deploy(&env);
+
+    let owner = Address::generate(&env);
+    let uid = register_schema(&env, &client, &owner);
+    let delegate = Address::generate(&env);
+    client.add_delegate(&uid, &delegate);
+    assert!(client.is_delegate(&uid, &delegate));
+
+    let stranger = Address::generate(&env);
+    env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "self_revoke_delegate",
+            args: (uid.clone(), delegate.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let result = client.try_self_revoke_delegate(&uid, &delegate);
+    assert!(
+        result.is_err(),
+        "self_revoke_delegate must reject a call authorized by anyone other than the delegate"
+    );
+    assert!(
+        client.is_delegate(&uid, &delegate),
+        "a rejected self_revoke_delegate call must not have taken effect"
+    );
+}
+
+#[test]
 fn legacy_transfer_ownership_moves_the_creator_when_called_by_the_owner() {
     let env = Env::default();
     env.mock_all_auths();

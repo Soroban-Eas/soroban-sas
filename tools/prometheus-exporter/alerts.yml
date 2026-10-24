@@ -1,0 +1,47 @@
+# Prometheus Alerting Rules for Soroban SAS Protocol
+# See docs/OPERATIONS_AND_ALERTS_RUNBOOK.md for triage, response procedures, and notification setup.
+
+groups:
+  - name: soroban_sas_alerts
+    rules:
+      # Alert: Contract Paused (Circuit Breaker Activated)
+      - alert: ContractPausedAlert
+        expr: sas_contract_paused > 0 or increase(sas_contract_reverts_total{error_code="501"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          tier: protocol-safety
+          component: soroban-sas-core
+        annotations:
+          summary: "Soroban SAS contract is paused or rejecting write operations"
+          description: "Contract pause condition detected. State writes (attestations, revocations, schema registrations) are blocked with error code 501 (ContractPaused). Immediate operator intervention required."
+          runbook_url: "https://github.com/Soroban-Eas/soroban-sas/blob/main/docs/OPERATIONS_AND_ALERTS_RUNBOOK.md#contractpausedalert"
+          dashboard_url: "https://grafana.internal/d/soroban-sas-metrics?viewPanel=1"
+
+      # Alert: Reentrancy Attack or Callback Recursion Spike
+      - alert: ReentrancySpikeAlert
+        expr: rate(sas_contract_reverts_total{error_code="502"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          tier: security
+          component: soroban-sas-core
+        annotations:
+          summary: "Abnormal spike in contract reentrancy reverts (error code 502)"
+          description: "Contract reverted due to reentrancy guard violation (error 502). A resolver or indexer callback attempted recursive entry into multi_attest or contract state during execution. Potential exploit attempt or broken resolver logic."
+          runbook_url: "https://github.com/Soroban-Eas/soroban-sas/blob/main/docs/OPERATIONS_AND_ALERTS_RUNBOOK.md#reentrancyspikealert"
+          dashboard_url: "https://grafana.internal/d/soroban-sas-metrics?viewPanel=7"
+
+      # Alert: High Attestation Revocation Rate
+      - alert: HighRevocationRateAlert
+        expr: rate(sas_attestation_revoked_total[5m]) > 10 and (rate(sas_attestation_revoked_total[5m]) / (rate(sas_attestation_issued_total[5m]) + 0.001)) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          tier: operational
+          component: soroban-sas-core
+        annotations:
+          summary: "High attestation revocation rate detected"
+          description: "Revocation rate exceeds 50% of the issuance rate with >10 revocations/second over the last 5 minutes. This may indicate an attester private key compromise, schema invalidation, mass batch revocation, or denial-of-service attack."
+          runbook_url: "https://github.com/Soroban-Eas/soroban-sas/blob/main/docs/OPERATIONS_AND_ALERTS_RUNBOOK.md#highrevocationratealert"
+          dashboard_url: "https://grafana.internal/d/soroban-sas-metrics?viewPanel=8"

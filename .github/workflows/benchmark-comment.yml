@@ -1,0 +1,61 @@
+name: Benchmark PR comment (fork-safe)
+
+# Separate privileged workflow: no checkout or execution of PR code.
+on:
+  workflow_run:
+    workflows: ['Criterion benchmark regression']
+    types: [completed]
+
+permissions:
+  actions: read
+  pull-requests: write
+
+jobs:
+  post:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post report artifact to originating pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_PR: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, tempfile
+          prs = json.loads(os.environ['RUN_PR'])
+          if not prs:
+              print('No associated PR; no comment')
+              raise SystemExit(0)
+          number = prs[0]['number']
+          repo = os.environ['REPO']
+          run_id = os.environ['RUN_ID']
+          with tempfile.TemporaryDirectory() as directory:
+              download = subprocess.run(
+                  ['gh', 'run', 'download', run_id, '-R', repo,
+                   '--name', 'benchmark-comparison', '--dir', directory],
+                  capture_output=True, text=True)
+              if download.returncode:
+                  print('No benchmark report artifact; cannot post comparison')
+                  raise SystemExit(0)
+              from pathlib import Path
+              report = Path(directory, 'benchmark-report.md')
+              if not report.is_file():
+                  print('Missing benchmark-report.md')
+                  raise SystemExit(0)
+              marker = '<!-- sas-criterion-regression -->'
+              body = marker + '\n' + report.read_text(encoding='utf-8')[:60000]
+              comments = json.loads(subprocess.check_output(
+                  ['gh', 'api', f'repos/{repo}/issues/{number}/comments']))
+              existing = next((c for c in comments if marker in c.get('body', '')
+                               and c.get('user', {}).get('type') == 'Bot'), None)
+              if existing:
+                  subprocess.run(['gh', 'api', '-X', 'PATCH',
+                      f'repos/{repo}/issues/comments/{existing["id"]}',
+                      '-f', f'body={body}'], check=True)
+              else:
+                  subprocess.run(['gh', 'api', '-X', 'POST',
+                      f'repos/{repo}/issues/{number}/comments',
+                      '-f', f'body={body}'], check=True)
+          PY

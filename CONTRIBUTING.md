@@ -19,6 +19,16 @@ troubleshooting, is in
 2. Update the README.md with details of changes to the interface.
 3. Your PR must pass all CI checks (Formatting, Clippy, Tests, Build contracts, and `check-docs`) before it can be merged.
 
+## Feature requests
+
+Propose new capabilities with the **Feature request** issue form
+(`.github/ISSUE_TEMPLATE/feature_request.yml`). It asks for the problem, the
+proposed solution, compatibility and security/privacy impact, and acceptance
+criteria, so a maintainer can triage without a round of questions. Report
+security vulnerabilities privately as described in `SECURITY.md`, never
+through an issue. `scripts/test_issue_templates.sh` validates the templates
+and runs in the `Developer Tooling` workflow.
+
 ## Documentation checks
 
 `scripts/check_docs.sh` runs as the `check-docs` job in

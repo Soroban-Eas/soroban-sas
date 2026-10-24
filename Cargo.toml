@@ -5,18 +5,25 @@ members = [
     "contracts/sas",
     "contracts/indexer",
     "packages/soroban-sas-sdk",
+    "packages/soroban-sas-schema-macro",
     "packages/soroban-sas-cli",
     "contracts/permissive-resolver",
-"tools/prometheus-exporter",
-"contracts/cross-chain-verifier",
-"contracts/zk-verifier",
+    "contracts/token-gated-resolver",
+    "contracts/multisig-resolver",
+    "contracts/endorsement-resolver",
+    "contracts/blacklist-resolver",
+    "contracts/time-window-resolver",
+    "tools/prometheus-exporter",
+    "contracts/cross-chain-verifier",
+    "contracts/zk-verifier",
+    "tools/sas-docgen",
 ]
 exclude = ["fuzz", "tools/gas-profiler"]
 resolver = "2"
 
 [package]
 name = "soroban-sas-workspace"
-version = "0.0.0"
+version = "1.0.0"
 edition = "2021"
 publish = false
 
@@ -28,10 +35,19 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 hex = "0.4"
 stellar-strkey = "0.0.8"
 ed25519-dalek = "2.0.0"
+serde_json = "1"
+sas = { path = "contracts/sas" }
+schema-registry = { path = "contracts/schema-registry" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 ureq = "2"
+
+# Issue #497 automated issuer: a standard workspace example binary.
+# Use the shared, pinned workspace lockfile and toolchain for this example.
+[[example]]
+name = "automated_issuer_service"
+path = "examples/automated_issuer_service/src/main.rs"
 
 [[bench]]
 name = "hashing_benchmark"
@@ -39,6 +55,10 @@ harness = false
 
 [[bench]]
 name = "attestations_benchmark"
+harness = false
+
+[[bench]]
+name = "schema_cache_benchmark"
 harness = false
 
 [[test]]

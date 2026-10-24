@@ -25,6 +25,30 @@ expired once the ledger timestamp reaches its `expiration_time`. Expiration is
 a passive, read-time check — it does not trigger a resolver callback or emit
 an event on its own, unlike revocation.
 
+Every read and verify path evaluates expiration the same way:
+`verify_attestation`, `verify_attestation_view`, `verify_attestations` and
+`verify_all_attestations` return `false` for an expired record, with no
+revocation transaction required. `get_attestation` still returns the stored
+record so indexers can show its history, with `revocation_time` left at `0`.
+
+### Pruning expired records
+
+Expired records keep occupying persistent storage. Pruning is opt-in and
+disabled by default (#432):
+
+- `set_auto_prune(enabled)` (admin only) turns pruning on or off;
+  `is_auto_prune_enabled()` reads it.
+- `prune_expired(uids)` is a public entrypoint, limited to `MAX_PRUNE_BATCH`
+  (100) UIDs per call. It deletes the record, its `valid_from` entry and both
+  timestamp anchors for each UID whose non-zero `expiration_time` has passed,
+  emits a `PRUNED` event, and returns how many were removed. Perpetual
+  (`expiration_time == 0`), live and unknown UIDs are skipped, so the call is
+  idempotent. While disabled it fails with `SASError::AutoPruneDisabled`.
+- Expired attestations cannot be revived: `renew_attestation` on an expired
+  record fails with `SASError::AlreadyExpired`. A pruned or expired claim only
+  returns through a new `attest` call that the attester authorizes.
+- Pruning removes the stored record permanently, so archive anything you need
+  from `AttestationIssued` events or the indexer first.
 ## Revocation
 
 `revoke` (and its delegated/authorizer variants) marks an attestation revoked,
@@ -43,6 +67,11 @@ requires:
 - The replacement's `attester` and `recipient` to match the old attestation's
   — a replacement changes what is being claimed, not who is claiming it or
   about whom.
+
+`replace_by_delegation_consent` performs the same replacement with off-chain
+signatures from both the recorded attester and recipient. See
+[delegation](delegation.md#delegated-replacement-with-recipient-consent) for
+the digest layout, nonce rules, and relayer flow.
 
 ### Expiration monotonicity
 
@@ -82,6 +111,37 @@ records the ledger it happened on, as a
 - `verify_timestamp(uid, claim)` — `true` when `claim` is exactly one of
   those anchors, comparing both the sequence number and the close time. It is
   a read: it renews no TTLs, so checking a claim costs no storage rent.
+- `check_timestamp(uid, claim)` — the strict form of `verify_timestamp`. It
+  succeeds on the same claims and otherwise traps with a specific error
+  instead of returning `false` (#436):
+  - `InvalidTimestamp` (420): the claim's sequence or close time does not
+    match a recorded anchor (a doctored close time, or a foreign ledger
+    sequence), the claim names a ledger that is ahead of the ledger the call
+    runs on, or the stored anchors are not monotonic.
+  - `TimestampAnchorNotFound` (421): no anchor exists for the UID.
+
+### Simulated and test environments
+
+Local tests and RPC simulation can execute against a ledger whose sequence
+number and close time are out of step with the ledger an anchor was written
+on, which used to surface as a bare `false` or an unexplained failure. Three
+rules make that visible instead (#436):
+
+- **Anchors are immutable.** An anchor is written once; any attempt to write
+  an existing one fails with `InvalidTimestamp` rather than replacing it.
+- **Sequence and close time must agree and move forward together.** A claim
+  must equal an anchor in both fields. A claim from a ledger that has not
+  closed yet is rejected, and a revocation anchor that precedes its issuance
+  anchor in sequence or in close time makes every claim for that UID fail.
+- **Failures leave a diagnostic.** Each rejection writes a `log!` line saying
+  which rule failed (missing anchor, anchor ahead of the ledger, close time
+  mismatch for a known sequence, sequence not anchored). The lines exist in
+  test and simulation builds and are compiled out of release WASM.
+
+`verify_timestamp` keeps returning a boolean and answers `false` in exactly
+the cases where `check_timestamp` fails, so existing callers are unaffected.
+Use `check_timestamp` in tooling that has to tell a lagging simulation apart
+from a forged timestamp.
 
 A verifier that trusts a ledger header — from an SCP envelope, ledger close
 meta, or an RPC it trusts — confirms that the header's sequence number and
@@ -101,3 +161,10 @@ expires exactly when the record it describes does.
 A rejected revocation leaves no anchor behind: `revoke` on a non-revocable or
 already-revoked attestation panics, which reverts the write along with it, so a
 failed call can never be read back as a revocation that happened.
+
+## Privacy and Selective Disclosure
+
+Everything in an attestation is public and permanent. [Privacy Implications of
+Public Attestations](privacy.md) lists what is exposed and how to avoid it, and
+[Selective Disclosure](selective-disclosure.md) shows how to attest to a Merkle
+root and reveal individual claims with `verify_merkle_leaf`.

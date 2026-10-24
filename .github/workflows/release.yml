@@ -17,6 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.1.0
+        with:
+          # Release notes are built from the commits since the previous tag.
+          fetch-depth: 0
+      - name: Verify release metadata
+        # Fails the release before anything is built when the tag, the crate
+        # versions, Cargo.lock and CHANGELOG.md disagree.
+        run: bash scripts/check_release_version.sh "${GITHUB_REF_NAME}"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -52,15 +59,33 @@ jobs:
         run: |
           cd target/wasm32-unknown-unknown/release
           sha256sum sas.opt.wasm schema_registry.opt.wasm soroban_sas_indexer.opt.wasm > checksums.sha256
+      - name: Generate release notes
+        run: |
+          bash scripts/release_notes.sh "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --checksums target/wasm32-unknown-unknown/release/checksums.sha256 \
+            > release-notes.md
+          cat release-notes.md
+      - name: Generate shell completion scripts
+        run: |
+          mkdir -p target/completions
+          for shell in bash zsh fish powershell; do
+            cargo run --release --package soroban-sas-cli -- completions "$shell" > "target/completions/sas.$shell"
+          done
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             target/wasm32-unknown-unknown/release/sas.opt.wasm
             target/wasm32-unknown-unknown/release/schema_registry.opt.wasm
             target/wasm32-unknown-unknown/release/soroban_sas_indexer.opt.wasm
             target/wasm32-unknown-unknown/release/checksums.sha256
+            target/completions/sas.bash
+            target/completions/sas.zsh
+            target/completions/sas.fish
+            target/completions/sas.powershell
 
   gas-report:
     name: Gas & Resource Report

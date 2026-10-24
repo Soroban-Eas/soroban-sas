@@ -14,6 +14,7 @@
 //! to the local validation that must reject bad input *before* any RPC call;
 //! the host records every request so tests can prove none was made.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -22,13 +23,19 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
+
 use sas::{SASClient, SAS};
 use schema_registry::{SchemaRegistry, SchemaRegistryClient};
 use soroban_sas_common::{Attestation, UID};
 use soroban_sas_indexer::{Indexer, IndexerClient};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::xdr::{
-    HostFunction, Limits, OperationBody, ReadXdr, ScVal, TransactionEnvelope, WriteXdr,
+    AccountEntry, AccountEntryExt, AccountId, ExtensionPoint, HostFunction, LedgerEntryData,
+    LedgerFootprint, Limits, OperationBody, PublicKey, ReadXdr, ScVal, SequenceNumber,
+    SorobanResources, SorobanTransactionData, String32, Thresholds, TransactionEnvelope, Uint256,
+    VecM, WriteXdr,
 };
 use soroban_sdk::{
     contract, contractimpl, Address, Bytes, BytesN, Env, String as SorobanString, Symbol,
@@ -62,6 +69,11 @@ mod accept_all_resolver {
 struct Fixture {
     sas_id: String,
     indexer_id: String,
+    /// Schema Registry the CLI registers/reads schemas against (#469).
+    registry_id: String,
+    /// The `AcceptAllResolver` contract the fixture schema uses — the
+    /// wizard's resolver prompt needs a real `C...` address (#469).
+    resolver_id: String,
     schema_uid: String,
     attester: String,
     recipient: String,
@@ -166,6 +178,8 @@ fn populate(env: &Env) -> Fixture {
     Fixture {
         sas_id: strkey(&sas_id),
         indexer_id: strkey(&indexer_id),
+        registry_id: strkey(&registry_id),
+        resolver_id: strkey(&resolver),
         schema_uid: uid_hex(&schema_uid),
         attester: strkey(&attester),
         recipient: strkey(&recipient),
@@ -181,12 +195,22 @@ fn populate(env: &Env) -> Fixture {
 // RpcHost: JSON-RPC over HTTP backed by an in-process Soroban host
 // ---------------------------------------------------------------------------
 
+/// Mutable host state shared between the listener thread and the test:
+/// every JSON-RPC method received (for request-sequence assertions) and the
+/// envelopes `sendTransaction` accepted, keyed by hash so `getTransaction`
+/// can echo them back like real Soroban RPC does.
+#[derive(Default)]
+struct HostState {
+    methods: Vec<String>,
+    envelopes: HashMap<String, String>,
+}
+
 /// A local Soroban RPC stand-in. Owns the `Env` on its own thread (a host
 /// is not `Send`) and serves one request per connection until dropped.
 struct RpcHost {
     url: String,
     fixture: Fixture,
-    methods: Arc<Mutex<Vec<String>>>,
+    state: Arc<Mutex<HostState>>,
     shutdown: Arc<AtomicBool>,
     port: u16,
     thread: Option<JoinHandle<()>>,
@@ -196,12 +220,12 @@ impl RpcHost {
     fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let methods = Arc::new(Mutex::new(Vec::new()));
+        let state = Arc::new(Mutex::new(HostState::default()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = mpsc::channel();
 
         let thread = {
-            let methods = methods.clone();
+            let state = state.clone();
             let shutdown = shutdown.clone();
             std::thread::spawn(move || {
                 let env = Env::default();
@@ -211,7 +235,7 @@ impl RpcHost {
                         break;
                     }
                     if let Ok(stream) = stream {
-                        serve(&env, stream, &methods);
+                        serve(&env, stream, &state);
                     }
                 }
             })
@@ -220,7 +244,7 @@ impl RpcHost {
         RpcHost {
             url: format!("http://127.0.0.1:{port}/"),
             fixture,
-            methods,
+            state,
             shutdown,
             port,
             thread: Some(thread),
@@ -229,7 +253,7 @@ impl RpcHost {
 
     /// JSON-RPC methods received so far, in order.
     fn methods(&self) -> Vec<String> {
-        self.methods.lock().unwrap().clone()
+        self.state.lock().unwrap().methods.clone()
     }
 }
 
@@ -244,7 +268,7 @@ impl Drop for RpcHost {
     }
 }
 
-fn serve(env: &Env, stream: TcpStream, methods: &Mutex<Vec<String>>) {
+fn serve(env: &Env, stream: TcpStream, state: &Mutex<HostState>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut content_length = 0usize;
     loop {
@@ -262,7 +286,8 @@ fn serve(env: &Env, stream: TcpStream, methods: &Mutex<Vec<String>>) {
     }
     let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let method = request["method"].as_str().unwrap_or_default().to_string();
-    methods.lock().unwrap().push(method.clone());
+    let mut state = state.lock().unwrap();
+    state.methods.push(method.clone());
 
     let response = match method.as_str() {
         "simulateTransaction" => serde_json::json!({
@@ -270,12 +295,80 @@ fn serve(env: &Env, stream: TcpStream, methods: &Mutex<Vec<String>>) {
             "id": request["id"],
             "result": simulate(env, request["params"]["transaction"].as_str().unwrap()),
         }),
+        // The write pipeline (#469) first reads the source account's
+        // sequence number; every requested key gets the canned account
+        // entry, which is all `fetch_sequence_numbers` decodes.
+        "getLedgerEntries" => {
+            let entries: Vec<serde_json::Value> = request["params"]["keys"]
+                .as_array()
+                .map(|keys| {
+                    keys.iter()
+                        .map(|key| {
+                            serde_json::json!({
+                                "key": key.as_str().unwrap_or_default(),
+                                "xdr": account_entry_xdr(),
+                                "lastModifiedLedgerSeq": 1
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": { "entries": entries, "latestLedger": env.ledger().sequence() }
+            })
+        }
+        // Executes the submitted invocation against the real contracts and
+        // records the envelope under a deterministic hash, mirroring how a
+        // validator would accept and store the transaction.
+        "sendTransaction" => {
+            let envelope_b64 = request["params"]["transaction"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let hash = tx_hash(&envelope_b64);
+            let result = match invoke_envelope(env, &envelope_b64) {
+                Ok(_) => {
+                    state.envelopes.insert(hash.clone(), envelope_b64);
+                    serde_json::json!({
+                        "status": "SUCCESS",
+                        "hash": hash,
+                        "latestLedger": env.ledger().sequence()
+                    })
+                }
+                Err(_) => serde_json::json!({
+                    "status": "ERROR",
+                    "hash": hash,
+                    "latestLedger": env.ledger().sequence()
+                }),
+            };
+            serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": result })
+        }
+        // Settles immediately with the stored envelope echoed back, so the
+        // SDK's single poll sees `SUCCESS` without sleeping.
+        "getTransaction" => {
+            let hash = request["params"]["hash"].as_str().unwrap_or_default();
+            let result = match state.envelopes.get(hash).cloned() {
+                Some(envelope_xdr) => serde_json::json!({
+                    "status": "SUCCESS",
+                    "latestLedger": env.ledger().sequence(),
+                    "envelopeXdr": envelope_xdr
+                }),
+                None => serde_json::json!({
+                    "status": "NOT_FOUND",
+                    "latestLedger": env.ledger().sequence()
+                }),
+            };
+            serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": result })
+        }
         other => serde_json::json!({
             "jsonrpc": "2.0",
             "id": request["id"],
             "error": { "code": -32601, "message": format!("method not served by test host: {other}") },
         }),
     };
+    drop(state);
     let text = response.to_string();
     let mut stream = stream;
     let _ = write!(
@@ -287,10 +380,86 @@ fn serve(env: &Env, stream: TcpStream, methods: &Mutex<Vec<String>>) {
     let _ = stream.flush();
 }
 
-/// Executes the envelope's single `InvokeContract` against the host and
-/// shapes the outcome like Soroban RPC: `results[0].xdr` on success, or an
-/// `error` carrying the host's diagnostic (e.g. `Error(Contract, #402)`).
-fn simulate(env: &Env, envelope_b64: &str) -> serde_json::Value {
+/// Deterministic stand-in for Stellar's transaction hash (the host only
+/// needs a stable identifier to echo between `sendTransaction` and
+/// `getTransaction`): SHA-256 over the envelope's raw bytes.
+fn tx_hash(envelope_b64: &str) -> String {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(envelope_b64)
+        .unwrap_or_default();
+    hex::encode(Sha256::digest(bytes))
+}
+
+/// A minimal account ledger entry: `fetch_sequence_numbers` only decodes
+/// the sequence number, so one canned entry answers every account lookup.
+fn account_entry_xdr() -> String {
+    LedgerEntryData::Account(AccountEntry {
+        account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([7u8; 32]))),
+        balance: 100_000_000,
+        seq_num: SequenceNumber(7),
+        num_sub_entries: 0,
+        inflation_dest: None,
+        flags: 0,
+        home_domain: String32::default(),
+        thresholds: Thresholds([1, 0, 0, 0]),
+        signers: Default::default(),
+        ext: AccountEntryExt::V0,
+    })
+    .to_xdr_base64(Limits::none())
+    .unwrap()
+}
+
+/// The `transactionData` a write simulation must echo back so the SDK can
+/// build the final signed transaction (`build_signed_write_at_sequence`).
+fn transaction_data_xdr() -> String {
+    SorobanTransactionData {
+        ext: ExtensionPoint::V0,
+        resources: SorobanResources {
+            footprint: LedgerFootprint {
+                read_only: VecM::default(),
+                read_write: VecM::default(),
+            },
+            instructions: 0,
+            read_bytes: 0,
+            write_bytes: 0,
+        },
+        resource_fee: 0,
+    }
+    .to_xdr_base64(Limits::none())
+    .unwrap()
+}
+
+/// Contract entrypoints that mutate storage. A real RPC node never applies
+/// state changes during `simulateTransaction`, and the in-process host has
+/// no transactional rollback, so [`simulate`] reports a canned success for
+/// these instead of executing them — writes only ever happen when the CLI
+/// actually submits via `sendTransaction` (#469). Read entrypoints are all
+/// `get_*`/`has_*`-style and never match these prefixes.
+fn mutates_storage(function_name: &str) -> bool {
+    const WRITE_PREFIXES: [&str; 10] = [
+        "register",
+        "attest",
+        "revoke",
+        "set_",
+        "add_",
+        "remove_",
+        "withdraw",
+        "deprecate",
+        "init",
+        "reindex",
+    ];
+    WRITE_PREFIXES
+        .iter()
+        .any(|prefix| function_name.starts_with(prefix))
+}
+
+/// Decodes the envelope's single `InvokeContract` operation into the host
+/// types the simulate/send paths share: the contract, the function symbol,
+/// its name as a string (for [`mutates_storage`]), and the arguments.
+fn decode_invocation(
+    env: &Env,
+    envelope_b64: &str,
+) -> (Address, Symbol, String, soroban_sdk::Vec<Val>) {
     let envelope = TransactionEnvelope::from_xdr_base64(envelope_b64, Limits::none()).unwrap();
     let TransactionEnvelope::Tx(v1) = envelope else {
         panic!("CLI must send a V1 envelope");
@@ -306,34 +475,59 @@ fn simulate(env: &Env, envelope_b64: &str) -> serde_json::Value {
         .expect("contract address");
     let function = Symbol::try_from_val(env, &ScVal::Symbol(call.function_name.clone()))
         .expect("function name");
+    let function_name = String::from_utf8_lossy(&call.function_name.0).into_owned();
     let mut args = soroban_sdk::Vec::<Val>::new(env);
     for arg in call.args.iter() {
         args.push_back(Val::try_from_val(env, arg).expect("argument"));
     }
+    (contract, function, function_name, args)
+}
 
+/// Executes the envelope's single `InvokeContract` against the host,
+/// returning the raw return value or the host's diagnostic (e.g.
+/// `Error(Contract, #402)`). Used by the `sendTransaction` path (#469),
+/// where a write must genuinely execute.
+fn invoke_envelope(env: &Env, envelope_b64: &str) -> Result<Val, String> {
+    let (contract, function, _function_name, args) = decode_invocation(env, envelope_b64);
     match env.try_invoke_contract::<Val, soroban_sdk::Error>(&contract, &function, args) {
-        Ok(Ok(value)) => {
-            let xdr = ScVal::try_from_val(env, &value)
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err("HostError: Error(Value, UnexpectedType)".to_string()),
+        Err(Ok(error)) => Err(format!("HostError: {error:?}")),
+        Err(Err(error)) => Err(format!("HostError: {error:?}")),
+    }
+}
+
+/// Shapes an invocation's outcome like Soroban RPC's `simulateTransaction`:
+/// `results[0].xdr` and a `transactionData` footprint on success (write
+/// pipelines need the latter to build the signed transaction, #469), or an
+/// `error` carrying the host's diagnostic. Read-only calls execute against
+/// the real contracts; storage-mutating entrypoints are reported as a
+/// canned success without executing (see [`mutates_storage`]).
+fn simulate(env: &Env, envelope_b64: &str) -> serde_json::Value {
+    let (contract, function, function_name, args) = decode_invocation(env, envelope_b64);
+    let outcome = if mutates_storage(&function_name) {
+        Ok(ScVal::Void.to_xdr_base64(Limits::none()).unwrap())
+    } else {
+        match env.try_invoke_contract::<Val, soroban_sdk::Error>(&contract, &function, args) {
+            Ok(Ok(value)) => Ok(ScVal::try_from_val(env, &value)
                 .unwrap()
                 .to_xdr_base64(Limits::none())
-                .unwrap();
-            serde_json::json!({
-                "latestLedger": env.ledger().sequence(),
-                "results": [{ "xdr": xdr, "auth": [] }],
-                "minResourceFee": "0",
-            })
+                .unwrap()),
+            Ok(Err(_)) => Err("HostError: Error(Value, UnexpectedType)".to_string()),
+            Err(Ok(error)) => Err(format!("HostError: {error:?}")),
+            Err(Err(error)) => Err(format!("HostError: {error:?}")),
         }
-        Ok(Err(_)) => serde_json::json!({
+    };
+    match outcome {
+        Ok(xdr) => serde_json::json!({
             "latestLedger": env.ledger().sequence(),
-            "error": "HostError: Error(Value, UnexpectedType)",
+            "results": [{ "xdr": xdr, "auth": [] }],
+            "transactionData": transaction_data_xdr(),
+            "minResourceFee": "0",
         }),
-        Err(Ok(error)) => serde_json::json!({
+        Err(error) => serde_json::json!({
             "latestLedger": env.ledger().sequence(),
-            "error": format!("HostError: {error:?}"),
-        }),
-        Err(Err(error)) => serde_json::json!({
-            "latestLedger": env.ledger().sequence(),
-            "error": format!("HostError: {error:?}"),
+            "error": error,
         }),
     }
 }
@@ -409,10 +603,10 @@ impl Run {
     }
 }
 
-/// Runs the CLI with `args` and a scrubbed environment: none of the
+/// Builds the CLI invocation with a scrubbed environment: none of the
 /// `SOROBAN_*`/`SAS_*` fallbacks the developer's shell may define can leak
 /// in, and identities resolve from `identity_dir` only.
-fn cli(identity_dir: &Path, args: &[&str]) -> Run {
+fn command_for(identity_dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_soroban-sas-cli"));
     for var in [
         "SOROBAN_RPC_URL",
@@ -425,11 +619,48 @@ fn cli(identity_dir: &Path, args: &[&str]) -> Run {
         command.env_remove(var);
     }
     command.env("SAS_IDENTITY_DIR", identity_dir);
+    command.args(args);
+    command
+}
+
+/// Runs the CLI with `args` and its stdin closed (see [`command_for`]).
+fn cli(identity_dir: &Path, args: &[&str]) -> Run {
     let Output {
         status,
         stdout,
         stderr,
-    } = command.args(args).output().expect("spawn soroban-sas-cli");
+    } = command_for(identity_dir, args)
+        .output()
+        .expect("spawn soroban-sas-cli");
+    Run {
+        code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    }
+}
+
+/// Like [`cli`], but pipes `stdin` into the child. The wizard's
+/// non-interactive fallback (#469) reads its answers line by line from a
+/// non-TTY stdin, which this drives exactly like a shell pipe would.
+fn cli_with_stdin(identity_dir: &Path, args: &[&str], stdin: &str) -> Run {
+    use std::process::Stdio;
+    let mut child = command_for(identity_dir, args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn soroban-sas-cli");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write wizard answers");
+    let Output {
+        status,
+        stdout,
+        stderr,
+    } = child.wait_with_output().expect("wait soroban-sas-cli");
     Run {
         code: status.code(),
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -460,6 +691,12 @@ impl Ctx {
 
     fn run(&self, args: &[&str]) -> Run {
         cli(self.dir.path(), args)
+    }
+
+    /// Runs the CLI with `stdin` piped in, driving line-based flows like the
+    /// `schema wizard` (#469).
+    fn run_stdin(&self, args: &[&str], stdin: &str) -> Run {
+        cli_with_stdin(self.dir.path(), args, stdin)
     }
 
     /// `--output json query <by> <key-flag> <key> --contract-id <indexer>`
@@ -1206,4 +1443,320 @@ fn bulk_missing_file_is_reported_without_a_panic() {
         run.stdout
     );
     assert!(!run.stderr.contains("panicked"), "{}", run.stderr);
+}
+
+// ---------------------------------------------------------------------------
+// `schema wizard` (#469)
+// ---------------------------------------------------------------------------
+
+/// The content-addressed UID the registry derives for
+/// `(schema, resolver, revocable)` — the same preimage the CLI computes
+/// locally, so the wizard's printed UID can be cross-checked against it.
+fn registered_uid(schema: &str, resolver: &str, revocable: bool) -> String {
+    let env = Env::default();
+    let resolver = Address::from_string(&SorobanString::from_str(&env, resolver));
+    uid_hex(&soroban_sas_common::schema_uid(
+        &env,
+        &SorobanString::from_str(&env, schema),
+        &resolver,
+        revocable,
+    ))
+}
+
+/// Drives the wizard end to end over piped (non-TTY) stdin: every answer is
+/// read line by line, the fee is estimated by simulation *before* the
+/// confirmation, and confirming submits a signed registration that the host
+/// executes against the real schema-registry contract — a follow-up read
+/// finds the schema on-chain.
+#[test]
+fn wizard_registers_a_schema_when_confirmed() {
+    let ctx = Ctx::new();
+    let schema = "bool verified, string full_name";
+    // Answer order: name, fields (blank line finishes), revocable,
+    // resolver, metadata URI, final confirmation.
+    let stdin = format!(
+        "KYC Proof v1\n\
+         bool verified\n\
+         string full_name\n\
+         \n\
+         y\n\
+         {}\n\
+         ipfs://bafy/meta.json\n\
+         y\n",
+        ctx.f().resolver_id
+    );
+    let run = ctx.run_stdin(
+        &[
+            "--output",
+            "json",
+            "schema",
+            "wizard",
+            "--identity",
+            "attester",
+            "--registry-contract-id",
+            &ctx.f().registry_id,
+            "--rpc-url",
+            &ctx.host.url,
+            "--network-passphrase",
+            NETWORK,
+        ],
+        &stdin,
+    );
+    run.assert_ok();
+
+    let data = &run.json()["data"];
+    let expected_uid = registered_uid(schema, &ctx.f().resolver_id, true);
+    assert_eq!(data["submitted"], true);
+    // The UID the CLI computed off-chain matches the registry's own
+    // content-addressed UID for (schema, resolver, revocable).
+    assert_eq!(data["schema_uid"].as_str(), Some(expected_uid.as_str()));
+    assert_eq!(data["name"].as_str(), Some("KYC Proof v1"));
+    assert_eq!(data["metadata_uri"].as_str(), Some("ipfs://bafy/meta.json"));
+    // A 64-hex-digit transaction hash the host derived from the submitted
+    // envelope.
+    let hash = data["hash"].as_str().unwrap();
+    assert_eq!(hash.len(), 64);
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "{hash}");
+
+    // Prompts, the summary, and the fee estimate went to stderr…
+    assert!(
+        run.stderr.contains("stdin is not a terminal"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("Registration summary")
+            && run.stderr.contains("KYC Proof v1")
+            && run.stderr.contains(schema),
+        "{}",
+        run.stderr
+    );
+    // …including the estimated network fee (BASE_FEE 100 + simulated 0),
+    // and the summary precedes the confirmation prompt.
+    let fee = run
+        .stderr
+        .find("Estimated network fee: 100 stroops")
+        .unwrap();
+    let confirm = run.stderr.find("Submit registration? [y/N]:").unwrap();
+    assert!(fee < confirm, "{}", run.stderr);
+
+    // The registration really executed on the network: a follow-up read
+    // through the host's simulate path finds the schema on-chain…
+    let found = ctx.run(&[
+        "--output",
+        "json",
+        "schema",
+        "get",
+        "--uid",
+        &expected_uid,
+        "--registry-contract-id",
+        &ctx.f().registry_id,
+        "--rpc-url",
+        &ctx.host.url,
+    ]);
+    found.assert_ok();
+    assert_eq!(found.json()["data"]["found"], true);
+    assert_eq!(found.json()["data"]["schema"], schema, "{}", found.stdout);
+
+    // …and the host saw one complete write pipeline, with the fee-estimate
+    // simulation happening before the submission.
+    let methods = ctx.host.methods();
+    let first_sim = methods
+        .iter()
+        .position(|m| m == "simulateTransaction")
+        .expect("fee-estimate simulation");
+    let send = methods
+        .iter()
+        .position(|m| m == "sendTransaction")
+        .expect("registration submission");
+    assert!(first_sim < send, "{methods:?}");
+    assert_eq!(
+        methods.iter().filter(|m| *m == "sendTransaction").count(),
+        1
+    );
+    assert_eq!(methods.iter().filter(|m| *m == "getTransaction").count(), 1);
+}
+/// Declining the confirmation exits cleanly with `submitted: false` and
+/// sends nothing: the only write-side call the host ever sees is the
+/// fee-estimate simulation, and the schema never reaches the registry.
+#[test]
+fn wizard_aborts_without_submitting_when_declined() {
+    let ctx = Ctx::new();
+    let schema = "string full_name";
+    let stdin = format!(
+        "KYC\n\
+         string full_name\n\
+         \n\
+         n\n\
+         {}\n\
+         \n\
+         n\n",
+        ctx.f().resolver_id
+    );
+    let run = ctx.run_stdin(
+        &[
+            "--output",
+            "json",
+            "schema",
+            "wizard",
+            "--identity",
+            "attester",
+            "--registry-contract-id",
+            &ctx.f().registry_id,
+            "--rpc-url",
+            &ctx.host.url,
+            "--network-passphrase",
+            NETWORK,
+        ],
+        &stdin,
+    );
+    run.assert_ok();
+
+    let data = &run.json()["data"];
+    assert_eq!(data["submitted"], false);
+    assert_eq!(
+        data["schema_uid"].as_str(),
+        Some(registered_uid(schema, &ctx.f().resolver_id, false).as_str())
+    );
+    // The decline is a clean success envelope, not an error.
+    assert_eq!(run.json()["status"], "ok");
+
+    // The estimate was simulated before the prompt…
+    assert!(
+        ctx.host
+            .methods()
+            .iter()
+            .any(|m| m == "simulateTransaction"),
+        "fee estimate should be simulated before the confirmation"
+    );
+    // …but nothing was submitted.
+    assert!(
+        !ctx.host.methods().iter().any(|m| m == "sendTransaction"),
+        "declined wizard must not submit"
+    );
+    let missing_uid = registered_uid(schema, &ctx.f().resolver_id, false);
+    let found = ctx.run(&[
+        "--output",
+        "json",
+        "schema",
+        "get",
+        "--uid",
+        &missing_uid,
+        "--registry-contract-id",
+        &ctx.f().registry_id,
+        "--rpc-url",
+        &ctx.host.url,
+    ]);
+    found.assert_ok();
+    assert_eq!(found.json()["data"]["found"], false);
+}
+
+/// Every invalid answer triggers its inline validation error at the prompt
+/// that asked for it — an empty name, a typeless field, a non-`y/n`
+/// revocable answer, a non-contract resolver (twice: wrong kind, then
+/// missing with no default), and a bad metadata scheme — and the wizard
+/// still completes the registration once the retries are answered.
+#[test]
+fn wizard_reprompts_invalid_answers_before_submitting() {
+    let ctx = Ctx::new();
+    let stdin = format!(
+        "\n\
+         KYC Proof v1\n\
+         verified\n\
+         string full_name\n\
+         \n\
+         maybe\n\
+         y\n\
+         GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF\n\
+         \n\
+         {}\n\
+         ftp://example.com/schema.json\n\
+         ipfs://bafy/meta.json\n\
+         y\n",
+        ctx.f().resolver_id
+    );
+    let run = ctx.run_stdin(
+        &[
+            "--output",
+            "json",
+            "schema",
+            "wizard",
+            "--identity",
+            "attester",
+            "--registry-contract-id",
+            &ctx.f().registry_id,
+            "--rpc-url",
+            &ctx.host.url,
+            "--network-passphrase",
+            NETWORK,
+        ],
+        &stdin,
+    );
+    run.assert_ok();
+
+    for expected in [
+        "name must not be empty",
+        "comma-separated `name Type` field definitions",
+        "please answer y or n",
+        "is not a valid Stellar strkey",
+        "resolver is required",
+        "metadata URI must start with",
+    ] {
+        assert!(
+            run.stderr.contains(expected),
+            "missing inline validation error {expected:?} in:\n{}",
+            run.stderr
+        );
+    }
+
+    let data = &run.json()["data"];
+    assert_eq!(data["submitted"], true);
+    assert_eq!(
+        data["schema_uid"].as_str(),
+        Some(registered_uid("string full_name", &ctx.f().resolver_id, true).as_str(),)
+    );
+    assert_eq!(data["metadata_uri"].as_str(), Some("ipfs://bafy/meta.json"));
+}
+
+/// `--resolver` prefills the resolver prompt: a blank answer (or a piped
+/// EOF after it) uses the default instead of failing as "required".
+#[test]
+fn wizard_uses_the_prefilled_resolver_for_a_blank_answer() {
+    let ctx = Ctx::new();
+    let stdin = "KYC\nbool verified\n\nn\n\n\nn\n";
+    let run = ctx.run_stdin(
+        &[
+            "--output",
+            "json",
+            "schema",
+            "wizard",
+            "--identity",
+            "attester",
+            "--registry-contract-id",
+            &ctx.f().registry_id,
+            "--resolver",
+            &ctx.f().resolver_id,
+            "--rpc-url",
+            &ctx.host.url,
+            "--network-passphrase",
+            NETWORK,
+        ],
+        stdin,
+    );
+    run.assert_ok();
+
+    let data = &run.json()["data"];
+    assert_eq!(data["submitted"], false);
+    // The blank resolver answer resolved to the `--resolver` default: the
+    // UID preimage the wizard computed was built with it.
+    assert_eq!(
+        data["schema_uid"].as_str(),
+        Some(registered_uid("bool verified", &ctx.f().resolver_id, false).as_str(),)
+    );
+    assert!(run.stderr.contains(&ctx.f().resolver_id), "{}", run.stderr);
+    assert!(
+        !run.stderr.contains("resolver is required"),
+        "{}",
+        run.stderr
+    );
 }

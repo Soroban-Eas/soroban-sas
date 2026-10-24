@@ -189,7 +189,7 @@ fn valid_proofs_verify_for_every_leaf_position() {
     for index in 0..leaves.len() {
         let proof = proof_for(&env, &levels, index);
         assert!(
-            client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index),
+            client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index),
             "leaf {index} must verify against its own proof"
         );
     }
@@ -216,9 +216,9 @@ fn single_leaf_tree_verifies_with_an_empty_proof() {
     );
 
     let empty: Vec<MerkleProofStep> = Vec::new(&env);
-    assert!(client.verify_merkle_leaf(&uid, &leaf, &empty, &0));
+    assert!(client.verify_indexed_merkle_leaf(&uid, &leaf, &empty, &0));
     // The same singleton tree has no leaf at index 1.
-    assert!(!client.verify_merkle_leaf(&uid, &leaf, &empty, &1));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaf, &empty, &1));
 }
 
 #[test]
@@ -243,8 +243,8 @@ fn tampered_leaf_fails() {
 
     let index = 1u32;
     let proof = proof_for(&env, &levels, index);
-    assert!(client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
-    assert!(!client.verify_merkle_leaf(&uid, &Bytes::from_slice(&env, b"bobby"), &proof, &index));
+    assert!(client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &Bytes::from_slice(&env, b"bobby"), &proof, &index));
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn tampered_sibling_fails() {
         bad_proof.push_back(step);
     }
 
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &bad_proof, &index));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &bad_proof, &index));
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn incorrect_index_fails() {
 
     // A proof that is valid for position 2 must not verify at position 3.
     let proof = proof_for(&env, &levels, 2);
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(2).unwrap(), &proof, &3));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(2).unwrap(), &proof, &3));
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn proof_against_a_different_root_fails() {
     );
 
     let proof = proof_for(&env, &levels, 1);
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(1).unwrap(), &proof, &1));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(1).unwrap(), &proof, &1));
 }
 
 #[test]
@@ -361,11 +361,11 @@ fn revoked_parent_invalidates_leaf_verification() {
     );
     let index = 0u32;
     let proof = proof_for(&env, &levels, index);
-    assert!(client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
 
     client.revoke(&uid);
 
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
 }
 
 #[test]
@@ -389,11 +389,11 @@ fn expired_parent_invalidates_leaf_verification() {
     );
     let index = 3u32;
     let proof = proof_for(&env, &levels, index);
-    assert!(client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
 
     env.ledger().with_mut(|li| li.timestamp = NOW + 100);
 
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
 }
 
 #[test]
@@ -417,11 +417,11 @@ fn not_yet_valid_parent_invalidates_leaf_verification() {
     );
     let index = 4u32;
     let proof = proof_for(&env, &levels, index);
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
 
     env.ledger().with_mut(|li| li.timestamp = NOW + 100);
 
-    assert!(client.verify_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
+    assert!(client.verify_indexed_merkle_leaf(&uid, &leaves.get(index).unwrap(), &proof, &index));
 }
 
 #[test]
@@ -432,7 +432,7 @@ fn unknown_attestation_fails() {
     let proof: Vec<MerkleProofStep> = Vec::new(&env);
     let unknown = UID(BytesN::from_array(&env, &[0x42u8; 32]));
 
-    assert!(!client.verify_merkle_leaf(&unknown, &leaf, &proof, &0));
+    assert!(!client.verify_indexed_merkle_leaf(&unknown, &leaf, &proof, &0));
 }
 
 #[test]
@@ -445,7 +445,7 @@ fn non_root_payload_fails() {
     let uid = issue(&env, &client, &attester, &recipient, payload.clone(), 0, 0);
     let proof: Vec<MerkleProofStep> = Vec::new(&env);
 
-    assert!(!client.verify_merkle_leaf(&uid, &payload, &proof, &0));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &payload, &proof, &0));
 }
 
 #[test]
@@ -475,7 +475,7 @@ fn oversized_proof_fails_without_panicking() {
         });
     }
 
-    assert!(!client.verify_merkle_leaf(&uid, &leaf, &proof, &0));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaf, &proof, &0));
 }
 
 #[test]
@@ -498,7 +498,7 @@ fn empty_proof_fails_for_a_multi_leaf_root() {
     );
     let empty: Vec<MerkleProofStep> = Vec::new(&env);
 
-    assert!(!client.verify_merkle_leaf(&uid, &leaves.get(0).unwrap(), &empty, &0));
+    assert!(!client.verify_indexed_merkle_leaf(&uid, &leaves.get(0).unwrap(), &empty, &0));
 }
 
 /// Worst-case gas: a 32-step proof (full `u32` index space). Verification is
@@ -533,7 +533,7 @@ fn leaf_verification_gas_is_bounded() {
     );
 
     env.budget().reset_unlimited();
-    assert!(client.verify_merkle_leaf(&uid, &leaf, &proof, &index));
+    assert!(client.verify_indexed_merkle_leaf(&uid, &leaf, &proof, &index));
     let cpu = env.budget().cpu_instruction_cost();
     let mem = env.budget().memory_bytes_cost();
 

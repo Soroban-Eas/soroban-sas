@@ -1,0 +1,33 @@
+[package]
+name = "cloudflare-worker-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone crate on purpose: the Worker pulls in the `worker` runtime and
+# its own lockfile, which must not interfere with the repository workspace
+# (the workspace is built and tested for every target, the Worker only for
+# `wasm32-unknown-unknown`).
+[workspace]
+
+[lib]
+# Cloudflare Workers load a `cdylib` WebAssembly module.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The `wasm` feature swaps the native `ureq` transport for a `web-sys` fetch
+# implementation, so the SDK can talk to a Soroban RPC node from inside the
+# Worker's sandbox (#553).
+soroban-sas-sdk = { path = "../../packages/soroban-sas-sdk", features = ["wasm"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Pinned so the template keeps building with the repository's toolchain
+# (1.83.0); newer releases pull in dependencies that need a newer compiler.
+worker = "=0.4.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

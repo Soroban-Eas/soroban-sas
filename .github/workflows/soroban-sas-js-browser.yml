@@ -1,0 +1,33 @@
+name: Soroban SAS JavaScript browser compatibility
+
+on:
+  pull_request:
+    paths:
+      - "packages/soroban-sas-js/**"
+      - ".github/workflows/soroban-sas-js-browser.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/soroban-sas-js/**"
+      - ".github/workflows/soroban-sas-js-browser.yml"
+
+jobs:
+  browser-compatibility:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/soroban-sas-js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+          cache-dependency-path: packages/soroban-sas-js/package-lock.json
+      - uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run browser:check

@@ -43,7 +43,7 @@ the commitment entirely in their own contract storage can persist a
 SAS attestation — so its issuance time, expiry, and revocation govern the
 commitment — can store the root as the `data` payload of a single attestation
 and verify disclosed leaves on-chain with
-[`SAS::verify_merkle_leaf`](#on-chain-merkle-root-attestations-sasverify_merkle_leaf).
+[`SAS::verify_indexed_merkle_leaf`](#on-chain-merkle-root-attestations-sasverify_indexed_merkle_leaf).
 The next section defines the payload and tree conventions that entry point
 verifies.
 
@@ -162,7 +162,7 @@ In production, the off-chain service builds the full tree once (retaining
 every intermediate level, not just the root) so it can answer "give me
 index i's proof" for any `i` without recomputing the whole tree per request.
 
-## On-chain Merkle root attestations (`SAS::verify_merkle_leaf`)
+## On-chain Merkle root attestations (`SAS::verify_indexed_merkle_leaf`)
 
 A Merkle-root attestation commits to an off-chain batch without storing any
 leaf data on-chain. The issuer creates one ordinary SAS attestation whose
@@ -170,7 +170,7 @@ leaf data on-chain. The issuer creates one ordinary SAS attestation whose
 single read-only contract call:
 
 ```rust
-pub fn verify_merkle_leaf(
+pub fn verify_indexed_merkle_leaf(
     env: Env,
     attestation_uid: UID,
     leaf: Bytes,
@@ -241,12 +241,12 @@ reproduce the exact bytes without duplicating the algorithm.
 > `merkle_root` / `verify_proof` pair documented above, which hashes bare
 > leaves (`sha256(0x00 || data)`) and has no notion of position. Build a
 > Merkle-root attestation with `indexed_merkle_root` and verify it with
-> `verify_merkle_leaf`; use `merkle_root` / `verify_proof` for commitments
+> `verify_indexed_merkle_leaf`; use `merkle_root` / `verify_proof` for commitments
 > your own contract stores directly.
 
 ### Verification semantics
 
-`verify_merkle_leaf` is read-only: it performs no storage writes and does not
+`verify_indexed_merkle_leaf` is read-only: it performs no storage writes and does not
 renew TTLs, so it is cheap and safe in simulation or view contexts. It
 returns `false` — never a panic — for every rejection:
 
@@ -294,7 +294,7 @@ fn commit_batch(env: &Env, sas: &SASClient, leaf_data: [Bytes; 3]) {
     // Off-chain: hand each member their raw leaf plus its sibling path.
     // On-chain, anyone can then check a disclosure:
     let proof: Vec<MerkleProofStep> = /* siblings from the builder */;
-    let is_member = sas.verify_merkle_leaf(&uid, &leaves.get(1).unwrap(), &proof, &1);
+    let is_member = sas.verify_indexed_merkle_leaf(&uid, &leaves.get(1).unwrap(), &proof, &1);
     assert!(is_member);
 }
 ```

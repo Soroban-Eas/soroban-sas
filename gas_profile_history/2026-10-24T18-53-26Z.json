@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-10-24T18:53:26Z",
+  "git_rev": "defc863",
+  "measurements": [
+    {
+      "entrypoint": "sas::attest (1 KB payload)",
+      "cpu_insns": 1258361,
+      "mem_bytes": 241097
+    },
+    {
+      "entrypoint": "sas::attest (minimal 32B)",
+      "cpu_insns": 1203049,
+      "mem_bytes": 235145
+    },
+    {
+      "entrypoint": "sas::get_attestation",
+      "cpu_insns": 89170,
+      "mem_bytes": 10857
+    },
+    {
+      "entrypoint": "sas::multi_attest (n=1)",
+      "cpu_insns": 1210922,
+      "mem_bytes": 235957
+    },
+    {
+      "entrypoint": "sas::multi_attest (n=10)",
+      "cpu_insns": 16181793,
+      "mem_bytes": 3500383
+    },
+    {
+      "entrypoint": "sas::revoke",
+      "cpu_insns": 418395,
+      "mem_bytes": 77960
+    },
+    {
+      "entrypoint": "sas::verify_attestation",
+      "cpu_insns": 85296,
+      "mem_bytes": 10773
+    },
+    {
+      "entrypoint": "schema_registry::register",
+      "cpu_insns": 213771,
+      "mem_bytes": 40050
+    }
+  ]
+}

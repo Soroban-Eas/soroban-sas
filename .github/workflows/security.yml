@@ -17,24 +17,26 @@ env:
   RUSTUP_TOOLCHAIN: stable
 
 jobs:
-  cargo-deny:
-    name: cargo-deny
+  security-audit:
+    name: Security Scanners (cargo-deny & cargo-audit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - run: cargo install cargo-deny --version 0.20.2 --locked
-      - run: cargo deny --workspace --all-features --locked check
-
-  cargo-audit:
-    name: cargo-audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - name: Cache cargo tools
+        uses: actions/cache@v4
         with:
-          toolchain: stable
-      - run: cargo install cargo-audit --version 0.22.2 --locked
-      - run: cargo audit --file Cargo.lock
+          path: |
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-security-tools-deny-0.20.2-audit-0.22.2
+      - name: Install cargo-deny
+        run: which cargo-deny || cargo install cargo-deny --version 0.20.2 --locked
+      - name: Run cargo deny
+        run: cargo deny --workspace --all-features --locked check
+      - name: Install cargo-audit
+        run: which cargo-audit || cargo install cargo-audit --version 0.22.2 --locked
+      - name: Run cargo audit
+        run: cargo audit --file Cargo.lock

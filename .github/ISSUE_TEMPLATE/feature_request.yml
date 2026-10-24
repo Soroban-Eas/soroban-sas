@@ -1,0 +1,97 @@
+name: Feature request
+description: Propose a new capability or an improvement to Soroban SAS
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to propose an improvement.
+
+        Please search [existing issues](https://github.com/Soroban-Eas/soroban-sas/issues) first.
+        Do not report security vulnerabilities here; follow `SECURITY.md` instead.
+        Do not paste secret keys, seed phrases or personal data into this form.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project does this request touch?
+      options:
+        - SAS core contract (contracts/sas)
+        - Schema registry (contracts/schema-registry)
+        - Indexer (contracts/indexer)
+        - Shared library (packages/soroban-sas-common)
+        - Rust SDK (packages/soroban-sas-sdk)
+        - CLI (packages/soroban-sas-cli)
+        - JavaScript package (packages/soroban-sas-js)
+        - Documentation
+        - CI, tooling or scripts
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What are you trying to do, and what gets in the way today? Describe the use case, not the solution.
+      placeholder: As an integrator I need to ... but currently ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should change? Include the entrypoint, command or API shape if you have one in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, or workarounds you use today, and why they fall short.
+    validations:
+      required: false
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: The v1.0.0 contract state schema is frozen, so storage-layout changes need extra justification.
+      options:
+        - No breaking change expected
+        - Adds or changes a public contract entrypoint or error code
+        - Changes the storage layout or event format
+        - Changes SDK, CLI or JavaScript API only
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security and privacy considerations
+      description: New trust assumptions, new public data, authorization changes, or abuse cases. Write "none identified" if there are none.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know it is done? A checklist of observable behaviours, including failure cases, works well.
+      placeholder: |
+        - [ ] ...
+        - [ ] Tests cover ...
+        - [ ] Documentation updated
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and pull requests and found no duplicate.
+          required: true
+        - label: This request contains no secrets, keys or personal data.
+          required: true
+        - label: I have read the Code of Conduct and CONTRIBUTING.md.
+          required: true
+        - label: I am willing to work on this myself.
+          required: false

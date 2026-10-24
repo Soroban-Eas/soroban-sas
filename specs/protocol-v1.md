@@ -93,7 +93,8 @@ always runs the resolver hook and emits the event.
 `INDEXER_ADMIN` and `SAS_CONTRACT` are instance entries whose TTL is renewed via
 `extend_instance_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR)` on both trusted
 writes (`init`, `index_attestation`) and public reads (`get_admin`, `get_sas`,
-`get_attestations_by_*`, `get_atts_by_recipient_paginated`). This mirrors the
+`get_attestations_by_*`, `get_atts_by_recipient_paginated`,
+`is_attestation_indexed`). This mirrors the
 instance-retention policy of the SchemaRegistry and SAS contracts. Read-only
 calls renew only the instance TTL and do not mutate persistent index chunks. Tests
 verify that after ledger advancement the admin and SAS binding remain readable.
@@ -125,25 +126,54 @@ the schema-identity derivation to ensure XDR stability across all platform imple
 ## Off-Chain Typed Data Hashing and Delegation Signing
 
 Delegated attestations via `attest_by_delegation` and `revoke_by_delegation` require an
-Ed25519 signature over a structured typed-data message. The signature preimage is:
+Ed25519 signature over a structured typed-data message (EIP-712-style, two-level
+SHA-256). The exact preimage layout — locked by golden vectors in
+`packages/soroban-sas-common/src/typed_data.rs` — is:
+
 ```
-message_hash = SHA256(
-    "SAS_ATTESTATION_V1" ||           // Domain separator (ASCII)
-    network_id ||                      // Soroban network_id (32 bytes)
-    contract_address ||                // This SAS contract address (XDR-encoded)
-    nonce (u64, big-endian) ||         // Monotonic per-attester nonce
-    XDR(attestation_struct)            // Full Attestation being signed
+payload_hash = SHA256(
+    "\x19SorobanSAS\x01" ||          // PAYLOAD_PREFIX (13 bytes)
+    domain_hash ||                   // 32 bytes, see below
+    struct_hash ||                   // 32 bytes (attestation) or action body
+)
+
+domain_hash = SHA256(
+    "SorobanSAS Domain v1(network_id,contract,nonce)" ||  // DOMAIN_TYPE_TAG
+    network_id ||                    // SHA-256 of the network passphrase (32 bytes)
+    contract ||                      // ScVal XDR of env.current_contract_address()
+    nonce                            // u64, big-endian
+)
+
+struct_hash = SHA256(
+    "SorobanSAS Attestation v1(uid,schema_uid,time,expiration_time,ref_uid,recipient,attester,revocable,data)" ||
+    uid || schema_uid ||             // 32 bytes each
+    time || expiration_time ||       // u64, big-endian each
+    ref_uid ||                       // 32 bytes
+    recipient || attester ||         // ScVal XDR of each address
+    revocable ||                     // 1 byte (0 or 1)
+    SHA256(data)                     // 32 bytes
 )
 ```
-Where `attestation_struct` contains:
-- uid, schema_uid, recipient, attester (addresses/UIDs)
-- time, expiration_time, revocation_time (u64 timestamps, seconds since epoch)
-- revocable (bool)
-- data (Bytes, max 10,000 bytes)
 
-The domain separator "SAS_ATTESTATION_V1" and network_id prevent cross-network replay attacks.
-The nonce prevents replay of the same message on the same network. The signature is
-verified using Ed25519 public key cryptography.
+Where the domain fields are taken from the live contract state at verification
+time — callers cannot supply them:
+- `network_id`: `env.ledger().network_id()`, i.e. the SHA-256 hash of the network
+  passphrase (`"Test SDF Network ; September 2015"` for Testnet,
+  `"Public Global Stellar Network ; September 2015"` for Mainnet)
+- `contract`: `env.current_contract_address()`, XDR-encoded
+- `nonce`: the monotonic per-attester nonce passed to the entry point
+
+The domain separator and network_id prevent cross-network and
+cross-contract (cross-instance) replay attacks. The nonce prevents replay of
+the same message on the same network against the same contract. The
+signature is verified using Ed25519 public key cryptography with canonical
+scalar enforcement: non-canonical scalars (`S >= L`, where
+`L = 2^252 + 27742317777372353535851937790883648493` is the prime order of
+the ed25519 group) are rejected with `SASError::InvalidSignature` before
+host verification, and the host's `verify_strict` rejects any remaining
+cryptographically invalid signatures (see docs/security.md's "Ed25519
+signature malleability"). `revocation_time` is deliberately excluded from
+the digest because it is mutated on-chain by revocation.
 
 **Rationale**: Including the network and contract in the preimage ensures signatures
 cannot be replayed across deployments or networks. Including the full attestation data
@@ -169,6 +199,72 @@ This provides durable replay protection: even if an attestation is revoked and t
 entry expires, the nonce sequence resumes from the highest previously consumed value if
 the entry is archived and later recreated, preventing a replayed stale signature from being
 accepted as a new attestation.
+
+## FROST Threshold Delegated Signatures (#534)
+
+A schema MAY declare a FROST (Flexible Round-Optimized Schnorr Threshold) group
+that must endorse every delegated attestation or revocation under it. This lets
+`t`-of-`n` consortium nodes jointly authorize one attestation without changing
+the SAS calldata layout or verification cost.
+
+### Declaration
+
+```
+SchemaRegistry::set_schema_frost_group(authorizer, schema_uid, FrostGroup)
+SchemaRegistry::get_schema_frost_group(schema_uid) -> Option<FrostGroup>
+SchemaRegistry::clear_schema_frost_group(authorizer, schema_uid)
+
+FrostGroup {
+    group_public_key: BytesN<32>, // compressed Ed25519 group key A
+    threshold: u32,               // t, 2..=max_signers
+    max_signers: u32,             // n, <= 255
+}
+```
+
+The declaration is stored separately from `SchemaRecord`, so the schema record's
+XDR layout and the schema UID derivation are unchanged. Only the schema owner or
+registry admin may change it; every mutation emits `SchemaFrostGroupUpdated`.
+
+### Verification algorithm (normative)
+
+For a delegated operation whose attestation or recorded attestation has
+`schema_uid` S:
+
+1. Resolve `group = SchemaRegistry::get_schema_frost_group(S)`. If it is absent,
+   fall back to the single-signer key binding (see below).
+2. If it is present, require `submitted_public_key == group.group_public_key`.
+   Any other key — including the attester's account key and any key registered
+   through `register_attester_key` — MUST fail with `SASError::Unauthorized`.
+3. Compute the ordinary v1 digest `M`: `hash_offchain_attestation` for
+   attestations, `hash_delegated_revocation` for revocations. No FROST-specific
+   prefix, domain separator, or extra field is added.
+4. Verify `sig = R || s` (64 bytes, RFC 8032 encoding) as a standard Ed25519
+   signature under `A = group.group_public_key` over `M`, i.e.
+   `[s]B = R + H(R || A || M) * A` with SHA-512 as `H`.
+5. Continue with the normal nonce, authorization, and storage checks.
+
+The chain cannot observe the number of shares that participated, and does not
+need to: a signature that verifies under `A` can only have been produced by a
+quorum of `threshold` shares (assuming an honest DKG, where no participant
+knows the group secret). An aggregate produced with fewer than `threshold`
+shares is not a valid signature under `A` and therefore fails step 4.
+
+### Normative properties
+
+- **One verification call.** The contract performs exactly one
+  `ed25519_verify` for both single-signer and FROST paths.
+- **Identical calldata.** Both paths use `attest_by_delegation(attestation,
+  nonce, signature: BytesN<64>, public_key: BytesN<32>)`. A FROST aggregate is
+  not larger than a single Ed25519 signature.
+- **Applies to delegated paths only.** `attest_by_delegation`,
+  `multi_attest_by_delegation`, `revoke_by_delegation`,
+  `multi_revoke_by_delegation`, and `verify_offchain_attestation` honor the
+  group. Direct entry points continue to use the attester address's own
+  `require_auth`.
+- **Fail closed on key mismatch.** A schema with a declared group never accepts
+  a participant key, even if that key is registered for the attester.
+- **Backward compatible.** Registries without `get_schema_frost_group` (or
+  schemas without a declaration) keep the single-signer behaviour.
 
 ## Resolver Callback Interface
 
@@ -256,6 +352,26 @@ Attestation identity derivation test cases:
 | (32-byte UID from above) | Account A | Account B | `0xDEADBEEF` | (SHA256 computation) |
 
 (Full vectors are in `contracts/sas/src/test.rs`.)
+
+### FROST Threshold Signature Test Vectors
+
+Aggregate signatures for a 2-of-3 and a 3-of-5 Ed25519 FROST group. Each valid
+vector verifies with a standard Ed25519 verifier under the listed group public
+key; the negative vectors combine fewer than `threshold` shares and MUST fail
+verification under the same key. The full table — group seeds, group public
+keys, participant public shares, signing sets, messages, and 64-byte signatures —
+is maintained in `packages/soroban-sas-common/test_vectors/frost_threshold.tsv`
+and exercised by `contracts/sas/src/frost_test.rs`.
+
+| Group | Signing set | Expected |
+|-------|-------------|----------|
+| 2-of-3 | shares 1, 3 | valid Ed25519 signature under `A` |
+| 3-of-5 | shares 1, 3, 5 | valid Ed25519 signature under `A` |
+| 2-of-3 | share 1 only | rejected (under threshold) |
+| 3-of-5 | shares 1, 2 only | rejected (under threshold) |
+
+The vectors are test-only key material and MUST NOT be used for production
+groups.
 
 ## Protocol Compatibility and Versioning
 

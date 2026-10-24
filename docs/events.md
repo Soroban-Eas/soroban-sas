@@ -227,6 +227,24 @@ Emitted by the schema registry on a successful `remove_delegate`.
 
 `remove_delegate` requires authorization from the primary schema owner (`authorizer`).
 
+## SchemaAttesterAdded
+
+Emitted by the schema registry when `add_authorized_attester` adds an address to a schema's attester access control list. It is not emitted when the address was already listed.
+
+- Topics: `("ATTADD", schema_uid: UID)`
+- Data: `SchemaAttesterAddedEvent { schema_uid: UID, attester: Address, authorizer: Address }`
+
+`add_authorized_attester` requires authorization from the primary schema owner (`authorizer`).
+
+## SchemaAttesterRemoved
+
+Emitted by the schema registry when `remove_authorized_attester` removes an address from a schema's attester access control list. It is not emitted when the address was not listed.
+
+- Topics: `("ATTREM", schema_uid: UID)`
+- Data: `SchemaAttesterRemovedEvent { schema_uid: UID, attester: Address, authorizer: Address }`
+
+`remove_authorized_attester` requires authorization from the primary schema owner (`authorizer`).
+
 ## AdminTransferProposed
 
 Emitted by the SAS contract on a successful `propose_admin`.

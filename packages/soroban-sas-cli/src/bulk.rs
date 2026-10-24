@@ -58,7 +58,7 @@ pub struct BulkRow {
 /// span lines. A lone `\r` outside quotes is treated as literal data, so a
 /// file written with old-Mac line endings is reported as one long record
 /// rather than silently accepted.
-fn split_records(input: &str) -> Result<Vec<(usize, Vec<String>)>, String> {
+pub(crate) fn split_records(input: &str) -> Result<Vec<(usize, Vec<String>)>, String> {
     let mut records: Vec<(usize, Vec<String>)> = Vec::new();
     let mut record: Vec<String> = Vec::new();
     let mut field = String::new();

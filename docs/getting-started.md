@@ -288,6 +288,8 @@ fn require_kyc(env: &Env, sas: &Address, uid: &UID, user: &Address, schema: &UID
 Remember to check `expiration_time` and `revocation_time` yourself. `verify_attestation`
 only tells you the attestation exists and hasn't been revoked.
 
+For a complete implementation of regulated token transfers with SAS compliance checks, perpetual and expiring certificates, and issuer revocation flows, see the [SEP-8 Regulated Assets Guide](guides/sep8-regulated-assets.md).
+
 ## 6. Query the indexer
 
 The indexer is optional. If you deployed it, you can look up attestations
@@ -347,6 +349,17 @@ Run `soroban-sas-cli config show` to print the effective configuration and
 which file it came from. See the [TOML Configuration File
 section](../README.md#toml-configuration-file) for the full schema
 and all keys.
+
+### Shell Completions
+
+Tab-completion for commands and flags can be generated for Bash, Zsh, Fish, and PowerShell:
+
+```bash
+cargo run -p soroban-sas-cli -- completions bash > ~/.local/share/bash-completion/completions/sas
+cargo run -p soroban-sas-cli -- completions zsh > ~/.zfunc/_sas
+cargo run -p soroban-sas-cli -- completions fish > ~/.config/fish/completions/sas.fish
+cargo run -p soroban-sas-cli -- completions powershell > ./sas.ps1
+```
 
 ## Next steps
 

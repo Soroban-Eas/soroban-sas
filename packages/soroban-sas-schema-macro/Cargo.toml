@@ -1,0 +1,15 @@
+[package]
+name = "soroban-sas-schema-macro"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+proc-macro = true
+test = false
+doctest = false
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

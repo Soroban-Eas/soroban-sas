@@ -8,6 +8,7 @@ use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
 
 fn bench_hash_uid(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let uid = UID(BytesN::from_array(&env, &[1u8; 32]));
 
     c.bench_function("hash_uid_32b", |b| {
@@ -24,6 +25,7 @@ fn bench_hash_uid(c: &mut Criterion) {
 
 fn bench_hash_domain(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let domain = AttestationDomain {
         network_id: BytesN::from_array(&env, &[2u8; 32]),
         contract: Address::generate(&env),
@@ -37,6 +39,7 @@ fn bench_hash_domain(c: &mut Criterion) {
 
 fn bench_hash_attestation(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let attestation = make_attestation(&env, 1024);
 
     c.bench_function("hash_attestation_struct_1kb", |b| {
@@ -46,6 +49,7 @@ fn bench_hash_attestation(c: &mut Criterion) {
 
 fn bench_hash_offchain(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let attestation = make_attestation(&env, 1024);
     let domain = AttestationDomain {
         network_id: BytesN::from_array(&env, &[3u8; 32]),
@@ -66,6 +70,7 @@ fn bench_hash_offchain(c: &mut Criterion) {
 
 fn bench_hash_delegated_revocation(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let uid = UID(BytesN::from_array(&env, &[4u8; 32]));
     let attester = Address::generate(&env);
     let domain = AttestationDomain {
@@ -88,6 +93,7 @@ fn bench_hash_delegated_revocation(c: &mut Criterion) {
 
 fn bench_payload_scaling(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let mut group = c.benchmark_group("attestation_hash_payload_scaling");
 
     for size in [64, 256, 1024, 4096, 16384] {
@@ -160,6 +166,7 @@ const RECEIPT: StructDef = StructDef {
 /// dependency walk plus every field name).
 fn bench_eip712_encode_type(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
 
     c.bench_function("eip712_encode_type_mail", |b| {
         b.iter(|| encode_type(black_box(&env), black_box(&MAIL_DEFS), black_box("Mail")))
@@ -170,6 +177,7 @@ fn bench_eip712_encode_type(c: &mut Criterion) {
 /// values: three keccaks plus the outer struct hash.
 fn bench_eip712_hash_struct_nested(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let values = mail_values();
 
     c.bench_function("eip712_hash_struct_mail", |b| {
@@ -188,6 +196,7 @@ fn bench_eip712_hash_struct_nested(c: &mut Criterion) {
 /// worst case for the per-element encoding loop.
 fn bench_eip712_hash_struct_array(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let elements = [FieldValue::from_u64(7); 64];
     let values = [
         FieldValue::Struct("Person", &PERSON_VALUES),
@@ -212,6 +221,7 @@ fn bench_eip712_hash_struct_array(c: &mut Criterion) {
 /// the prefix and domain separator concatenation.
 fn bench_eip712_hash_typed_data(c: &mut Criterion) {
     let env = Env::default();
+    env.budget().reset_unlimited();
     let values = mail_values();
     let domain_separator = BytesN::from_array(&env, &[9u8; 32]);
 

@@ -58,7 +58,7 @@
 //! ```
 
 use crate::Attestation;
-use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env};
+use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 /// Prefix distinguishing SAS off-chain payloads from other signed messages
 /// (analogous to EIP-191's `\x19\x01` prefix).
@@ -74,6 +74,26 @@ pub const ATTESTATION_TYPE_TAG: &[u8] =
 /// Type tag for a delegated revocation. This differs from the attestation
 /// tag so a signature for one action can never authorize the other.
 pub const DELEGATED_REVOCATION_TYPE_TAG: &[u8] = b"SorobanSAS DelegatedRevocation v1(uid,attester)";
+/// Both signers authorize exactly the same replacement and both nonce values.
+pub const DELEGATED_REPLACEMENT_CONSENT_TYPE_TAG: &[u8] = b"SorobanSAS DelegatedReplacementConsent v1(network_id,contract,attester_nonce,recipient_nonce,old_uid,new_attestation)";
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacementConsentDomain {
+    pub network_id: BytesN<32>,
+    pub contract: Address,
+    pub attester_nonce: u64,
+    pub recipient_nonce: u64,
+}
+
+/// One party's approval of a delegated replacement.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacementApproval {
+    pub nonce: u64,
+    pub signature: BytesN<64>,
+    pub public_key: BytesN<32>,
+}
 
 /// Domain separator binding a signature to one network, contract, and nonce.
 #[contracttype]
@@ -85,6 +105,36 @@ pub struct AttestationDomain {
     pub contract: Address,
     /// Issuer-chosen nonce; a signature is only valid for this exact value.
     pub nonce: u64,
+}
+
+/// Soroban's pinned testutils XDR encoder cannot derive Option<UID> fields
+/// inside contract types. This explicit variant encodes the same policy.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DelegationSchemaScope {
+    Any,
+    Only(crate::UID),
+}
+
+/// Scope, permissions and expiry explicitly signed by the issuer.
+/// Keeping these related fields in a single contract type also avoids
+/// argument-heavy generated client methods under strict Clippy.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegationAuthorization {
+    pub schema_scope: DelegationSchemaScope,
+    pub permissions: u32,
+    pub valid_until: u64,
+}
+
+/// EIP-712 domain separator structure for off-chain message signing.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Eip712Domain {
+    pub name: String,
+    pub version: String,
+    pub chain_id: BytesN<32>,
+    pub verifying_contract: Address,
 }
 
 /// Hashes the domain separator.
@@ -141,6 +191,39 @@ pub fn hash_offchain_attestation(
     env.crypto().sha256(&buf).into()
 }
 
+/// Separately domain-separated signed authorization for a schema-scoped
+/// delegated issuance (#527). A wildcard delegation sets `scope` to `None`.
+/// The signed digest commits to the exact attestation, schema scope, permission
+/// bitmask and expiry. Legacy signatures are deliberately not accepted here.
+pub fn hash_scoped_attestation(
+    env: &Env,
+    attestation: &Attestation,
+    domain: &AttestationDomain,
+    authorization: &DelegationAuthorization,
+) -> BytesN<32> {
+    let mut buf = Bytes::from_slice(env, b"SorobanSAS ScopedDelegation v1");
+    buf.append(&Bytes::from_slice(
+        env,
+        &hash_offchain_attestation(env, attestation, domain).to_array(),
+    ));
+    match &authorization.schema_scope {
+        DelegationSchemaScope::Only(schema) => {
+            buf.append(&Bytes::from_slice(env, &[1u8]));
+            buf.append(&Bytes::from_slice(env, &schema.0.to_array()));
+        }
+        DelegationSchemaScope::Any => buf.append(&Bytes::from_slice(env, &[0u8])),
+    }
+    buf.append(&Bytes::from_slice(
+        env,
+        &authorization.permissions.to_be_bytes(),
+    ));
+    buf.append(&Bytes::from_slice(
+        env,
+        &authorization.valid_until.to_be_bytes(),
+    ));
+    env.crypto().sha256(&buf).into()
+}
+
 /// Computes the digest for a delegated on-chain revocation. The domain binds
 /// the action to one network, one SAS contract, and one nonce; the body binds
 /// it to the exact attestation UID and its recorded attester.
@@ -157,6 +240,34 @@ pub fn hash_delegated_revocation(
     ));
     buf.append(&Bytes::from_slice(env, &uid.0.to_array()));
     buf.append(&attester.clone().to_xdr(env));
+    env.crypto().sha256(&buf).into()
+}
+
+/// SHA-256 typed digest signed independently by the attester and recipient.
+/// Integers are big-endian, the contract address is ScVal XDR, and the new
+/// attestation hash commits to every field including the data hash.
+pub fn hash_delegated_replacement_consent(
+    env: &Env,
+    old_uid: &crate::UID,
+    new_attestation: &Attestation,
+    domain: &ReplacementConsentDomain,
+) -> BytesN<32> {
+    let mut buf = Bytes::from_slice(env, DELEGATED_REPLACEMENT_CONSENT_TYPE_TAG);
+    buf.append(&Bytes::from_slice(env, &domain.network_id.to_array()));
+    buf.append(&domain.contract.clone().to_xdr(env));
+    buf.append(&Bytes::from_slice(
+        env,
+        &domain.attester_nonce.to_be_bytes(),
+    ));
+    buf.append(&Bytes::from_slice(
+        env,
+        &domain.recipient_nonce.to_be_bytes(),
+    ));
+    buf.append(&Bytes::from_slice(env, &old_uid.0.to_array()));
+    buf.append(&Bytes::from_slice(
+        env,
+        &hash_attestation_struct(env, new_attestation).to_array(),
+    ));
     env.crypto().sha256(&buf).into()
 }
 
@@ -181,16 +292,57 @@ pub fn hash_delegated_nonce_invalidation(
     env.crypto().sha256(&buf).into()
 }
 
+/// Ed25519 group order `L = 2^252 + 27742317777372353535851937790883648493`,
+/// encoded little-endian — the byte order the scalar `S` uses inside a
+/// 64-byte signature (`R || S`, each half 32 bytes).
+const ED25519_GROUP_ORDER_L_LE: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+];
+
+/// Returns `true` when the scalar `S` in the second half of a 64-byte ed25519
+/// signature is canonical, i.e. `S < L` where `L` is the prime order of the
+/// ed25519 group (#492).
+///
+/// Ed25519 signatures are malleable by construction unless this bound is
+/// enforced: for any valid `(R, S)` with `S < L`, the pair `(R, S + L)` (when
+/// it fits in 256 bits) verifies under a naive equation check, yielding two
+/// distinct valid byte encodings of "the same" signature. Canonical
+/// verification — including the Soroban host's `ed25519_verify`, which uses
+/// ed25519-dalek's `verify_strict` — rejects `S >= L`; this helper exposes
+/// the same predicate so callers (and the guard inside
+/// [`verify_offchain_signature`]) can enforce it explicitly and
+/// deterministically, independent of host behaviour.
+pub fn signature_scalar_is_canonical(signature: &BytesN<64>) -> bool {
+    // `S` is little-endian; compare big-endian interpretations so a plain
+    // lexicographic array compare matches numeric order.
+    let sig = signature.to_array();
+    let mut s_be: [u8; 32] = sig[32..].try_into().expect("S half is 32 bytes");
+    s_be.reverse();
+    let mut l_be = ED25519_GROUP_ORDER_L_LE;
+    l_be.reverse();
+    s_be < l_be
+}
+
 /// Verifies an ed25519 signature over a payload digest.
 ///
-/// Traps (host error) if the signature does not verify, matching the
-/// semantics of `Env::crypto().ed25519_verify`.
+/// Rejects non-canonical scalars (`S >= L`, the signature-malleability
+/// vector) with `SASError::InvalidSignature` *before* invoking the host, so
+/// malleated inputs fail closed with a typed error deterministically (#492).
+///
+/// For canonical inputs, traps (host error) if the signature does not verify,
+/// matching the semantics of `Env::crypto().ed25519_verify` (which uses
+/// ed25519-dalek `verify_strict` and additionally rejects weak keys and
+/// small-order components).
 pub fn verify_offchain_signature(
     env: &Env,
     payload_hash: &BytesN<32>,
     public_key: &BytesN<32>,
     signature: &BytesN<64>,
 ) {
+    if !signature_scalar_is_canonical(signature) {
+        env.panic_with_error(crate::SASError::InvalidSignature);
+    }
     let message = Bytes::from_slice(env, &payload_hash.to_array());
     env.crypto().ed25519_verify(public_key, &message, signature);
 }

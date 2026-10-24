@@ -6,6 +6,46 @@ This guide explains how to integrate with the SAS Schema Registry using the Inde
 
 The Soroban Attestation Service (SAS) stores attestation schemas in a Schema Registry contract. The Indexer contract provides efficient query capabilities to look up schemas and their associated attestations. This guide walks through the integration process.
 
+## SDK Schema Cache
+
+The Rust SDK can cache schema records (including negative lookups) in a
+thread-safe, bounded LRU cache. Fresh cache hits avoid an RPC call. When an
+entry expires, `SASClient::fetch_schema` returns the stale value immediately
+and starts one background refresh for that UID; refresh failures are available
+through the cache statistics.
+
+```rust
+use soroban_sas_sdk::{SASClient, SchemaCache};
+use std::time::Duration;
+
+let cache = SchemaCache::new(1_000, Duration::from_secs(300));
+let client = SASClient::new(client_id)
+    .with_rpc(rpc)
+    .with_registry(registry_id)
+    .with_schema_cache(cache.clone());
+
+let schema = client.fetch_schema(&schema_uid)?;
+let stats = cache.stats();
+```
+
+Cache instances should be scoped to the registry configured on the client.
+Registry event consumers should invalidate entries after processing trusted
+schema registration/update or deprecation events:
+
+```rust
+if let Ok(event) = soroban_sas_sdk::events::parse_contract_event(&contract_event) {
+    cache.invalidate_for_event(&event);
+}
+```
+
+Invalidation also prevents any older in-flight background refresh from
+repopulating that UID. `SchemaCache::stats` exposes hit, miss, expiration,
+eviction, and refresh counters.
+
+Run `cargo bench --bench schema_cache_benchmark` to compare cached hits with
+uncached lookups against a loopback RPC stub at 1, 4, and 16 concurrent
+workers. The benchmark does not contact a live network.
+
 ## Schema Registry Contract
 
 The Schema Registry stores schema definitions and maintains their metadata. Each schema has:
@@ -53,6 +93,20 @@ let attestations = indexer_client.get_atts_by_schema_paginated(
     limit     // maximum number of results
 );
 ```
+
+#### Checking Whether a UID Is Indexed
+
+```rust
+// One read of the UID's index record; no chunk is loaded
+let indexed = indexer_client.is_attestation_indexed(uid);
+```
+
+`is_attestation_indexed` reads the record `index_attestation` writes the
+first time it indexes a UID, so its cost does not depend on how many
+attestations a recipient, schema, or attester has. It returns `false` for a
+UID that was never indexed without creating storage, renews the instance TTL,
+and does not count toward the per-ledger query limit. Revoked and replaced
+UIDs stay indexed; read their state with `get_attestation_status`.
 
 #### Filtering Attestations
 
@@ -152,6 +206,16 @@ when new attestations are appended. Each call reads only the chunks touched
 by its page, including when it crosses a 100-UID chunk boundary. A zero limit,
 empty history, or out-of-range cursor returns an empty page.
 
+When you only need the single newest page, the `get_atts_by_recipient_recent`,
+`get_atts_by_schema_recent`, and `get_atts_by_attester_recent` reads take
+`(key, limit)` and return the newest `limit` UIDs, newest first, without a
+cursor. They are equivalent to the first reverse page. For an active-only
+view, `get_recipient_recent_filtered`, `get_schema_recent_filtered`, and
+`get_attester_recent_filtered` add an `include_revoked` flag: with `false`
+they skip revoked/replaced UIDs while walking backward, so the surviving
+entries stay in descending order even when the skip crosses a chunk boundary.
+All of these count toward the per-ledger query limit.
+
 ```rust
 let page_size = 50;
 let mut cursor = 0;
@@ -238,6 +302,7 @@ fn verify_attestations_for_schema(
 
 ### No Results from Queries
 - Verify the schema UID is correct
+- Check that a specific attestation was indexed at all using `is_attestation_indexed`
 - Check if attestations exist using `get_count_by_schema`
 - Ensure using active-only filter if revoked attestations shouldn't appear
 

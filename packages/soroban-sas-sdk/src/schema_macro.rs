@@ -115,6 +115,12 @@ mod tests {
     use crate::SchemaBuilder;
     use soroban_sdk::{Env, String};
 
+    #[crate::derive_schema("bool verified, uint64 score, string id")]
+    pub struct GeneratedClaim {}
+
+    #[crate::derive_schema("document_id BytesN<32>, flags u32")]
+    pub struct FixedClaim {}
+
     schema_to_struct! {
         pub struct KYCData {
             pub level: u32,
@@ -142,6 +148,40 @@ mod tests {
         let bytes = kyc.to_bytes(&env);
         let recovered = KYCData::from_bytes(&env, &bytes).expect("deserialization should succeed");
         assert_eq!(kyc, recovered);
+    }
+
+    #[test]
+    fn attribute_macro_generates_typed_payloads() {
+        let env = Env::default();
+        let claim = GeneratedClaim {
+            verified: true,
+            score: 42,
+            id: String::from_str(&env, "alice"),
+        };
+        assert_eq!(
+            GeneratedClaim::schema(),
+            "bool verified, uint64 score, string id"
+        );
+        let bytes = claim.to_bytes(&env);
+        let mut raw = vec![0; bytes.len() as usize];
+        bytes.copy_into_slice(&mut raw);
+        assert_eq!(
+            hex::encode(raw),
+            "0000001100000001000000030000000f00000002696400000000000e00000005616c6963650000000000000f0000000573636f726500000000000005000000000000002a0000000f0000000876657269666965640000000000000001"
+        );
+        assert_eq!(
+            GeneratedClaim::from_bytes(&env, &claim.to_bytes(&env)),
+            Ok(claim)
+        );
+
+        let fixed = FixedClaim {
+            document_id: soroban_sdk::BytesN::from_array(&env, &[7; 32]),
+            flags: 3,
+        };
+        assert_eq!(
+            FixedClaim::from_bytes(&env, &fixed.to_bytes(&env)),
+            Ok(fixed)
+        );
     }
 
     #[test]

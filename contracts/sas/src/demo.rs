@@ -32,6 +32,18 @@ mod noop_resolver {
     }
 }
 
+/// The canonical schema string the demo registers. Exposed so the explorer tooling
+/// (schema builder UI + code snippets) can reuse the exact same string and thus
+/// derive the identical `schema_uid`.
+const DEMO_SCHEMA: &str = "bool is_verified_human";
+
+/// Returns the canonical schema string used by the demo. This is the single
+/// source of truth for the demo schema and is used by the explorer's visual
+/// builder to produce a string matching protocol rules.
+pub fn demo_schema_string() -> &'static str {
+    DEMO_SCHEMA
+}
+
 #[test]
 fn demo_register_schema_then_attest_verify_and_revoke() {
     let env = Env::default();
@@ -59,10 +71,10 @@ fn demo_register_schema_then_attest_verify_and_revoke() {
     // --- Step 1: register a schema. This is the "shape of the claim" every
     // attestation issued under it will follow. ---
     let issuer = Address::generate(&env);
-    let schema_str = SorobanString::from_str(&env, "bool is_verified_human");
+    let schema_str = SorobanString::from_str(&env, demo_schema_string());
     let schema_uid = registry.register(&issuer, &schema_str, &resolver_id, &true);
 
-    println!("2. Registered schema \"bool is_verified_human\"");
+    println!("2. Registered schema \"{DEMO_SCHEMA}\"");
     println!("   schema_uid: {}\n", hex::encode(schema_uid.0.to_array()));
 
     // --- Step 2: schema owner authorizes a delegate. ---

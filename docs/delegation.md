@@ -1,8 +1,9 @@
-# Delegated Issuance
+# Delegated Issuance, Revocation, and Replacement
 
-Delegated issuance lets an issuer authorize an attestation or revocation with
-an off-chain ed25519 signature, then let another account submit and pay for the
-transaction. This keeps the issuer's signing key out of an online relayer. For
+Delegation lets an issuer authorize an attestation or revocation with an
+off-chain ed25519 signature, then let another account submit and pay for the
+transaction. Replacement can also require a recipient counter-signature.
+This keeps signing keys out of an online relayer. For
 example, an issuer can sign with a hardware-backed or offline key and hand the
 resulting JSON to an online service for submission.
 
@@ -11,7 +12,7 @@ attester account. Its secret seed only authorizes and funds the transaction.
 The SAS contract authenticates the requested action from the issuer's signed
 payload.
 
-This guide describes delegated on-chain issuance and revocation. For the
+This guide describes delegated on-chain issuance, revocation, and replacement. For the
 underlying off-chain attestation format and its stable byte layout, see
 [Off-Chain Attestations](offchain-attestations.md).
 
@@ -24,7 +25,9 @@ signature, and a 32-byte public key. The contract:
 2. Binds the supplied public key to `attestation.attester`. For a classic
    ed25519 account, the key must match the account address structurally. The
    contract also accepts the current non-revoked key stored by
-   `register_attester_key` or `rotate_attester_key`.
+   `register_attester_key` or `rotate_attester_key`. When the schema declares a
+   FROST group, only that group public key is accepted instead — see
+   [Threshold endorsement with FROST](#threshold-endorsement-with-frost).
 3. Constructs the signed `AttestationDomain` from the current network ID, the
    current SAS contract address, and the supplied nonce.
 4. Hashes the domain together with the signed attestation fields and verifies
@@ -54,12 +57,106 @@ SAS contract address, and nonce—but hashes a body containing the UID and
 recorded attester under `DELEGATED_REVOCATION_TYPE_TAG`. That tag is distinct
 from `ATTESTATION_TYPE_TAG`, and the two actions use different hash layouts.
 Consequently, a signature created for an attestation cannot authorize a
-revocation, or vice versa.
-
-After signature verification, the contract consumes the nonce for the recorded
+revocation, or vice versa.After signature verification, the contract consumes the nonce for the recorded
 attester and runs the normal revocation checks. The attestation must exist, be
 revocable, and not already be revoked.
 
+## Threshold endorsement with FROST
+
+Consortiums and decentralized identity groups often need several independent
+signing nodes to endorse one attestation. A schema can require a
+[FROST](https://datatracker.ietf.org/doc/draft-irtf-cfrg-frost/) threshold group
+instead of a single attester key:
+
+```rust
+// Schema owner or registry admin declares a 2-of-3 group.
+registry.set_schema_frost_group(
+    &owner,
+    &schema_uid,
+    &FrostGroup {
+        group_public_key, // aggregated Ed25519 key produced by the DKG
+        threshold: 2,
+        max_signers: 3,
+    },
+);
+```
+
+The group is stored beside the schema record (`get_schema_frost_group`), so the
+on-chain `SchemaRecord` layout is unchanged. Declaring or rotating a group emits
+`SchemaFrostGroupUpdated`; `clear_schema_frost_group` restores the ordinary
+single-key behaviour. Only a schema owner (creator or configured owner-set
+member) or the registry admin may change it.
+
+Once declared, every delegated path verifies against the group key and ignores
+the attester account key and any `register_attester_key` record for that schema:
+
+- `attest_by_delegation` and `multi_attest_by_delegation`
+- `revoke_by_delegation` and `multi_revoke_by_delegation`
+- `verify_offchain_attestation`
+
+A submitted public key that is not the declared group key fails with
+`SASError::Unauthorized`. There is no separate threshold argument: FROST
+aggregation outputs one ordinary 64-byte Ed25519 signature, so the call's
+calldata stays identical to a single-signer delegated attestation.
+
+Verification is plain Ed25519: `R || s` is checked against
+`A = group_public_key` over the usual SAS delegated digest. A ceremony that
+combined fewer than `threshold` shares does not produce a valid signature under
+`A`, so under-threshold aggregates fail the same way any bad signature does. The
+contract makes exactly one `ed25519_verify` call, the same cost as the
+single-key path; the `threshold`/`max_signers` metadata is advisory for clients
+and indexers.
+
+The group public key must be produced by a DKG (or a trusted dealer for test
+environments) so no single participant knows the group secret. Rotating the
+schema's group key immediately invalidates signatures made under the previous
+key. Test vectors for 2-of-3 and 3-of-5 groups live in
+`packages/soroban-sas-common/test_vectors/frost_threshold.tsv`.
+
+The direct (non-delegated) entry points `attest`, `multi_attest`,
+`attest_with_value`, and `replace_attestation` remain authorized by the
+attester address's own `require_auth`; a FROST declaration governs the
+*off-chain endorsement* paths. Consortiums that also want to gate direct
+issuance should make `attestation.attester` an address they control jointly
+(for example a contract or multisig account).
+
+## Delegated replacement with recipient consent
+
+`replace_by_delegation_consent` accepts an old UID, a complete replacement
+`Attestation`, and one `ReplacementApproval` from each party. Each approval
+contains a nonce, Ed25519 public key, and signature. The shorter name is required by Soroban's
+32-character contract function limit. The relayer pays for the transaction.
+
+Both parties sign the same SHA-256 digest:
+
+```text
+SorobanSAS DelegatedReplacementConsent v1(network_id,contract,attester_nonce,recipient_nonce,old_uid,new_attestation)
+|| network_id (32 bytes)
+|| contract (ScVal XDR)
+|| attester_nonce (u64 big-endian)
+|| recipient_nonce (u64 big-endian)
+|| old_uid (32 bytes)
+|| hash_attestation_struct(new_attestation) (32 bytes)
+```
+
+Use `hash_delegated_replacement_consent` and `ReplacementConsentDomain` from
+`soroban-sas-common` to construct this digest. The replacement hash binds the
+UID, schema, time, expiration, reference UID, recipient, attester, revocability,
+and SHA-256 of data. Like delegated issuance, `revocation_time` is excluded;
+the replacement must have zero revocation time. Both signatures bind both
+nonces, the old UID, and the full new claim. The contract checks each public
+key against its party's account address or that party's registered key.
+
+The attester nonce uses the same high-watermark as delegated issuance and
+revocation. Recipient consent has an independent high-watermark, readable via
+`get_recipient_consent_nonce(recipient)`. Each supplied nonce must exceed its
+stored value. The contract verifies both signatures and consumes both nonces
+in one atomic invocation, then uses the normal replacement path to revoke the
+old claim, issue the linked replacement, and notify the indexer. A failed
+signature, nonce check, or replacement rolls back both nonces and all state.
+
+Recipient consent only applies to this entrypoint; `replace_attestation`
+continues to support the existing direct attester-authorized path.
 ## Batch delegation
 
 Issuers that produce many signatures (for example an offline job that signs a
@@ -94,6 +191,17 @@ batch: no attestation is issued, no revocation is written, and no nonce is
 consumed. The batch's `BatchAttested` / `BatchRevoked` summary event is emitted
 only after every per-item event, so a consumer that sees the summary knows the
 whole batch committed.
+
+The Rust SDK's `delegation::DelegatedBatchSigner` can create batch signatures
+without an RPC client or network connection. It uses the same typed-data
+digest helper as contract verification and checks batch length, strictly
+increasing nonces, signer-to-attester binding, attestation UID, revocation
+timestamp, and payload size locally. Its `DelegatedBatchSignaturePacket`
+contains the matching attestations and parallel nonce, signature, public-key,
+and digest vectors, which can be passed to
+`SASClient::multi_attest_by_delegation`. `to_json` exports an offline relay
+packet with attestations as hex-encoded XDR and the signature material as
+lowercase hex.
 
 ## Nonce model and limitations
 

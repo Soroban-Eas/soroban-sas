@@ -1187,6 +1187,247 @@ fn test_delegate_endpoints_reject_unknown_schema() {
     assert!(!client.is_delegate(&fake_uid, &delegate));
     assert!(!client.is_authorized(&fake_uid, &delegate));
     assert_eq!(client.get_creator(&fake_uid), None);
+
+    let res_add_exp = client.try_add_delegate_with_expiry(&fake_uid, &delegate, &5000);
+    assert_eq!(
+        res_add_exp,
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into()))
+    );
+
+    let res_self_rev = client.try_self_revoke_delegate(&fake_uid, &delegate);
+    assert_eq!(
+        res_self_rev,
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into()))
+    );
+}
+
+#[test]
+fn test_add_delegate_with_expiry_and_timestamp_boundaries() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let delegate = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool verified");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    assert!(!client.is_delegate(&uid, &delegate));
+    assert!(!client.is_authorized(&uid, &delegate));
+    assert_eq!(client.get_delegate_expiry(&uid, &delegate), None);
+
+    let expiry: u64 = 5_000;
+    client.add_delegate_with_expiry(&uid, &delegate, &expiry);
+
+    // Verify SchemaDelegateAdded event was emitted
+    let events = env.events().all();
+    let expected_event = SchemaDelegateAddedEvent {
+        schema_uid: uid.clone(),
+        delegate: delegate.clone(),
+        authorizer: owner.clone(),
+    };
+    assert_eq!(
+        soroban_sdk::vec![&env, events.last().unwrap()],
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("DELADD"), uid.clone()).into_val(&env),
+                expected_event.into_val(&env),
+            )
+        ]
+    );
+
+    assert_eq!(client.get_delegate_expiry(&uid, &delegate), Some(5_000));
+
+    // Boundary condition 1: timestamp < expiry (within validity window)
+    env.ledger().with_mut(|li| li.timestamp = 4_999);
+    assert!(client.is_delegate(&uid, &delegate));
+    assert!(client.is_authorized(&uid, &delegate));
+    let status_active = client.get_delegates(&uid);
+    assert_eq!(status_active.active.len(), 1);
+    assert_eq!(status_active.active.get(0).unwrap(), delegate);
+    assert_eq!(status_active.expired.len(), 0);
+
+    // Boundary condition 2: timestamp == expiry (exact boundary, rejected as unauthorized)
+    env.ledger().with_mut(|li| li.timestamp = 5_000);
+    assert!(!client.is_delegate(&uid, &delegate));
+    assert!(!client.is_authorized(&uid, &delegate));
+    let status_exact = client.get_delegates(&uid);
+    assert_eq!(status_exact.active.len(), 0);
+    assert_eq!(status_exact.expired.len(), 1);
+    assert_eq!(status_exact.expired.get(0).unwrap(), delegate);
+
+    // Boundary condition 3: timestamp > expiry (past expiration, rejected as unauthorized)
+    env.ledger().with_mut(|li| li.timestamp = 5_001);
+    assert!(!client.is_delegate(&uid, &delegate));
+    assert!(!client.is_authorized(&uid, &delegate));
+    let status_past = client.get_delegates(&uid);
+    assert_eq!(status_past.active.len(), 0);
+    assert_eq!(status_past.expired.len(), 1);
+    assert_eq!(status_past.expired.get(0).unwrap(), delegate);
+}
+
+#[test]
+fn test_delegate_self_revocation_removes_permissions_immediately() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let delegate = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool verified");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+    client.add_delegate_with_expiry(&uid, &delegate, &10_000);
+
+    assert!(client.is_delegate(&uid, &delegate));
+    assert!(client.is_authorized(&uid, &delegate));
+    assert_eq!(client.get_delegates(&uid).active.len(), 1);
+
+    // Delegate self-revokes permissions
+    client.self_revoke_delegate(&uid, &delegate);
+
+    // Permissions removed immediately
+    assert!(!client.is_delegate(&uid, &delegate));
+    assert!(!client.is_authorized(&uid, &delegate));
+    assert_eq!(client.get_delegate_expiry(&uid, &delegate), None);
+
+    let status = client.get_delegates(&uid);
+    assert_eq!(status.active.len(), 0);
+    assert_eq!(status.expired.len(), 0);
+
+    // Verify SchemaDelegateRemoved event was emitted with authorizer == delegate
+    let events = env.events().all();
+    let expected_removed_event = SchemaDelegateRemovedEvent {
+        schema_uid: uid.clone(),
+        delegate: delegate.clone(),
+        authorizer: delegate.clone(),
+    };
+    assert_eq!(
+        soroban_sdk::vec![&env, events.last().unwrap()],
+        soroban_sdk::vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("DELREM"), uid.clone()).into_val(&env),
+                expected_removed_event.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_query_active_vs_expired_delegates() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let delegate_perpetual = Address::generate(&env);
+    let delegate_long = Address::generate(&env);
+    let delegate_short = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool verified");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    client.add_delegate(&uid, &delegate_perpetual);
+    client.add_delegate_with_expiry(&uid, &delegate_long, &10_000);
+    client.add_delegate_with_expiry(&uid, &delegate_short, &4_000);
+
+    // At time 2_000: all 3 delegates are active
+    env.ledger().with_mut(|li| li.timestamp = 2_000);
+    let status_t2000 = client.get_delegates(&uid);
+    assert_eq!(status_t2000.active.len(), 3);
+    assert_eq!(status_t2000.expired.len(), 0);
+
+    let (active_tuple, expired_tuple) = client.get_delegates_tuple(&uid);
+    assert_eq!(active_tuple.len(), 3);
+    assert_eq!(expired_tuple.len(), 0);
+
+    // At time 6_000: delegate_short is expired, others are active
+    env.ledger().with_mut(|li| li.timestamp = 6_000);
+    let status_t6000 = client.get_delegates(&uid);
+    assert_eq!(status_t6000.active.len(), 2);
+    assert_eq!(status_t6000.expired.len(), 1);
+    assert_eq!(status_t6000.expired.get(0).unwrap(), delegate_short);
+
+    assert!(client.is_authorized(&uid, &delegate_perpetual));
+    assert!(client.is_authorized(&uid, &delegate_long));
+    assert!(!client.is_authorized(&uid, &delegate_short));
+
+    // At time 15_000: delegate_long is also expired, only delegate_perpetual is active
+    env.ledger().with_mut(|li| li.timestamp = 15_000);
+    let status_t15000 = client.get_delegates(&uid);
+    assert_eq!(status_t15000.active.len(), 1);
+    assert_eq!(status_t15000.active.get(0).unwrap(), delegate_perpetual);
+    assert_eq!(status_t15000.expired.len(), 2);
+
+    assert!(client.is_authorized(&uid, &delegate_perpetual));
+    assert!(!client.is_authorized(&uid, &delegate_long));
+    assert!(!client.is_authorized(&uid, &delegate_short));
+
+    // delegate_short self-revokes: removed completely from status
+    client.self_revoke_delegate(&uid, &delegate_short);
+    let status_after_revoke = client.get_delegates(&uid);
+    assert_eq!(status_after_revoke.active.len(), 1);
+    assert_eq!(status_after_revoke.expired.len(), 1);
+    assert_eq!(status_after_revoke.expired.get(0).unwrap(), delegate_long);
+
+    // Owner removes delegate_perpetual: active becomes empty
+    client.remove_delegate(&uid, &delegate_perpetual);
+    let status_final = client.get_delegates(&uid);
+    assert_eq!(status_final.active.len(), 0);
+    assert_eq!(status_final.expired.len(), 1);
+}
+
+#[test]
+fn test_delegate_expiry_extension_and_perpetual_conversion() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let delegate = Address::generate(&env);
+    let schema_str = String::from_str(&env, "bool verified");
+    let resolver = Address::generate(&env);
+
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let uid = client.register(&owner, &schema_str, &resolver, &true);
+
+    // Add with expiry 5_000
+    client.add_delegate_with_expiry(&uid, &delegate, &5_000);
+    assert_eq!(client.get_delegate_expiry(&uid, &delegate), Some(5_000));
+
+    // Extend to 15_000
+    client.add_delegate_with_expiry(&uid, &delegate, &15_000);
+    assert_eq!(client.get_delegate_expiry(&uid, &delegate), Some(15_000));
+
+    env.ledger().with_mut(|li| li.timestamp = 8_000);
+    assert!(client.is_authorized(&uid, &delegate));
+
+    // Convert to perpetual via add_delegate
+    client.add_delegate(&uid, &delegate);
+    assert_eq!(client.get_delegate_expiry(&uid, &delegate), None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_000);
+    assert!(client.is_authorized(&uid, &delegate));
+    assert!(client.is_delegate(&uid, &delegate));
 }
 
 #[test]
@@ -1513,6 +1754,175 @@ fn test_schema_revocation_policy_registration_and_get() {
     );
 }
 
+#[test]
+fn test_schema_frost_group_declaration_roundtrip_and_event() {
+    use soroban_sas_common::{FrostGroup, SchemaFrostGroupUpdatedEvent, MAX_FROST_SIGNERS};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    env.mock_all_auths();
+
+    let uid = client.register(
+        &owner,
+        &String::from_str(&env, "bool consortium_endorsed"),
+        &resolver,
+        &true,
+    );
+    assert_eq!(client.get_schema_frost_group(&uid), None);
+
+    let group = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[0x11; 32]),
+        threshold: 2,
+        max_signers: 3,
+    };
+    client.set_schema_frost_group(&owner, &uid, &group);
+    assert_eq!(client.get_schema_frost_group(&uid), Some(group.clone()));
+
+    let expected = SchemaFrostGroupUpdatedEvent {
+        schema_uid: uid.clone(),
+        authorizer: owner.clone(),
+        enabled: true,
+        group_public_key: group.group_public_key.clone(),
+        threshold: group.threshold,
+        max_signers: group.max_signers,
+    };
+    assert!(
+        env.events().all().contains((
+            contract_id.clone(),
+            (symbol_short!("FROSTGRP"), uid.clone()).into_val(&env),
+            expected.into_val(&env),
+        )),
+        "declaring a group must emit SchemaFrostGroupUpdated"
+    );
+
+    // Rotation replaces the key immediately; delegated signatures made under
+    // the old group stop verifying.
+    let rotated = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[0x22; 32]),
+        threshold: 3,
+        max_signers: MAX_FROST_SIGNERS,
+    };
+    client.set_schema_frost_group(&owner, &uid, &rotated);
+    assert_eq!(client.get_schema_frost_group(&uid), Some(rotated));
+
+    client.clear_schema_frost_group(&owner, &uid);
+    assert_eq!(client.get_schema_frost_group(&uid), None);
+}
+
+#[test]
+fn test_schema_frost_group_rejects_invalid_configurations() {
+    use soroban_sas_common::{FrostGroup, SASError, MAX_FROST_SIGNERS};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    env.mock_all_auths();
+
+    let uid = client.register(
+        &owner,
+        &String::from_str(&env, "bool threshold_rejected"),
+        &resolver,
+        &true,
+    );
+
+    let key = BytesN::from_array(&env, &[7u8; 32]);
+    let threshold_one = FrostGroup {
+        group_public_key: key.clone(),
+        threshold: 1,
+        max_signers: 3,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &threshold_one),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    let unreachable = FrostGroup {
+        group_public_key: key.clone(),
+        threshold: 4,
+        max_signers: 3,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &unreachable),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    let oversized = FrostGroup {
+        group_public_key: key.clone(),
+        threshold: 2,
+        max_signers: MAX_FROST_SIGNERS + 1,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &oversized),
+        Err(Ok(SASError::LimitExceeded.into()))
+    );
+
+    let zero_key = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[0u8; 32]),
+        threshold: 2,
+        max_signers: 3,
+    };
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &uid, &zero_key),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+
+    assert_eq!(client.get_schema_frost_group(&uid), None);
+}
+
+#[test]
+fn test_schema_frost_group_requires_owner_or_admin_and_known_schema() {
+    use soroban_sas_common::{FrostGroup, SASError};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.init(&admin);
+    let uid = client.register(
+        &owner,
+        &String::from_str(&env, "bool owner_gated"),
+        &resolver,
+        &true,
+    );
+    let group = FrostGroup {
+        group_public_key: BytesN::from_array(&env, &[9u8; 32]),
+        threshold: 2,
+        max_signers: 3,
+    };
+
+    assert_eq!(
+        client.try_set_schema_frost_group(&stranger, &uid, &group),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
+    assert_eq!(
+        client.try_clear_schema_frost_group(&stranger, &uid),
+        Err(Ok(SASError::Unauthorized.into()))
+    );
+
+    // The registry admin may also govern the declaration.
+    client.set_schema_frost_group(&admin, &uid, &group);
+    assert_eq!(client.get_schema_frost_group(&uid), Some(group.clone()));
+
+    let unknown = soroban_sas_common::UID(BytesN::from_array(&env, &[0x42u8; 32]));
+    assert_eq!(
+        client.try_set_schema_frost_group(&owner, &unknown, &group),
+        Err(Ok(SASError::SchemaNotFound.into()))
+    );
+}
+
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
@@ -1669,4 +2079,147 @@ mod snapshot_tests {
         assert_eq!(client.get_max_ttl(&uid), 0);
         assert_eq!(client.get_schema_max_ttl(&uid), 0);
     }
+}
+
+#[test]
+fn test_schema_migration_append_only_lineage_and_legacy_compatibility() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let registry = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &registry);
+    let owner = Address::generate(&env);
+    let next_owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+
+    let genesis = client.register(
+        &owner,
+        &String::from_str(&env, "name string"),
+        &resolver,
+        &true,
+    );
+    assert_eq!(client.get_schema_predecessor(&genesis), None);
+    assert_eq!(
+        client.get_schema_history(&genesis),
+        soroban_sdk::vec![&env, genesis.clone()]
+    );
+
+    let second = client.register_with_predecessor(
+        &next_owner,
+        &String::from_str(&env, "name string, age u32"),
+        &resolver,
+        &true,
+        &genesis,
+    );
+    assert_eq!(
+        client.get_schema_predecessor(&second),
+        Some(genesis.clone())
+    );
+    assert_eq!(
+        client.get_schema_history(&second),
+        soroban_sdk::vec![&env, second.clone(), genesis.clone()],
+    );
+
+    let third = client.register_with_predecessor(
+        &next_owner,
+        &String::from_str(&env, "name string, age u32, active bool"),
+        &resolver,
+        &true,
+        &second,
+    );
+    assert_eq!(
+        client.get_schema_history(&third),
+        soroban_sdk::vec![&env, third.clone(), second.clone(), genesis.clone()],
+    );
+    assert_eq!(
+        client.get_schema(&genesis).unwrap().schema,
+        String::from_str(&env, "name string")
+    );
+    assert_eq!(
+        client.get_schema(&third).unwrap().schema,
+        String::from_str(&env, "name string, age u32, active bool"),
+    );
+}
+
+#[test]
+fn test_schema_migration_rejects_field_mutation_deletion_and_unknown_parent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let registry = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &registry);
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let genesis = client.register(
+        &owner,
+        &String::from_str(&env, "name string, age u32"),
+        &resolver,
+        &true,
+    );
+    for candidate in [
+        "name bytes, age u32, extra bool",
+        "name string",
+        "age u32, name string, extra bool",
+        "name string, age i128",
+    ] {
+        assert_eq!(
+            client.try_register_with_predecessor(
+                &owner,
+                &String::from_str(&env, candidate),
+                &resolver,
+                &true,
+                &genesis,
+            ),
+            Err(Ok(
+                soroban_sas_common::SASError::InvalidSchemaDefinition.into()
+            )),
+        );
+    }
+    let missing = soroban_sas_common::UID(BytesN::from_array(&env, &[0x71; 32]));
+    assert_eq!(
+        client.try_register_with_predecessor(
+            &owner,
+            &String::from_str(&env, "name string, age u32, extra bool"),
+            &resolver,
+            &true,
+            &missing,
+        ),
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into())),
+    );
+    assert_eq!(
+        client.try_get_schema_history(&missing),
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into())),
+    );
+}
+
+#[test]
+fn test_schema_migration_requires_predecessor_owner_signature() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let registry = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &registry);
+    let owner = Address::generate(&env);
+    let derivative_owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let genesis = client.register(
+        &owner,
+        &String::from_str(&env, "name string"),
+        &resolver,
+        &true,
+    );
+
+    // Neither the new owner nor a relayer may migrate the original
+    // without the predecessor's actual authorization.
+    env.set_auths(&[]);
+    assert!(client
+        .try_register_with_predecessor(
+            &derivative_owner,
+            &String::from_str(&env, "name string, age u32"),
+            &resolver,
+            &true,
+            &genesis,
+        )
+        .is_err());
+    assert_eq!(
+        client.get_schema_history(&genesis),
+        soroban_sdk::vec![&env, genesis.clone()]
+    );
 }

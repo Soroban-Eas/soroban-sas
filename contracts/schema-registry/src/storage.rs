@@ -34,6 +34,24 @@ pub const UPGRADE_EVENT: Symbol = symbol_short!("UPGRADE");
 /// Stored under `(AUTHORIZED_DELEGATES, schema_uid, delegate_address) -> bool`.
 pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");
 
+/// Storage key for a schema's attester access control list (#443).
+/// Stored under `(SCHEMA_ACL, schema_uid, attester) -> bool`. A schema whose
+/// list is empty is not restricted by it.
+pub const SCHEMA_ACL: Symbol = symbol_short!("ACL");
+
+/// Number of attesters currently on a schema's access control list (#443).
+/// Stored under `(SCHEMA_ACL_COUNT, schema_uid) -> u32` and removed when the
+/// last attester is removed, so its presence means "restricted".
+pub const SCHEMA_ACL_COUNT: Symbol = symbol_short!("ACLCOUNT");
+
+/// Storage key for delegate expiration timestamps.
+/// Stored under `(DELEGATE_EXPIRY, schema_uid, delegate_address) -> u64`.
+pub const DELEGATE_EXPIRY: Symbol = symbol_short!("DELEXP");
+
+/// Storage key for schema delegate lists.
+/// Stored under `(SCHEMA_DELEGATES, schema_uid) -> Vec<Address>`.
+pub const SCHEMA_DELEGATES: Symbol = symbol_short!("SCH_DEL");
+
 /// Storage key for a schema's multi-signature owner set (#288).
 /// Stored under `(SCHEMA_OWNERS, schema_uid) -> OwnerSet`.
 pub const SCHEMA_OWNERS: Symbol = symbol_short!("OWNERS");
@@ -45,6 +63,25 @@ pub const PENDING_SCHEMA_OWNER: Symbol = symbol_short!("PEND_OWN");
 /// Storage key for the schema revocation policy (#448).
 /// Stored under `(SCHEMA_POLICY, schema_uid) -> RevocationPolicy`.
 pub const SCHEMA_POLICY: Symbol = symbol_short!("POLICY");
+/// Creator royalty in basis points (#538). `(SCHEMA_ROYALTY, uid) -> u32`.
+/// Absent means 0: the whole attestation fee goes to the protocol treasury.
+pub const SCHEMA_ROYALTY: Symbol = symbol_short!("ROYALTY");
+/// Quarantine flag (#539). `(SCHEMA_QUARANTINE, uid) -> bool`.
+pub const SCHEMA_QUARANTINE: Symbol = symbol_short!("QUAR");
+/// Explanation URI recorded with the latest quarantine toggle (#539).
+pub const SCHEMA_QUARANTINE_URI: Symbol = symbol_short!("QUARURI");
+
+/// Storage key for a schema's required FROST threshold signing group (#534).
+/// Stored under `(FROST_GROUP, schema_uid) -> FrostGroup`. Kept beside the
+/// schema record rather than inside it so `SchemaRecord`'s XDR layout remains
+/// byte-stable for existing deployments.
+pub const FROST_GROUP: Symbol = symbol_short!("FROSTGRP");
+
+/// Storage key for a schema's required Merkle root (#529).
+/// Stored under `(MERKLE_ROOT, schema_uid) -> BytesN<32>`. Kept beside the
+/// schema record rather than inside it so `SchemaRecord`'s XDR layout remains
+/// byte-stable for existing deployments.
+pub const MERKLE_ROOT: Symbol = symbol_short!("MERKROOT");
 
 /// Storage key for the in-flight multi-signature ownership transfer.
 /// Stored under `(PENDING_OWNERSHIP, schema_uid) -> PendingOwnershipTransfer`
@@ -76,3 +113,23 @@ pub const SCHEMA_OWNER_TRANSFER_CANCELLED: Symbol = symbol_short!("OWNCANC");
 /// cost of every approval scan so a hostile configuration cannot make owner
 /// checks unbounded.
 pub const MAX_OWNER_SET: u32 = 10;
+
+/// Storage key for a schema's metadata URI (#444).
+/// Stored under `(SCHEMA_METADATA_URI, uid) -> String`.
+pub const SCHEMA_METADATA_URI: Symbol = symbol_short!("METAURI");
+
+/// Maximum character/byte length allowed for a schema's metadata URI (#444).
+pub const MAX_METADATA_URI_LENGTH: u32 = 256;
+
+/// Maximum number of schemas allowed in a single `register_schemas_batch` call (#445).
+pub const MAX_SCHEMA_BATCH_SIZE: u32 = 50;
+
+/// (CATEGORY_COUNT, category) -> number of registrations within a namespace.
+pub const CATEGORY_COUNT: Symbol = symbol_short!("CATCOUNT");
+/// (CATEGORY_INDEX, category, offset) -> schema UID (append-only index).
+pub const CATEGORY_INDEX: Symbol = symbol_short!("CATINDEX");
+/// (SCHEMA_CATEGORY, uid) -> optional category kept apart from SchemaRecord.
+pub const SCHEMA_CATEGORY: Symbol = symbol_short!("CATSCHEMA");
+/// Version lineage: (SCHEMA_PREDECESSOR, derivative_uid) -> predecessor_uid.
+/// Separate from SchemaRecord to retain its frozen XDR layout.
+pub const SCHEMA_PREDECESSOR: Symbol = symbol_short!("PREDSCHE");

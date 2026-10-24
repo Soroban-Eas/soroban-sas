@@ -314,7 +314,12 @@ fn test_attestation_builder_valid_recipient_regression() {
 /// Answers one JSON-RPC request on `stream` with a canned Soroban RPC
 /// response. `account_entry_xdr` and `transaction_data_xdr` are the base64
 /// XDR payloads the account-lookup and simulation steps need.
-fn serve_rpc(stream: TcpStream, account_entry_xdr: &str, transaction_data_xdr: &str) {
+fn serve_rpc(
+    stream: TcpStream,
+    account_entry_xdr: &str,
+    transaction_data_xdr: &str,
+    _envelope_xdr: &str,
+) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
@@ -445,6 +450,24 @@ fn test_attestation_builder_attestation_is_accepted_by_sas_client_attest() {
     };
     let transaction_data_xdr = transaction_data.to_xdr_base64(Limits::none()).unwrap();
 
+    // A well-formed V1 `TransactionEnvelope` for the mock `getTransaction`
+    // response, so the client's envelope-variant validation decodes it
+    // successfully and accepts it (the only variant the SDK supports).
+    let envelope_xdr = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx: Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256(public_key)),
+            fee: 100,
+            seq_num: SequenceNumber(8),
+            cond: Preconditions::None,
+            memo: Memo::None,
+            operations: VecM::default(),
+            ext: TransactionExt::V0,
+        },
+        signatures: VecM::default(),
+    })
+    .to_xdr_base64(Limits::none())
+    .unwrap();
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
@@ -454,7 +477,12 @@ fn test_attestation_builder_attestation_is_accepted_by_sas_client_attest() {
         // process exits; nothing joins this thread.
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => serve_rpc(stream, &account_entry_xdr, &transaction_data_xdr),
+                Ok(stream) => serve_rpc(
+                    stream,
+                    &account_entry_xdr,
+                    &transaction_data_xdr,
+                    &envelope_xdr,
+                ),
                 Err(_) => break,
             }
         }
@@ -940,7 +968,7 @@ fn concurrent_reservations_via_the_manager_get_distinct_sequences() {
     let server = std::thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => serve_rpc(stream, &account_entry_xdr, ""),
+                Ok(stream) => serve_rpc(stream, &account_entry_xdr, "", ""),
                 Err(_) => break,
             }
         }
@@ -1111,4 +1139,169 @@ fn test_consistent_enum_serialization() {
         serde_json::from_str::<IssuanceTimeError>(&stale_json).unwrap(),
         stale
     );
+}
+
+#[test]
+fn test_auth_entry_builder_ed25519_and_secp256k1_signatures() {
+    let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([2u8; 32]).to_string();
+
+    let ed_pk = [3u8; 32];
+    let ed_sig = [4u8; 64];
+
+    let secp_pk = [5u8; 33];
+    let secp_sig = [6u8; 65];
+
+    let entry = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_nonce(42)
+        .with_signature_expiration_ledger(1000)
+        .with_threshold(2)
+        .with_root_invocation(&contract_id, "attest", vec![])
+        .unwrap()
+        .add_ed25519_signature(&ed_pk, &ed_sig)
+        .unwrap()
+        .add_secp256k1_signature(&secp_pk, &secp_sig)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let soroban_sdk::xdr::SorobanCredentials::Address(ref creds) = entry.credentials else {
+        panic!("expected Address credentials");
+    };
+    assert_eq!(creds.nonce, 42);
+    assert_eq!(creds.signature_expiration_ledger, 1000);
+    assert_eq!(
+        creds.address,
+        soroban_sdk::xdr::ScAddress::Account(soroban_sdk::xdr::AccountId(
+            soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(soroban_sdk::xdr::Uint256([2u8; 32]))
+        ))
+    );
+}
+
+#[test]
+fn test_auth_entry_builder_mismatched_signature_lengths_rejected() {
+    let ed_pk = [1u8; 32];
+    let invalid_ed_sig = [2u8; 63]; // Not 64 bytes
+
+    let res = crate::auth::AuthEntryBuilder::new().add_ed25519_signature(&ed_pk, &invalid_ed_sig);
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(matches!(err, crate::errors::SdkError::ValidationError(_)));
+
+    let secp_pk = [3u8; 33];
+    let invalid_secp_sig = [4u8; 63]; // Not 64 or 65 bytes
+    let res =
+        crate::auth::AuthEntryBuilder::new().add_secp256k1_signature(&secp_pk, &invalid_secp_sig);
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(matches!(err, crate::errors::SdkError::ValidationError(_)));
+}
+
+#[test]
+fn test_auth_entry_builder_threshold_validation() {
+    let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([2u8; 32]).to_string();
+
+    let ed_pk = [3u8; 32];
+    let ed_sig = [4u8; 64];
+
+    // Threshold of 2 with only 1 signature should fail
+    let res = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_threshold(2)
+        .with_root_invocation(&contract_id, "attest", vec![])
+        .unwrap()
+        .add_ed25519_signature_with_weight(&ed_pk, &ed_sig, 1)
+        .unwrap()
+        .build();
+
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(matches!(err, crate::errors::SdkError::ValidationError(_)));
+
+    // Threshold of 2 with weight of 2 should succeed
+    let res = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_threshold(2)
+        .with_root_invocation(&contract_id, "attest", vec![])
+        .unwrap()
+        .add_ed25519_signature_with_weight(&ed_pk, &ed_sig, 2)
+        .unwrap()
+        .build();
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_auth_entry_canonical_sorting_and_validation() {
+    let contract_id1 = stellar_strkey::Contract([1u8; 32]).to_string();
+    let contract_id2 = stellar_strkey::Contract([2u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([3u8; 32]).to_string();
+
+    let entry1 = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_root_invocation(&contract_id1, "fn1", vec![])
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let entry2 = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_root_invocation(&contract_id2, "fn2", vec![])
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let mut entries = vec![entry2.clone(), entry1.clone()];
+    // If unsorted, validate_canonical_order should fail if entry2 > entry1
+    if entry2 > entry1 {
+        assert!(crate::auth::AuthEntryBuilder::validate_canonical_order(&entries).is_err());
+        crate::auth::AuthEntryBuilder::canonical_sort(&mut entries);
+        assert!(crate::auth::AuthEntryBuilder::validate_canonical_order(&entries).is_ok());
+    }
+
+    let assembled = crate::auth::AuthEntryBuilder::assemble_entries(vec![entry2, entry1]).unwrap();
+    assert_eq!(assembled.len(), 2);
+    assert!(crate::auth::AuthEntryBuilder::is_canonically_sorted(
+        &assembled
+    ));
+}
+
+#[test]
+fn test_authorization_tree_generation() {
+    let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([2u8; 32]).to_string();
+
+    let sub_invocation = soroban_sdk::xdr::SorobanAuthorizedInvocation {
+        function: soroban_sdk::xdr::SorobanAuthorizedFunction::ContractFn(
+            soroban_sdk::xdr::InvokeContractArgs {
+                contract_address: soroban_sdk::xdr::ScAddress::Contract(soroban_sdk::xdr::Hash(
+                    [9u8; 32],
+                )),
+                function_name: soroban_sdk::xdr::ScSymbol(
+                    soroban_sdk::xdr::StringM::try_from(b"sub_call".to_vec()).unwrap(),
+                ),
+                args: soroban_sdk::xdr::VecM::default(),
+            },
+        ),
+        sub_invocations: soroban_sdk::xdr::VecM::default(),
+    };
+
+    let entry = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_root_invocation(&contract_id, "parent_call", vec![])
+        .unwrap()
+        .add_sub_invocation(sub_invocation.clone())
+        .build()
+        .unwrap();
+
+    assert_eq!(entry.root_invocation.sub_invocations.len(), 1);
+    assert_eq!(entry.root_invocation.sub_invocations[0], sub_invocation);
 }

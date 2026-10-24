@@ -169,6 +169,8 @@ pub fn extract_contract_error_code(error: &str) -> Option<u32> {
         (203, "notrevocable"),
         (204, "alreadyexpired"),
         (205, "duplicateattestation"),
+        // Must precede "unauthorized": it is a substring of this keyword.
+        (304, "unauthorizedattester"),
         (301, "unauthorized"),
         (302, "invalidsignature"),
         (303, "delegationreplay"),
@@ -208,4 +210,29 @@ pub fn extract_contract_error_code(error: &str) -> Option<u32> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod acl_error_code_tests {
+    use super::extract_contract_error_code;
+
+    #[test]
+    fn unauthorized_attester_is_distinct_from_unauthorized() {
+        assert_eq!(
+            extract_contract_error_code("HostError: UnauthorizedAttester"),
+            Some(304)
+        );
+        assert_eq!(
+            extract_contract_error_code("HostError: Unauthorized"),
+            Some(301)
+        );
+    }
+
+    #[test]
+    fn numeric_unauthorized_attester_code_is_recognised() {
+        assert_eq!(
+            extract_contract_error_code("HostError: Error(304, UnauthorizedAttester)"),
+            Some(304)
+        );
+    }
 }

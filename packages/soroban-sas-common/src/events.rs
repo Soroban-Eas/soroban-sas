@@ -5,7 +5,7 @@
 //! attestation graph without reading contract storage.
 
 use crate::UID;
-use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, BytesN, String, Symbol};
 
 /// First topic of every `AttestationIssued` event.
 pub const ATTESTED: Symbol = symbol_short!("ATTESTED");
@@ -31,6 +31,10 @@ pub const CONTRACT_UPGRADED: Symbol = symbol_short!("UPGRADED");
 pub const SCHEMA_DELEGATE_ADDED: Symbol = symbol_short!("DELADD");
 /// First topic of every `SchemaDelegateRemoved` event.
 pub const SCHEMA_DELEGATE_REMOVED: Symbol = symbol_short!("DELREM");
+/// First topic of every `SchemaAttesterAdded` event (#443).
+pub const SCHEMA_ATTESTER_ADDED: Symbol = symbol_short!("ATTADD");
+/// First topic of every `SchemaAttesterRemoved` event (#443).
+pub const SCHEMA_ATTESTER_REMOVED: Symbol = symbol_short!("ATTREM");
 /// First topic of every `AdminTransferProposed` event.
 pub const ADMIN_TRANSFER_PROPOSED: Symbol = symbol_short!("ADMPROP");
 /// First topic of every `AdminTransferCompleted` event.
@@ -39,6 +43,8 @@ pub const ADMIN_TRANSFER_COMPLETED: Symbol = symbol_short!("ADMCOMP");
 pub const SCHEMA_OWNERSHIP_TRANSFERRED: Symbol = symbol_short!("SCHOWN");
 /// First topic of every `SchemaOwnershipProposed` event (#446).
 pub const SCHEMA_OWNERSHIP_PROPOSED: Symbol = symbol_short!("SCHPROP");
+/// First topic of every `SchemaOwnershipTransferCancelled` event (#446).
+pub const SCHEMA_OWNERSHIP_CANCELLED: Symbol = symbol_short!("SCHCANC");
 /// First topic of every `NoncesInvalidated` event (#437).
 pub const NONCES_INVALIDATED: Symbol = symbol_short!("NONCEINV");
 /// First topic of every `BatchAttested` event.
@@ -49,12 +55,20 @@ pub const BATCH_REVOKED: Symbol = symbol_short!("BATCHREV");
 pub const INDEXER_STRICT_UPDATED: Symbol = symbol_short!("IDXSTRUP");
 /// First topic of every `SchemaDeprecated` event.
 pub const SCHEMA_DEPRECATED: Symbol = symbol_short!("SCHDEP");
+/// First topic of every `SchemaFrostGroupUpdated` event (#534).
+pub const SCHEMA_FROST_GROUP_UPDATED: Symbol = symbol_short!("FROSTGRP");
+/// First topic of every `SchemaMerkleRootUpdated` event (#529).
+pub const SCHEMA_MERKLE_ROOT_UPDATED: Symbol = symbol_short!("MERKROOT");
 /// First topic of every `ContractPaused` event.
 pub const CONTRACT_PAUSED: Symbol = symbol_short!("PAUSED");
 /// First topic of every `ContractUnpaused` event.
 pub const CONTRACT_UNPAUSED: Symbol = symbol_short!("UNPAUSED");
 /// First topic of every `AttestationRenewed` event.
 pub const ATTESTATION_RENEWED: Symbol = symbol_short!("ATSTRENEW");
+/// First topic of every `FeeDistributed` event (#538).
+pub const FEE_DISTRIBUTED: Symbol = symbol_short!("FEEDIST");
+/// First topic of every schema quarantine toggle (#539).
+pub const SCHEMA_QUARANTINED: Symbol = symbol_short!("SCHQUAR");
 
 /// Payload of the `SchemaRegistered` event.
 ///
@@ -77,6 +91,32 @@ pub struct AttestationIssuedEvent {
     pub schema_uid: UID,
     pub attester: Address,
     pub recipient: Address,
+}
+
+/// Fee-aware issuance event emitted by the opt-in paid path (#526).
+/// The existing `ATTESTED` event is retained for v1 indexer compatibility.
+pub const ATTFEE: Symbol = symbol_short!("ATTFEE");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttestationIssuedWithFeeEvent {
+    pub uid: UID,
+    pub schema_uid: UID,
+    pub attester: Address,
+    pub recipient: Address,
+    pub fee_amount: i128,
+}
+
+/// Detailed protocol circuit-breaker events (#530), emitted in addition to
+/// legacy pause events to preserve the existing wire format.
+pub const PROTOCOL_PAUSED: Symbol = symbol_short!("PRTPAUSED");
+pub const PROTOCOL_UNPAUSED: Symbol = symbol_short!("PRTUNPAUS");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolPauseEvent {
+    pub authorizer: Address,
+    pub timestamp: u64,
 }
 
 /// Payload of the `AttestationRevoked` event.
@@ -222,6 +262,25 @@ pub struct ContractUpgradedEvent {
     pub authorizer: Address,
 }
 
+/// Payload of the `SchemaMerkleRootUpdated` event (#529).
+///
+/// Published with topics `(SCHEMA_MERKLE_ROOT_UPDATED, schema_uid)` whenever a
+/// schema owner sets, rotates, or clears the Merkle root that governs
+/// delegated leaf-verification for that schema. The fields are flattened instead
+/// of carrying an `Option<BytesN<32>>` because optional nested contract types
+/// are not encodable here (the same constraint documented on [`PreviousAddress`]).
+/// `enabled == false` means the requirement was cleared; the key is then the
+/// all-zero sentinel and both counters are `0`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaMerkleRootUpdatedEvent {
+    pub schema_uid: UID,
+    pub authorizer: Address,
+    pub enabled: bool,
+    pub merkle_root: BytesN<32>,
+    pub threshold: u32,
+}
+
 /// Payload of the `SchemaDelegateAdded` event.
 ///
 /// Published with topics `(SCHEMA_DELEGATE_ADDED, schema_uid)`.
@@ -241,6 +300,32 @@ pub struct SchemaDelegateAddedEvent {
 pub struct SchemaDelegateRemovedEvent {
     pub schema_uid: UID,
     pub delegate: Address,
+    pub authorizer: Address,
+}
+
+/// Payload of the `SchemaAttesterAdded` event (#443).
+///
+/// Published with topics `(SCHEMA_ATTESTER_ADDED, schema_uid)` when the schema
+/// owner adds an address to the schema's attester access control list. It is
+/// not published when the address was already on the list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaAttesterAddedEvent {
+    pub schema_uid: UID,
+    pub attester: Address,
+    pub authorizer: Address,
+}
+
+/// Payload of the `SchemaAttesterRemoved` event (#443).
+///
+/// Published with topics `(SCHEMA_ATTESTER_REMOVED, schema_uid)` when the
+/// schema owner removes an address from the schema's attester access control
+/// list. It is not published when the address was not on the list.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaAttesterRemovedEvent {
+    pub schema_uid: UID,
+    pub attester: Address,
     pub authorizer: Address,
 }
 
@@ -436,4 +521,52 @@ pub struct IndexingProgressEvent {
     pub recipient_total: u32,
     pub schema_total: u32,
     pub attester_total: u32,
+}
+
+/// First topic of every `SchemaMetadataUpdated` event (#444).
+pub const SCHEMA_METADATA_UPDATED: Symbol = symbol_short!("METAUPD");
+
+/// Payload of the `SchemaMetadataUpdated` event.
+///
+/// Published with topics `(SCHEMA_METADATA_UPDATED, schema_uid)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaMetadataUpdatedEvent {
+    pub schema_uid: UID,
+    pub metadata_uri: String,
+    pub authorizer: Address,
+}
+
+/// Payload of the `FeeDistributed` event.
+///
+/// Published with topics `(FEE_DISTRIBUTED, schema_uid)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeDistributedEvent {
+    pub schema_uid: UID,
+    pub token: Address,
+    pub total_fee: i128,
+    pub treasury_amount: i128,
+    pub creator_amount: i128,
+    pub creator: Address,
+}
+
+/// Payload of the `SchemaFrostGroupUpdated` event (#534).
+///
+/// Published with topics `(SCHEMA_FROST_GROUP_UPDATED, schema_uid)` whenever a
+/// schema owner sets, rotates, or clears the FROST group that governs
+/// delegated signatures for that schema. The fields are flattened instead of
+/// carrying an `Option<FrostGroup>` because optional nested contract types are
+/// not encodable here (the same constraint documented on [`PreviousAddress`]).
+/// `enabled == false` means the requirement was cleared; the key is then the
+/// all-zero sentinel and both counters are `0`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaFrostGroupUpdatedEvent {
+    pub schema_uid: UID,
+    pub authorizer: Address,
+    pub enabled: bool,
+    pub group_public_key: BytesN<32>,
+    pub threshold: u32,
+    pub max_signers: u32,
 }

@@ -14,6 +14,10 @@ pub enum SASError {
     InvalidSchema = 101,
     InvalidSchemaFormat = 104,
     EmptySchema = 105,
+    /// A schema definition string violated strict lexical rules: it contained
+    /// control characters, invalid/invisible unicode whitespace, or malformed
+    /// separators (trailing/leading delimiters, non-canonical spacing). See
+    /// `validate_schema_lexical`.
     InvalidSchemaDefinition = 106,
     SchemaAlreadyExists = 102,
     SchemaNotFound = 103,
@@ -24,12 +28,18 @@ pub enum SASError {
     NotRevocable = 203,
     AlreadyExpired = 204,
     DuplicateAttestation = 205,
+    /// An attestation's revocability flag violated the schema's revocation
+    /// policy: irrevocable attestation under `RevocableOnly` schema.
     InvalidRevocability = 206,
 
     /// Authorization errors
     Unauthorized = 301,
     InvalidSignature = 302,
     DelegationReplay = 303,
+    /// The schema has a private attester access control list and the attester
+    /// is neither the schema owner, an authorized delegate, nor a member of
+    /// that list (#443).
+    UnauthorizedAttester = 304,
 
     /// Input validation errors
     InvalidTTL = 401,
@@ -78,13 +88,44 @@ pub enum SASError {
     InvalidTimeRange = 418,
     /// Expiration time exceeds schema's max_ttl or perpetual attestation under capped schema (#441).
     InvalidExpirationTime = 419,
+    /// A timestamp claim does not match the ledger anchor recorded for the
+    /// attestation, or stored anchors are not monotonic (#436).
+    InvalidTimestamp = 420,
+    /// No issuance or revocation timestamp anchor exists for the UID (#436).
+    TimestampAnchorNotFound = 421,
+    /// A new attestation was attempted under a schema the protocol admin has quarantined (#539).
+    SchemaQuarantined = 422,
+    /// A time-window resolver rejected an attestation because the recipient's
+    /// cooldown period has not elapsed yet (#549).
+    CooldownActive = 423,
+    /// The payment asset is not authorized by the protocol fee allowlist.
+    InvalidToken = 424,
+    /// The attester has exhausted their configured ledger-window quota.
+    RateLimitExceeded = 425,
+    /// `prune_expired` was called while the admin has not enabled
+    /// auto-pruning via `set_auto_prune` (#432).
+    AutoPruneDisabled = 426,
 
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).
     ContractPaused = 501,
+    /// Core protocol mutation blocked by the emergency circuit breaker (#530).
+    ProtocolPaused = 503,
+    /// The caller did not supply enough tokens for the payload-size fee (#526).
+    InsufficientFee = 504,
+    /// A delegated signature does not authorize this schema or permission (#527).
+    DelegationScopeDenied = 505,
+    /// The configured proof-verifier rejected the supplied credential proof (#531).
+    InvalidZKProof = 506,
+    /// A proof nullifier has already been consumed by this SAS deployment.
+    NullifierAlreadyUsed = 507,
 
     /// Reentrancy errors
     /// A callback (resolver or indexer) re-entered `multi_attest` while the
     /// outer batch was still executing (#296).
     Reentrancy = 502,
+}
+
+impl SASError {
+    pub const ReentrancyDetected: SASError = SASError::Reentrancy;
 }

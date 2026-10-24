@@ -26,6 +26,9 @@ For an in-depth look at how state is managed, the interactions between various s
 
 ## Security and Threat Mitigation
 
+For the authorization matrix, protocol invariants, threat scenarios and emergency runbook, see [Security Model and Threat Analysis](SECURITY_MODEL.md).
+
+
 Details about our security perimeter, administrative capabilities, and known vulnerabilities can be found in the [Security Assumptions and Threat Model](docs/security.md) guide.
 
 Dependency security checks and indexer fuzzing commands are described in [Contributing](CONTRIBUTING.md).
@@ -64,6 +67,7 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Maintains mappings from recipient addresses to their respective attestations.
   - Maintains mappings from schemas to all associated attestations.
   - Supports newest-first cursor pages for recipient, schema, and attester history.
+  - Answers whether a UID has been indexed with one direct record read (`is_attestation_indexed`), without walking chunks.
 
 - `contracts/cross-chain-verifier`
   **Role**: Verifies remote attestation status updates authenticated by an Axelar GMP gateway.
@@ -72,6 +76,14 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Rejects unapproved, stale or expired updates and exposes short-lived remote verdicts.
   - Accepts versioned proof payloads carrying EVM schema, recipient, mapped Stellar address, and data.
   - Documents its [wire format and trust limits](docs/cross-chain-verification.md).
+
+- `contracts/time-window-resolver`
+  **Role**: Enforces a minimum delay between attestations issued to the same recipient.
+  **Duties**:
+  - Records the last accepted issuance time per recipient.
+  - Rejects issuance inside the configured cooldown with `SASError::CooldownActive`.
+  - Lets the resolver admin adjust the cooldown window with authorization.
+  - Documents its [cooldown semantics and storage limits](docs/time-window-resolver.md).
 
 ### Rust Packages
 
@@ -99,8 +111,10 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   A collection of shell scripts to assist with local environment setup, contract deployment, and invocation.
 
 - `tools/schema-explorer`
-  A prototype read-only web dashboard for browsing a Schema Registry and validating draft schemas.
-  See the [Schema Explorer README](tools/schema-explorer/README.md).
+  A web dashboard for browsing a Schema Registry, validating draft schemas, and visually composing new schemas.
+  The visual Schema Builder lets you add fields for all supported Soroban types, configure resolvers, preview the
+  deterministic `schema_uid` in real time, register directly on testnet via Freighter, and copy ready-to-run CLI
+  commands and SDK snippets. See the [Schema Explorer README](tools/schema-explorer/README.md).
 
 - `tools/prometheus-exporter`
   A Prometheus metrics exporter that monitors SAS contract events and exposes metrics for observability.
@@ -162,6 +176,25 @@ Detailed usage and flags for every subcommand are available via:
 cargo run -p soroban-sas-cli -- --help
 ```
 
+### Shell Completions
+
+Generate shell completions for tab-completing commands, subcommands, and flags:
+
+```bash
+# Bash
+cargo run -p soroban-sas-cli -- completions bash > ~/.local/share/bash-completion/completions/sas
+
+# Zsh
+cargo run -p soroban-sas-cli -- completions zsh > ~/.zfunc/_sas
+
+# Fish
+cargo run -p soroban-sas-cli -- completions fish > ~/.config/fish/completions/sas.fish
+
+# PowerShell
+cargo run -p soroban-sas-cli -- completions powershell > ./sas.ps1
+```
+
+
 ## TOML Configuration File
 
 The CLI can read default RPC and network settings from a TOML configuration file.
@@ -190,9 +223,9 @@ Precedence (explicit flag > environment variable > TOML default > built-in netwo
 
 ## Delegated Issuance
 
-Delegated issuance and revocation let an attester sign an operation off-chain
+Delegated issuance, revocation, and consented replacement let parties sign an operation off-chain
 while a separate relayer submits and pays for the transaction. See
-[Delegated Issuance and Revocation](docs/delegation.md) for the typed-data
+[Delegated Issuance and Replacement](docs/delegation.md) for the typed-data
 domain, nonce high-watermark rules, key rotation behavior, CLI commands, and
 SDK workflow.
 
@@ -292,6 +325,12 @@ network call or funded key, and prints usage with `--help`.
   cargo run --example delegated_attest -- --dry-run
   ```
 
+The SDK also runs on serverless edge runtimes. With the `wasm` feature it
+compiles to `wasm32-unknown-unknown` and talks to Soroban RPC through the
+runtime's global `fetch`, which is what the
+[Cloudflare Worker template](examples/cloudflare-worker) uses. See
+[Edge Runtimes](docs/edge-runtime.md) for the full walkthrough.
+
 ## Getting Started
 
 - **Building an app on soroban-sas?** Follow [Getting Started for DApp Developers](docs/getting-started.md):
@@ -336,6 +375,13 @@ TMPDIR=/tmp cargo test --workspace
 - [Getting Started for DApp Developers](docs/getting-started.md): schema
   design, resolvers, issuance rules, off-chain and on-chain verification,
   indexer queries, and a security checklist.
+- [KYC/AML Verifiable Credential Attestation](docs/guides/kyc-aml-attestation.md):
+  end-to-end schema registration, backend issuance, frontend verification,
+  and privacy guidance for KYC/AML claims.
+- [Stellar SEP-8 Regulated Assets Guide](docs/guides/sep8-regulated-assets.md): complete
+  technical walkthrough for issuing Stellar SEP-8 compliant regulated tokens with Soroban
+  smart contracts, perpetual and expiring SAS attestations, issuer revocation flows, and
+  a sample token wrapper contract.
 - [Local Development Environment](docs/local-development.md): toolchain,
   build and test, git hooks, local network, local deployment, and
   troubleshooting.
@@ -346,17 +392,29 @@ TMPDIR=/tmp cargo test --workspace
 - [Batch Attestations (Merkle Commitments)](docs/batch-attestations.md):
   when to use off-chain Merkle batching instead of on-chain `multi_attest`,
   the normative leaf/node hashing rules, and a selective-disclosure example.
+- [Selective Disclosure (Merkle Root Attestations)](docs/selective-disclosure.md): attest to a Merkle root and reveal single claims with `verify_merkle_leaf`.
+- [Privacy Implications of Public Attestations](docs/privacy.md): what a public ledger exposes and how to keep sensitive data off-chain.
 - [Bulk Attestation Creation from CSV](docs/bulk-csv-attestations.md): the
   `attest bulk` CSV format, the validate-everything-before-submitting
   guarantee, `--dry-run`, and when to prefer Merkle batching instead.
 - [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
   `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
   `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
+- [Edge Runtimes](docs/edge-runtime.md): build the Rust SDK for
+  `wasm32-unknown-unknown` and run it on Cloudflare Workers, Deno and other
+  serverless edge platforms, including a deployable Worker template.
 - [Soroban Mainnet Launch Preparation](docs/mainnet-launch-preparation.md): launch phases, key custody, reproducible builds, and operational runbooks.
 - [Fee Collection and Treasury Mechanics](docs/fee-collection-and-treasury.md): protocol fee configuration, treasury routing, and token withdrawals.
 - [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md): localization conventions, terminology glossary, and contribution guidelines.
 - [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
+- [Operations and Alerts Runbook](docs/OPERATIONS_AND_ALERTS_RUNBOOK.md): alert triage, incident response procedures, Alertmanager routing, and notification setup for PagerDuty and Discord.
+- [Time-Window Resolver](docs/time-window-resolver.md): enforcing minimum
+  delays between recurring attestations issued to the same recipient, with
+  cooldown boundaries, administrative updates, and storage expiry limits.
 - [Glossary of Terms](docs/glossary.md): authoritative protocol definitions for Attestation, Schema, Issuer, Resolver, UID, and lifecycle terms.
+- [Video Tutorials: Schema Generation](docs/video-tutorials-schema-generation.md): episode scripts and commands for the schema generation video series.
+- [On-Chain vs Off-Chain Attestations](docs/on-chain-vs-off-chain-attestations.md): where each kind lives, who pays, and how to choose.
+- [Example Integration with Stellar SEP-8](docs/sep-8-integration.md): gate regulated-asset approvals on SAS attestations.
 
 ## Project Roadmap
 

@@ -5,9 +5,10 @@
 | Version / Branch | Supported          | Status             |
 | ---------------- | ------------------ | ------------------ |
 | `main`           | :white_check_mark: | Active Development |
-| `< 0.1.0`        | :x:                | Unsupported        |
+| `1.0.x`          | :white_check_mark: | Current Release    |
+| `< 1.0.0`        | :x:                | Unsupported        |
 
-The project is under active development. Security updates and bug fixes are applied directly to the `main` branch and tagged in release candidates.
+Security updates and bug fixes are applied to the `main` branch and released as patch versions of the current release line. See [docs/releasing.md](docs/releasing.md) for how releases are cut.
 
 ---
 
@@ -18,7 +19,7 @@ Soroban Attestation Service (SAS) welcomes responsible security research from th
 ### Scope
 
 The following components within this repository are in scope for security vulnerability reports:
-- **Core Smart Contracts**: `contracts/sas`, `contracts/schema-registry`, `contracts/indexer`, `contracts/cross-chain-verifier`, `contracts/zk-verifier`
+- **Core Smart Contracts**: `contracts/sas`, `contracts/schema-registry`, `contracts/indexer`, `contracts/cross-chain-verifier`, `contracts/zk-verifier`, `contracts/time-window-resolver`
 - **Core Protocol Packages**: `packages/soroban-sas-common`, `packages/soroban-sas-sdk`, `packages/soroban-sas-cli`
 - **Cryptographic & Verification Logic**: Off-chain typed data EIP-712-style hashing, Ed25519 signature checks, zero-knowledge attestation commitment proofs, replay defense nonces, and timestamp anchoring.
 
@@ -81,6 +82,7 @@ We consider security research conducted under this policy to be authorized. We c
 
 ## Additional Resources
 
+- [Contract Security Model, Authorization Matrix and Incident Runbook](SECURITY_MODEL.md)
 - [Security Assumptions and Threat Model](docs/security.md)
 - [Zero-Knowledge Private Attestations](docs/zk-private-attestations.md)
 - [Contributing Guidelines](CONTRIBUTING.md)

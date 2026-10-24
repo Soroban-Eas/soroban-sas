@@ -3,6 +3,7 @@
 pub mod eip712;
 pub mod errors;
 pub mod events;
+pub mod frost;
 pub mod macros;
 pub mod merkle;
 pub mod signature;
@@ -11,6 +12,7 @@ pub mod validation;
 
 pub use errors::*;
 pub use events::*;
+pub use frost::*;
 pub use merkle::*;
 pub use signature::*;
 pub use typed_data::*;
@@ -25,7 +27,7 @@ pub use eip712::{
     SchemaError, StructDef, DOMAIN_STRUCT_NAME, EIP712_PREFIX,
 };
 
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String, Symbol, Vec};
 
 /// Approximate number of ledgers in one year at five seconds per ledger.
 pub const LEDGERS_IN_ONE_YEAR: u32 = 6_307_200;
@@ -70,6 +72,9 @@ pub fn extend_instance_ttl(env: &Env) {
 /// well within Soroban limits while accommodating typical attestation
 /// payloads. (#157)
 pub const MAX_ATTESTATION_DATA_BYTES: u32 = 10_000;
+
+/// Maximum number of attestations accepted by the SAS batch issuance entrypoints.
+pub const MAX_MULTI_ATTEST: u32 = 100;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,6 +162,20 @@ impl From<bool> for RevocationPolicy {
     }
 }
 
+/// Lifecycle of a schema record (#539).
+///
+/// `Quarantined` pauses new attestations while leaving historical ones
+/// readable. Stored beside the record so existing `SchemaRecord` bytes stay
+/// compatible.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SchemaStatus {
+    Active = 0,
+    Deprecated = 1,
+    Quarantined = 2,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)] // Optimize storage serialization (#284)
@@ -166,6 +185,19 @@ pub struct SchemaRecord {
     pub revocable: bool,
     pub schema: String,
     pub deprecated: bool,
+    /// UID of the schema this one supersedes, if any (#442). The parent is
+    /// guaranteed to have been registered when the record was written, and it
+    /// is not part of the UID preimage, so linking a schema to a parent never
+    /// changes its content-addressed identity. `None` for root schemas.
+    pub parent_schema_uid: Option<UID>,
+}
+
+/// Status of schema delegates, partitioned into active and expired.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegatesStatus {
+    pub active: Vec<Address>,
+    pub expired: Vec<Address>,
 }
 
 #[contracttype]
@@ -370,6 +402,17 @@ pub struct CompactAttestationKey {
     pub uid: UID,
 }
 
+/// Expiration status bucket for indexing attestations by their expiration
+/// time. Perpetual attestations (expiration_time == 0) are indexed separately
+/// from time-bound attestations to enable efficient queries for time-sensitive
+/// use cases.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpirationStatus {
+    Perpetual,
+    Expiring,
+}
+
 /// Typed storage key for tracking per-attester delegation nonces (#237).
 ///
 /// Serializes as ScVec rather than ScMap (which a raw `(DELEGATION_NONCE, attester)`
@@ -380,6 +423,16 @@ pub struct DelegationNonceKey {
     pub attester: Address,
 }
 
+/// Separate recipient consent nonce space, so a recipient who is also an
+/// attester can sign both roles without their nonce watermarks colliding.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecipientConsentNonceKey {
+    /// Distinguishes this key's ScVec encoding from `DelegationNonceKey`.
+    pub scope: Symbol,
+    pub recipient: Address,
+}
+
 /// Typed storage key wrapper for attester key records (#237).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -387,5 +440,34 @@ pub struct AttesterKeyStorageKey {
     pub attester: Address,
 }
 
+/// Single schema definition in a batch schema registration (#445).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaBatchItem {
+    pub owner: Address,
+    pub schema: String,
+    pub resolver: Address,
+    pub revocable: bool,
+}
+
+/// Schema creator fee configuration (#434).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaFeeConfig {
+    pub fee_type: u32,
+    pub fixed_amount: i128,
+    pub basis_points: u32,
+}
+
+/// Fee ceilings set by protocol admin (#434).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCeilings {
+    pub max_fixed_fee: i128,
+    pub max_basis_points: u32,
+}
+
+#[cfg(test)]
+mod merkle_disclosure_test;
 #[cfg(test)]
 mod test;

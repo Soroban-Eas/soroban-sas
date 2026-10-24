@@ -1,71 +1,82 @@
-name: Documentation Check
+name: SDK API Documentation
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check-docs:
-    name: Validate Documentation Integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate links and documentation
+        run: bash scripts/check_docs.sh
 
-      - name: Run Documentation Checker
-        run: |
-          chmod +x scripts/check_docs.sh
-          ./scripts/check_docs.sh
-
-  publish-rustdoc:
-    name: Publish rustdoc to GitHub Pages
+  build-api:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.83.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: packages/soroban-sas-js/package-lock.json
+      - name: Build Rust documentation with warnings denied
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p soroban-sas-sdk --no-deps --target-dir target/rust-api
+      - name: Verify Rust documentation examples
+        run: cargo test -p soroban-sas-sdk --doc
+      - name: Build TypeScript documentation
+        working-directory: packages/soroban-sas-js
+        run: |
+          npm ci
+          npm run typecheck
+          npx --yes --package typedoc@0.26.11 typedoc --entryPoints src/index.ts --out ../../target/site/typescript --readme README.md --skipErrorChecking false
+      - name: Prepare unified landing page
+        run: |
+          mkdir -p target/site/rust
+          cp -a target/rust-api/doc/. target/site/rust/
+          cp docs/api-index.html target/site/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-api-docs
+          path: target/site
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build-api
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
       pages: write
       id-token: write
+      contents: read
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url }}
     concurrency:
-      group: github-pages
+      group: sdk-pages
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-doc-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-doc-
-
-      - name: Build rustdoc
-        env:
-          RUSTDOCFLAGS: "-D warnings --cfg docsrs"
-        run: |
-          cargo doc --no-deps --all-features --workspace
-          echo '<meta http-equiv="refresh" content="0; url=soroban_sas_sdk/index.html">' > target/doc/index.html
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+          name: sdk-api-docs
+          path: site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          enablement: true
-
-      - name: Upload rustdoc artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: target/doc
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deploy
