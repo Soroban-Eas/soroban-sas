@@ -64,6 +64,7 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Maintains mappings from recipient addresses to their respective attestations.
   - Maintains mappings from schemas to all associated attestations.
   - Supports newest-first cursor pages for recipient, schema, and attester history.
+  - Answers whether a UID has been indexed with one direct record read (`is_attestation_indexed`), without walking chunks.
 
 - `contracts/cross-chain-verifier`
   **Role**: Verifies remote attestation status updates authenticated by an Axelar GMP gateway.
@@ -72,6 +73,14 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Rejects unapproved, stale or expired updates and exposes short-lived remote verdicts.
   - Accepts versioned proof payloads carrying EVM schema, recipient, mapped Stellar address, and data.
   - Documents its [wire format and trust limits](docs/cross-chain-verification.md).
+
+- `contracts/time-window-resolver`
+  **Role**: Enforces a minimum delay between attestations issued to the same recipient.
+  **Duties**:
+  - Records the last accepted issuance time per recipient.
+  - Rejects issuance inside the configured cooldown with `SASError::CooldownActive`.
+  - Lets the resolver admin adjust the cooldown window with authorization.
+  - Documents its [cooldown semantics and storage limits](docs/time-window-resolver.md).
 
 ### Rust Packages
 
@@ -121,10 +130,267 @@ Usage examples:
 ```bash
 cargo run -p soroban-sas-cli -- --output json schema get --uid UID... --registry-contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json schema withdraw-fees --amount 1000000 \
-  --secret-key S... --network-passphrase "Test DF Network ;; September 2015" \
+  --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
   --registry-contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json attest verify --uid UID... --contract-id C... --rpc-url URL
 cargo run -p soroban-sas-cli -- --output json attest attest \
   --schema-uid UID... --recipient G... --data 0xdeadbeef \
-  --secret-key S... --network-passphrase "Test DF Network ;; September 2015" \
+  --secret-key S... --network-passphrase "Test SDF Network ; September 2015" \
   --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json query by-recipient --address G... --contract-id C... --rpc-url URL
+cargo run -p soroban-sas-cli -- --output json query by-attester \
+  --address G... --contract-id C... --rpc-url URL
+# One page (1-100 UIDs) of a large history; follow `next_cursor` until it is null
+cargo run -p soroban-sas-cli -- --output json query by-schema \
+  --uid UID... --contract-id C... --rpc-url URL --cursor 0 --limit 50
+# Preview a whole CSV batch without submitting anything
+cargo run -p soroban-sas-cli -- --output json attest bulk \
+  --csv-file attestations.csv --contract-id C... --rpc-url URL --dry-run
+# Issue it for real
+cargo run -p soroban-sas-cli -- --output json attest bulk \
+  --csv-file attestations.csv --secret-key S... \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --contract-id C... --rpc-url URL
+```
+
+Without `--cursor`/`--limit`, `query by-*` returns the complete history as
+`{"uids": [...]}`, exactly as before. With either flag it returns one page:
+`{"uids", "cursor", "limit", "total", "next_cursor"}`, where `next_cursor` is
+`null` once the history is exhausted.
+
+`attest attest`, `attest create`, `attest replace`, and `delegate
+submit-attest` reject an attestation with no usable recipient (the zero-address
+"no recipient" sentinel, or the attester itself) before any RPC call, with the
+same `InvalidRecipient` (402) error the SAS contract would return. SAS has no
+recipient-less on-chain attestations; `offchain sign`/`verify` do not
+constrain the recipient.
+
+Detailed usage and flags for every subcommand are available via:
+
+```bash
+cargo run -p soroban-sas-cli -- --help
+```
+
+## TOML Configuration File
+
+The CLI can read default RPC and network settings from a TOML configuration file.
+This avoids repeating `--rpc-url` and `--network-passphrase` on every invocation.
+
+The config file is discovered in this order:
+
+1. `$SOROBAN_SAS_CONFIG` environment variable (explicit path).
+2. `./soroban-sas.toml` in the current working directory.
+3. `$HOME/.config/soroban-sas/config.toml`.
+
+Example `soroban-sas.toml`:
+
+```toml
+default_network = "testnet"
+rpc_url = "https://soroban-testnet.stellar.org"
+network_passphrase = "Test SDF Network ; September 2015"
+```
+
+Precedence (explicit flag > environment variable > TOML default > built-in network name):
+
+1. An explicit subcommand flag (`--rpc-url`, `--network-passphrase`, `--network`).
+2. The matching environment variable (`SOROBAN_RPC_URL`, `SOROBAN_NETWORK_PASSPHRASE`).
+3. TOML configuration file defaults.
+4. Built-in network name resolution (`testnet`, `futurenet`, `mainnet`, `local`).
+
+## Delegated Issuance
+
+Delegated issuance, revocation, and consented replacement let parties sign an operation off-chain
+while a separate relayer submits and pays for the transaction. See
+[Delegated Issuance and Replacement](docs/delegation.md) for the typed-data
+domain, nonce high-watermark rules, key rotation behavior, CLI commands, and
+SDK workflow.
+
+## Local Development Network
+
+A local standalone Stellar node with Soroban RPC is available via Docker Compose using a pinned Stellar Quickstart image (`stellar/quickstart:testing@sha256:2182a7558123ff6420ea5516283616634673956530a8edf89796ebe4b58bd784`):
+
+```bash
+docker compose up -d
+./scripts/wait_for_localnet.sh
+```
+
+The health check ensures JSON-RPC is healthy and the local ledger is advancing before tests or deployment scripts run.
+
+## Continuous Integration
+
+Our CI pipeline automatically validates formatting (`cargo fmt`), executes linter checks (`cargo clippy`), runs workspace tests (`cargo test`), compiles optimized WASM artifacts (`wasm32-unknown-unknown`), and checks documentation consistency.
+
+## Core Data Structures
+
+The `Attestation` type within `packages/soroban-sas-common` serves as the foundational data model for the primary contract workflows. It captures the following attributes:
+
+- `uid`: Unique identifier for the attestation.
+- `schema_uid`: The identifier of the governing schema.
+- `time`: Timestamp of creation.
+- `expiration_time`: When the attestation is no longer valid.
+- `revocation_time`: Timestamp of revocation, if applicable.
+- `ref_uid`: Optional reference to a related attestation.
+- `recipient`: The subject of the attestation.
+- `attester`: The issuer of the attestation.
+- `revocable`: Boolean indicating if the claim can be revoked.
+- `data`: The encoded payload of the attestation.
+
+The system evaluates the status of an attestation based on these fields:
+
+- **Valid**: The current time is before the `expiration_time` (if defined), and `revocation_time` is zero.
+- **Expired**: The current time has surpassed the `expiration_time`.
+- **Revoked**: The `revocation_time` has been set to a non-zero value.
+
+## Administrative and Recovery Policies
+
+We have adopted a strict and conservative approach regarding administrative controls:
+
+- There is no mechanism for an administrator to recover or alter existing attestations.
+- Forced transfers or emergency reassignments of active attestations are not permitted.
+- Only the original `attester` has the authority to revoke a claim, and only if it was marked as `revocable` upon creation.
+
+This philosophy ensures that the system behaves predictably. Should governance or admin recovery features be introduced in the future, they will require rigorous Soroban authorization, transparent event logging, and clear documentation detailing the governance protocols.
+
+## The Lifecycle of an Attestation
+
+Issuing an attestation involves a streamlined on-chain process:
+
+1. The issuer constructs a transaction detailing the `schema_uid`, the `recipient`, and the relevant `data`.
+2. The smart contract queries the schema registry to confirm the schema's existence and validity.
+3. Upon validation, the attestation is persisted on-chain and assigned a distinct `uid`.
+4. As an optional step, the new record can be indexed or cryptographically linked to previous claims using the `ref_uid`.
+
+## Data Consistency
+
+To maintain integrity between the schema definitions and the issued claims, the core SAS contract strictly validates all operations against the canonical state held in the schema registry. The SAS contract maintains a reference to the registry's address to perform these checks during any state-modifying actions.
+
+This architectural choice guarantees a single, authoritative source of truth for all schemas.
+
+## Core Validation Checks
+
+The shared validation libraries enforce several key constraints:
+
+- Schemas must contain defined fields and cannot be empty.
+- The submitted attestation data must conform strictly to the Soroban types outlined in the schema's signature.
+- Expiration timestamps must be explicitly provided for temporary claims.
+- Both the issuer and the recipient fields must contain valid identifiers.
+
+## SDK Usage Examples
+
+Runnable examples under `examples/` demonstrate the Rust SDK (`soroban-sas-sdk`)
+end to end. Each accepts `--dry-run` to build and print its payload without any
+network call or funded key, and prints usage with `--help`.
+
+- `examples/basic_attestation.rs` — build a single attestation, compute its
+  content-addressed UID and typed-data hash, and optionally submit it via
+  `SASClient::attest`.
+  ```bash
+  cargo run --example basic_attestation
+  ```
+- `examples/multi_attest.rs` — build a batch of attestations and submit them
+  atomically via `SASClient::multi_attest`; prints every UID in the batch and
+  reports that none were issued if the batch submission fails.
+  ```bash
+  cargo run --example multi_attest -- --dry-run
+  ```
+- `examples/delegated_attest.rs` — sign a delegated attestation's typed-data
+  hash with the attester's ed25519 key, then relay it via
+  `SASClient::attest_by_delegation` from a separate, funded relayer account
+  that never holds the attester's key.
+  ```bash
+  cargo run --example delegated_attest -- --dry-run
+  ```
+
+## Getting Started
+
+- **Building an app on soroban-sas?** Follow [Getting Started for DApp Developers](docs/getting-started.md):
+  register a schema, issue, verify, query and revoke an attestation.
+- **Contributing to this repository?** [Local Development Environment](docs/local-development.md)
+  covers the toolchain, tests, git hooks, a local Stellar node and local deployment.
+
+### System Requirements
+
+- A recent stable version of the Rust toolchain (pinned to `1.83.0` via `rust-toolchain.toml`).
+- WebAssembly compilation target: `rustup target add wasm32-unknown-unknown`
+- The Stellar CLI suite: `cargo install --locked stellar-cli`
+
+### Automated Setup (Recommended)
+
+To automatically install or verify your toolchain environment, use the provided script:
+
+```bash
+./scripts/bootstrap.sh --install
+```
+
+### Manual Installation
+
+Clone the repository and format the source code:
+
+```bash
+git clone https://github.com/Soroban-Eas/soroban-sas.git
+cd soroban-sas
+cargo fmt --all
+```
+
+Execute the test suite:
+
+```bash
+TMPDIR=/tmp cargo test --workspace
+```
+
+*Note: `TMPDIR=/tmp` is required because the default macOS temporary directories may restrict the Rust compiler from creating build artifacts during sandboxed test execution.*
+
+## Documentation
+
+- [Getting Started for DApp Developers](docs/getting-started.md): schema
+  design, resolvers, issuance rules, off-chain and on-chain verification,
+  indexer queries, and a security checklist.
+- [Local Development Environment](docs/local-development.md): toolchain,
+  build and test, git hooks, local network, local deployment, and
+  troubleshooting.
+- Documentation on Schema Syntax and Payloads: `docs/schemas.md`
+- [Attestation Lifecycle](docs/attestations.md): issuance, expiration,
+  revocation, and replacement semantics, including `replace_attestation`'s
+  expiration monotonicity rule.
+- [Batch Attestations (Merkle Commitments)](docs/batch-attestations.md):
+  when to use off-chain Merkle batching instead of on-chain `multi_attest`,
+  the normative leaf/node hashing rules, and a selective-disclosure example.
+- [Bulk Attestation Creation from CSV](docs/bulk-csv-attestations.md): the
+  `attest bulk` CSV format, the validate-everything-before-submitting
+  guarantee, `--dry-run`, and when to prefer Merkle batching instead.
+- [Deployment Guide](docs/DEPLOYMENT.md): build optimized WASM, deploy
+  `schema-registry`, `sas` and `indexer` to Testnet (via `scripts/deploy.sh` or
+  `scripts/deploy_testnet.sh`), verify the deployment, and a Mainnet operational checklist.
+- [Soroban Mainnet Launch Preparation](docs/mainnet-launch-preparation.md): launch phases, key custody, reproducible builds, and operational runbooks.
+- [Fee Collection and Treasury Mechanics](docs/fee-collection-and-treasury.md): protocol fee configuration, treasury routing, and token withdrawals.
+- [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md): localization conventions, terminology glossary, and contribution guidelines.
+- [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
+- [Time-Window Resolver](docs/time-window-resolver.md): enforcing minimum
+  delays between recurring attestations issued to the same recipient, with
+  cooldown boundaries, administrative updates, and storage expiry limits.
+- [Glossary of Terms](docs/glossary.md): authoritative protocol definitions for Attestation, Schema, Issuer, Resolver, UID, and lifecycle terms.
+
+## Project Roadmap
+
+`soroban-sas` is under active development. Our roadmap to a production-ready release is structured as follows:
+
+### Phase 1: MVP Foundation (In Progress)
+- Implement foundational contract logic (Schema Registry, core SAS contract).
+- Develop initial SDK wrappers and CLI tools.
+- Establish comprehensive shared validation protocols.
+
+### Phase 2: Beta on Testnet
+- **Integration**: Fully connect the CLI tools with the complete schema and attestation workflows.
+- **Testing**: Broaden the scope of unit tests to cover off-chain capabilities and edge cases.
+- **CI/CD**: Automate code formatting checks and workspace testing pipelines.
+- **SDK**: Deliver a robust client implementation complete with Soroban RPC bindings.
+
+### Phase 3: Mainnet Launch
+- **Security**: Conduct third-party audits focusing on smart contract state management and authorization schemas.
+- **Governance**: Introduce an optional fee mechanism for registering new schemas.
+- **Ecosystem**: Integrate with indexing services and subgraphs for complex querying.
+- **Documentation**: Launch a comprehensive developer portal with integration guides.
+
+## Contributing
+
+We welcome contributions! Please feel free to submit a Pull Request or open an issue for discussion.

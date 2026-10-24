@@ -1,0 +1,86 @@
+version: "3.9"
+
+# SAS Monitoring Stack
+# ---
+# Runs the Prometheus metrics exporter, Prometheus TSDB, and Grafana together.
+#
+# Usage:
+#   cp .env.example .env          # set SAS_CONTRACT_ID at minimum
+#   docker compose up -d
+#
+# Endpoints:
+#   /metrics scrape:  http://localhost:9090
+#   Prometheus UI:    http://localhost:9091
+#   Grafana:          http://localhost:3000  (admin / admin)
+
+services:
+  # ── SAS Prometheus exporter ────────────────────────────────────────────────
+  sas-exporter:
+    build:
+      context: ../..           # repo root (workspace Cargo.toml)
+      dockerfile: tools/monitoring/Dockerfile.exporter
+    image: soroban-sas/prometheus-exporter:latest
+    restart: unless-stopped
+    environment:
+      SAS_CONTRACT_ID:             "${SAS_CONTRACT_ID}"
+      SCHEMA_REGISTRY_CONTRACT_ID: "${SCHEMA_REGISTRY_CONTRACT_ID:-}"
+      INDEXER_CONTRACT_ID:         "${INDEXER_CONTRACT_ID:-}"
+      METRICS_ADDR:                "0.0.0.0:9090"
+      RUST_LOG:                    "${RUST_LOG:-info}"
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9090/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - monitoring
+
+  # ── Prometheus TSDB ────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9091:9090"
+    depends_on:
+      sas-exporter:
+        condition: service_healthy
+    networks:
+      - monitoring
+
+  # ── Grafana ────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana-oss:10.4.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+
+networks:
+  monitoring:
+    driver: bridge
