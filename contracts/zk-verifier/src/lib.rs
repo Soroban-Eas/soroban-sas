@@ -1,14 +1,36 @@
 #![allow(unexpected_cfgs)]
 #![cfg_attr(not(test), no_std)]
 
-use soroban_sas_common::{extend_instance_ttl, LEDGERS_IN_ONE_YEAR, UID};
+use soroban_sas_common::{
+    extend_instance_ttl, INSTANCE_EXTEND_TO_LEDGERS, INSTANCE_TTL_THRESHOLD_LEDGERS, UID,
+};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    IntoVal, Symbol,
+    IntoVal, Symbol, Vec,
 };
 
 /// Maximum age in seconds for a zero-knowledge attestation proof timestamp
 pub const MAX_ZK_PROOF_AGE_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
+
+/// TTL threshold, in ledgers, below which a nullifier record is renewed.
+///
+/// Nullifiers are the contract's replay-protection state, so they are renewed
+/// with exactly the policy the contract's instance storage uses
+/// (`INSTANCE_TTL_THRESHOLD_LEDGERS`): a spent nullifier must not expire
+/// while the contract that guards it is still live, otherwise the contract
+/// would forget the nullifier and accept a replay of an already-verified
+/// proof (#547).
+pub const NULLIFIER_TTL_THRESHOLD_LEDGERS: u32 = INSTANCE_TTL_THRESHOLD_LEDGERS;
+
+/// Number of ledgers a nullifier record is extended to when it is renewed.
+///
+/// Aligned with the contract instance's renewal target
+/// (`INSTANCE_EXTEND_TO_LEDGERS`), so nullifier records and the instance
+/// that guards them expire on the same horizon.
+pub const NULLIFIER_TTL_EXTEND_TO_LEDGERS: u32 = INSTANCE_EXTEND_TO_LEDGERS;
+
+/// Maximum number of nullifiers accepted by the batch query in one call.
+pub const MAX_NULLIFIER_BATCH: u32 = 50;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -16,14 +38,25 @@ pub const MAX_ZK_PROOF_AGE_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
 pub enum ZkVerifierError {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    NullifierAlreadyUsed = 3,
+    /// The nullifier was already consumed by an earlier proof submission.
+    ///
+    /// A nullifier may be spent exactly once: every later submission that
+    /// carries it is a replay of the same private statement and is rejected
+    /// without touching any other state (#547).
+    NullifierSpent = 3,
     InvalidProof = 4,
     AttestationExpired = 5,
     AttestationNotYetActive = 6,
     AttestationRevokedOrInvalid = 7,
     InvalidCommitment = 8,
     ProofTooOld = 9,
+    BatchTooLarge = 10,
 }
+
+/// Alias for [`ZkVerifierError`], so the error can be referred to as
+/// `ZKError::NullifierSpent` — the spelling used by the ZK verifier
+/// documentation and issue #547.
+pub type ZKError = ZkVerifierError;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +110,42 @@ fn get_config(env: &Env) -> Result<ZkConfig, ZkVerifierError> {
         .ok_or(ZkVerifierError::NotInitialized)
 }
 
+/// Renews the TTL of a nullifier record.
+///
+/// Nullifier records are renewed with the same policy as the contract's
+/// instance storage, so a spent nullifier never expires before the contract
+/// instance that guards it. Expiring a nullifier early would let the
+/// contract forget that a private statement was already spent, and the same
+/// proof could be submitted again.
+fn extend_nullifier_ttl(env: &Env, key: &DataKey) {
+    env.storage().persistent().extend_ttl(
+        key,
+        NULLIFIER_TTL_THRESHOLD_LEDGERS,
+        NULLIFIER_TTL_EXTEND_TO_LEDGERS,
+    );
+}
+
+/// Checks a nullifier and records it as spent, in one atomic step.
+///
+/// The check and the write belong to the same invocation, so a nullifier can
+/// never be spent twice: either the invocation commits both, or it fails and
+/// the host rolls it back, leaving the nullifier unspent. Recording the
+/// nullifier before the proof is validated is safe for the same reason — a
+/// failed verification reverts the record with the rest of the invocation.
+fn consume_nullifier(
+    env: &Env,
+    nullifier: &BytesN<32>,
+    timestamp: u64,
+) -> Result<(), ZkVerifierError> {
+    let key = DataKey::Nullifier(nullifier.clone());
+    if env.storage().persistent().has(&key) {
+        return Err(ZkVerifierError::NullifierSpent);
+    }
+    env.storage().persistent().set(&key, &timestamp);
+    extend_nullifier_ttl(env, &key);
+    Ok(())
+}
+
 #[contract]
 pub struct ZkVerifier;
 
@@ -109,12 +178,15 @@ impl ZkVerifier {
     ///
     /// Verifies:
     /// 1. Contract is initialized.
-    /// 2. Nullifier has never been consumed before (prevent replay / double-spend).
+    /// 2. The nullifier has never been spent before. The check and the
+    ///    record are atomic: a spent nullifier is rejected with
+    ///    [`ZkVerifierError::NullifierSpent`] before any other work is done,
+    ///    and a nullifier is only kept when the whole verification succeeds.
     /// 3. Proof payload is non-empty and mathematically well-formed.
     /// 4. Proof timestamp is within acceptable window (`MAX_ZK_PROOF_AGE_SECONDS`).
     /// 5. If `attestation_uid` points to an on-chain SAS attestation:
     ///    - Queries SAS to ensure attestation is currently valid (not revoked, not expired, active if time-locked).
-    /// 6. Consumes nullifier persistently with TTL extension.
+    /// 6. Consumes nullifier persistently, with a TTL aligned with the contract instance.
     /// 7. Emits `zk_verify` event.
     pub fn verify_and_consume_proof(
         env: Env,
@@ -123,17 +195,17 @@ impl ZkVerifier {
         let config = get_config(&env)?;
         extend_instance_ttl(&env);
 
-        // 1. Check nullifier replay
-        let nullifier_key = DataKey::Nullifier(proof_data.nullifier.clone());
-        if env.storage().persistent().has(&nullifier_key) {
-            return Err(ZkVerifierError::NullifierAlreadyUsed);
-        }
+        let now = env.ledger().timestamp();
+
+        // 1. Atomically check and record the nullifier. The check comes first
+        //    so that a replay is rejected immediately, without paying for the
+        //    proof validation or the SAS cross-contract calls below.
+        consume_nullifier(&env, &proof_data.nullifier, now)?;
 
         // 2. Validate proof format and proof age
         if proof_data.proof.is_empty() || proof_data.proof.len() > 1024 {
             return Err(ZkVerifierError::InvalidProof);
         }
-        let now = env.ledger().timestamp();
         if proof_data.timestamp > now
             || now.saturating_sub(proof_data.timestamp) > MAX_ZK_PROOF_AGE_SECONDS
         {
@@ -190,24 +262,16 @@ impl ZkVerifier {
             }
         }
 
-        // 5. Consume nullifier in persistent storage
-        env.storage().persistent().set(&nullifier_key, &now);
-        env.storage().persistent().extend_ttl(
-            &nullifier_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
-        );
-
-        // 6. Record commitment
+        // 5. Record commitment
         let commitment_key = DataKey::Commitment(proof_data.commitment.clone());
         env.storage().persistent().set(&commitment_key, &now);
         env.storage().persistent().extend_ttl(
             &commitment_key,
-            LEDGERS_IN_ONE_YEAR,
-            LEDGERS_IN_ONE_YEAR,
+            NULLIFIER_TTL_THRESHOLD_LEDGERS,
+            NULLIFIER_TTL_EXTEND_TO_LEDGERS,
         );
 
-        // 7. Publish event
+        // 6. Publish event
         env.events().publish(
             (symbol_short!("zk_verify"), proof_data.schema_uid.0.clone()),
             PrivateAttestationVerifiedEvent {
@@ -227,9 +291,7 @@ impl ZkVerifier {
         let key = DataKey::Nullifier(nullifier);
         let exists = env.storage().persistent().has(&key);
         if exists {
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            extend_nullifier_ttl(&env, &key);
         }
         exists
     }
@@ -240,11 +302,43 @@ impl ZkVerifier {
         let key = DataKey::Commitment(commitment);
         let exists = env.storage().persistent().has(&key);
         if exists {
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+            env.storage().persistent().extend_ttl(
+                &key,
+                NULLIFIER_TTL_THRESHOLD_LEDGERS,
+                NULLIFIER_TTL_EXTEND_TO_LEDGERS,
+            );
         }
         exists
+    }
+
+    /// Batch nullifier query for off-chain clients (#547).
+    ///
+    /// Returns one flag per input, in the same order, so a prover or relayer
+    /// can pre-check a whole batch before submitting proofs. Consumed
+    /// nullifiers have their persistent TTL refreshed to match the contract
+    /// instance, exactly like the single-nullifier query.
+    ///
+    /// The batch is bounded by [`MAX_NULLIFIER_BATCH`] so a read-only
+    /// simulation cannot be made arbitrarily expensive.
+    pub fn are_nullifiers_used(
+        env: Env,
+        nullifiers: Vec<BytesN<32>>,
+    ) -> Result<Vec<bool>, ZkVerifierError> {
+        extend_instance_ttl(&env);
+        if nullifiers.len() > MAX_NULLIFIER_BATCH {
+            return Err(ZkVerifierError::BatchTooLarge);
+        }
+
+        let mut used = Vec::new(&env);
+        for nullifier in nullifiers.iter() {
+            let key = DataKey::Nullifier(nullifier);
+            let consumed = env.storage().persistent().has(&key);
+            if consumed {
+                extend_nullifier_ttl(&env, &key);
+            }
+            used.push_back(consumed);
+        }
+        Ok(used)
     }
 }
 

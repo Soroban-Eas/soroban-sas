@@ -8,6 +8,10 @@ export interface ExplorerConfig {
   networkPassphrase: string;
   /** Schema Registry contract id (C...). */
   registryContractId: string;
+  /** SAS attestation contract id (C...). Optional; enables the Attestations tab. */
+  sasContractId?: string;
+  /** Indexer contract id (C...). Optional; enables bulk attestation lookups. */
+  indexerContractId?: string;
 }
 
 export interface NetworkPreset {
@@ -74,8 +78,27 @@ export function validateConfig(input: ExplorerConfig): ConfigValidation {
     errors.push("Registry contract id must be a valid C... contract address.");
   }
 
+  // Optional attestation contract IDs — validate only when supplied.
+  const sasContractId = input.sasContractId?.trim() || undefined;
+  if (sasContractId && !StrKey.isValidContract(sasContractId)) {
+    errors.push("SAS contract id must be a valid C... contract address.");
+  }
+  const indexerContractId = input.indexerContractId?.trim() || undefined;
+  if (indexerContractId && !StrKey.isValidContract(indexerContractId)) {
+    errors.push("Indexer contract id must be a valid C... contract address.");
+  }
+
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, config: { rpcUrl, networkPassphrase, registryContractId } };
+  return {
+    ok: true,
+    config: {
+      rpcUrl,
+      networkPassphrase,
+      registryContractId,
+      ...(sasContractId ? { sasContractId } : {}),
+      ...(indexerContractId ? { indexerContractId } : {}),
+    },
+  };
 }
 
 /** Reads `?rpc=&passphrase=&registry=` (or `?network=<preset>`) from a query string. */
@@ -96,6 +119,10 @@ export function configFromQuery(search: string): Partial<ExplorerConfig> {
   if (passphrase) out.networkPassphrase = passphrase;
   const registry = params.get("registry");
   if (registry) out.registryContractId = registry;
+  const sas = params.get("sas");
+  if (sas) out.sasContractId = sas;
+  const indexer = params.get("indexer");
+  if (indexer) out.indexerContractId = indexer;
   return out;
 }
 
@@ -112,5 +139,7 @@ export function configToQuery(config: ExplorerConfig): string {
     params.set("passphrase", config.networkPassphrase);
   }
   params.set("registry", config.registryContractId);
+  if (config.sasContractId) params.set("sas", config.sasContractId);
+  if (config.indexerContractId) params.set("indexer", config.indexerContractId);
   return `?${params.toString()}`;
 }

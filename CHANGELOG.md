@@ -15,6 +15,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Indexer | `soroban_sas_indexer.wasm` | `TBD` |
 
 ### Added
+- `contracts/time-window-resolver`, a schema resolver that enforces a
+  configurable `cooldown_period_seconds` between attestations issued to the
+  same recipient. It records `last_attested_time` per recipient in persistent
+  storage, rejects issuance while `last + cooldown` is still in the future
+  with the new `SASError::CooldownActive` (code `421`), and lets the resolver
+  admin change the window with authorization (`COOLDOWN_UPDATED` event).
+  Different recipients have independent windows; exactly-at-boundary issuance
+  succeeds and refreshes the timestamp. See
+  [`docs/time-window-resolver.md`](docs/time-window-resolver.md). (#549)
+- Newest-first convenience reads for every lookup dimension:
+  `get_atts_by_recipient_recent`, `get_atts_by_schema_recent`, and
+  `get_atts_by_attester_recent` return the newest `limit` UIDs (newest
+  first) without a cursor, deriving the start position from the tail
+  counter and reading backward across chunk boundaries. The
+  `get_recipient_recent_filtered` / `get_schema_recent_filtered` /
+  `get_attester_recent_filtered` variants add `include_revoked` so the
+  active-only view keeps descending order while skipping revoked/replaced
+  UIDs. (#450)
+- `Indexer::is_attestation_indexed(uid)`: a fast existence check that reads
+  the UID's `(INDEXED_KEY, uid)` idempotency record directly instead of
+  walking recipient, schema, or attester chunks. It renews the instance TTL
+  (and the record's TTL when present), writes nothing, creates no storage for
+  unknown UIDs, and does not count toward the per-ledger query limit. A unit
+  test meters it against a paginated chunk walk over the same UIDs and
+  requires at least 70% fewer CPU instructions. (#542)
 - Reverse cursor pagination for recipient, schema, and attester index lookups,
   with stable next cursors and bounded chunk reads. (#449)
 - Version 2 Axelar GMP proof payloads with EVM schema UID, EVM recipient,
@@ -76,6 +101,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validator and `validate_schema_syntax` both replay the shared golden
   vectors in `packages/soroban-sas-common/test_vectors/schema_syntax.tsv`.
   Built and tested in the *Developer Tooling* workflow. (#346)
+- Nullifier set management in the ZK verifier contract. Checking and
+  recording a nullifier is now a single atomic step: a nullifier is spent
+  only when the whole proof verification succeeds, so a rejected proof never
+  burns its nullifier, and a nullifier that was already spent is rejected
+  with `ZKError::NullifierSpent` (the contract error type `ZkVerifierError`
+  is aliased as `ZKError`). Nullifier records are renewed with the contract
+  instance's own TTL policy, so a spent nullifier never expires before the
+  instance that guards it. The new `are_nullifiers_used` query lets
+  off-chain clients check a whole batch of nullifiers with a single contract
+  call instead of one call per nullifier. (#547)
+- WebAssembly build of the Rust SDK for serverless edge runtimes
+  (`wasm32-unknown-unknown`). The new `wasm` feature replaces the native
+  `ureq` transport with a `web-sys` `fetch` implementation, so RPC calls are
+  awaited through the runtime's global `fetch` instead of blocking the event
+  loop; the synchronous RPC methods are wasm-only errors that point at their
+  `*_async` counterparts. Host-only APIs (`SASClient`, the `Val` bridge
+  helpers) are compiled out for wasm, and the new
+  `soroban_sas_sdk::attestation` module decodes attestations straight from
+  the XDR wire format into a JSON-serializable `AttestationRecord`, so edge
+  runtimes can read attestations without a Soroban host environment.
+  `examples/cloudflare-worker` is a deployable Worker template that answers
+  `GET /attestation/{uid}` from a Soroban RPC node, `docs/edge-runtime.md`
+  documents the feature and the deployment steps, and CI keeps the edge build
+  working through the new `wasm-sdk` job. (#553)
+- `soroban-sas schema wizard`: interactive schema registration that prompts
+  for a name, field-by-field definitions, revocability, an optional resolver
+  address, and a metadata URI, validating every answer as it is typed
+  (dialoguer prompts on a TTY; a line-based fallback reads piped stdin when
+  not). It estimates the network fee by simulating the exact call, shows a
+  summary for confirmation, and only then signs and submits the
+  registration. The name and metadata URI are off-chain labels echoed in the
+  result, since the registry identifies schemas by the
+  `(schema, resolver, revocable)` tuple alone. (#469)
 
 ### Fixed
 - Missing recipients are handled gracefully. `AttestationRequestBuilder` no

@@ -505,6 +505,11 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     printf '    "sas": "%s",\n' "$SAS_ID"
     printf '    "indexer": "%s"\n' "$INDEXER_ID"
     printf '  },\n'
+    printf '  "wasmSha256": {\n'
+    printf '    "schemaRegistry": "%s",\n' "$(sha256sum "$WASM_REGISTRY" | cut -d' ' -f1)"
+    printf '    "sas": "%s",\n' "$(sha256sum "$WASM_SAS" | cut -d' ' -f1)"
+    printf '    "indexer": "%s"\n' "$(sha256sum "$WASM_INDEXER" | cut -d' ' -f1)"
+    printf '  },\n'
     printf '  "envFile": "%s",\n' "$ENV_FILE_ABS"
     printf '  "activationCommand": "source %s"\n' "$ENV_FILE"
     printf '}\n'
@@ -526,20 +531,3 @@ info ""
 info "    source $ENV_FILE"
 info ""
 info "next step: use soroban-sas-cli against these contracts,"
-step "Deployment complete on $NETWORK"
-printf '\n'
-printf '  %-16s %s\n' "schema-registry:" "$REGISTRY_ID"
-printf '  %-16s %s\n' "sas:" "$SAS_ID"
-printf '  %-16s %s\n' "indexer:" "$INDEXER_ID"
-printf '  %-16s %s\n' "admin:" "$ADMIN_ADDRESS"
-printf '  %-16s %s\n' "network:" "$NETWORK ($RPC_URL)"
-printf '\n'
-info "results written to $ENV_FILE (key names match .env.example)"
-if [[ "$EXPORT_SECRET" == true ]]; then
-    info "ADMIN_SECRET_KEY is in $ENV_FILE — guard this file carefully"
-else
-    info "signing uses the '$IDENTITY_NAME' CLI identity (no secret key stored in .env)"
-fi
-info "next step: source $ENV_FILE and use soroban-sas-cli against these contracts,"
-info "e.g.: cargo run -p soroban-sas-cli -- schema register ..."
-

@@ -78,6 +78,11 @@ pub enum SASError {
     InvalidTimeRange = 418,
     /// Expiration time exceeds schema's max_ttl or perpetual attestation under capped schema (#441).
     InvalidExpirationTime = 419,
+    /// A new attestation was attempted under a schema the protocol admin has quarantined (#539).
+    SchemaQuarantined = 420,
+    /// A time-window resolver rejected an attestation because the recipient's
+    /// cooldown period has not elapsed yet (#549).
+    CooldownActive = 421,
 
     /// Circuit breaker errors
     /// The contract is paused and write operations are not permitted (#255).

@@ -27,7 +27,9 @@ use soroban_sdk::xdr::{
     TransactionExt, TransactionSignaturePayload, TransactionSignaturePayloadTaggedTransaction,
     TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
-use soroban_sdk::{Env, TryFromVal, TryIntoVal, Val};
+use soroban_sdk::Env;
+#[cfg(not(target_arch = "wasm32"))]
+use soroban_sdk::{TryFromVal, TryIntoVal, Val};
 
 /// Placeholder source account used for read-only `simulateTransaction`
 /// calls, which never touch ledger state or require a real signer — RPC
@@ -294,6 +296,11 @@ pub fn sign_transaction_with_network_id(
 
 /// Converts a Rust value into an `ScVal` contract-call argument, via the
 /// host `Val` bridge (see module docs for why not the direct `ScVal` impl).
+///
+/// Host-only: the `Val` bridge is provided by the native Soroban
+/// environment, which does not exist on `wasm32` targets (#553). Edge
+/// runtimes build contract-call arguments directly as `ScVal` values.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn encode_arg<T>(env: &Env, value: &T) -> Result<ScVal, SdkError>
 where
     T: TryIntoVal<Env, Val>,
@@ -312,20 +319,36 @@ where
 /// direct `T: TryFromVal<Env, ScVal>` bound, since `soroban-sdk` only
 /// generates that direct impl for `#[contracttype]` types behind the
 /// `test`/`testutils` cfg (see module docs).
+///
+/// Host-only: the `Val` bridge is provided by the native Soroban
+/// environment, which does not exist on `wasm32` targets (#553). Edge
+/// runtimes use [`decode_scval`] to decode the raw `ScVal` instead.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_result<T>(env: &Env, result_xdr_base64: &str) -> Result<T, SdkError>
 where
     T: TryFromVal<Env, Val>,
 {
     // RPC-supplied payload: bound recursion depth and size (issue #136).
-    let sc_val = ScVal::from_xdr_base64(
-        result_xdr_base64,
-        crate::limits::default_rpc_response_limits(),
-    )
-    .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))?;
+    let sc_val = decode_scval(result_xdr_base64)?;
     let val: Val = Val::try_from_val(env, &sc_val)
         .map_err(|_| SdkError::DecodingError("failed to convert ScVal to host Val".to_string()))?;
     T::try_from_val(env, &val)
         .map_err(|_| SdkError::DecodingError("failed to convert Val to target type".to_string()))
+}
+
+/// Decodes the base64 `ScVal` XDR returned in a successful simulation's
+/// `results[0].xdr` field into an `ScVal`.
+///
+/// This is the portable counterpart of [`decode_result`]: it only needs the
+/// XDR codec, so it works on every target, including `wasm32` edge runtimes
+/// where the host `Val` bridge does not exist (#553).
+pub fn decode_scval(result_xdr_base64: &str) -> Result<ScVal, SdkError> {
+    // RPC-supplied payload: bound recursion depth and size (issue #136).
+    ScVal::from_xdr_base64(
+        result_xdr_base64,
+        crate::limits::default_rpc_response_limits(),
+    )
+    .map_err(|e| SdkError::DecodingError(format!("failed to decode result xdr: {e:?}")))
 }
 
 #[cfg(test)]
