@@ -27,6 +27,7 @@ pub use eip712::{
     SchemaError, StructDef, DOMAIN_STRUCT_NAME, EIP712_PREFIX,
 };
 
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String, Vec};
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, String, Symbol};
 
 /// Approximate number of ledgers in one year at five seconds per ledger.
@@ -185,6 +186,14 @@ pub struct SchemaRecord {
     pub revocable: bool,
     pub schema: String,
     pub deprecated: bool,
+}
+
+/// Status of schema delegates, partitioned into active and expired.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegatesStatus {
+    pub active: Vec<Address>,
+    pub expired: Vec<Address>,
 }
 
 #[contracttype]

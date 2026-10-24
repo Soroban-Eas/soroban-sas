@@ -212,8 +212,11 @@ A resolver's failure is a normal, typed contract error (`SASError::ResolverRejec
 To support DAOs, enterprise organizations, and multi-issuer systems without sharing private keys or registering duplicate schemas, schema owners can maintain a dynamic allow-list of authorized delegates.
 
 ### Management
-- `add_delegate(uid: UID, delegate: Address)`: Adds an address to the schema's allow-list. Requires authorization from the primary schema owner. Emits `SchemaDelegateAdded`.
+- `add_delegate(uid: UID, delegate: Address)`: Adds an address to the schema's allow-list with perpetual validity. Requires authorization from the primary schema owner. Emits `SchemaDelegateAdded`.
+- `add_delegate_with_expiry(schema_uid: UID, delegate: Address, expiry_timestamp: u64)`: Adds an address to the schema's allow-list with an expiration timestamp. Once `expiry_timestamp` has passed, the delegate automatically loses permissions without requiring manual revocation. Requires authorization from the primary schema owner. Emits `SchemaDelegateAdded`.
 - `remove_delegate(uid: UID, delegate: Address)`: Removes an address from the schema's allow-list. Requires authorization from the primary schema owner. Emits `SchemaDelegateRemoved`.
+- `self_revoke_delegate(uid: UID, delegate: Address)`: Allows a delegate to self-revoke their own authorization at any time. Requires authorization from the delegate. Emits `SchemaDelegateRemoved`.
+- `get_delegates(uid: UID)`: Returns `DelegatesStatus { active, expired }`, partitioning the schema's registered delegates into currently active (within validity window or perpetual) vs expired.
 
 ### Verification and Issuance
 - When an attestation is submitted to SAS, `attest_internal` queries the schema registry's `is_authorized(uid, attester)` method.

@@ -34,6 +34,14 @@ pub const UPGRADE_EVENT: Symbol = symbol_short!("UPGRADE");
 /// Stored under `(AUTHORIZED_DELEGATES, schema_uid, delegate_address) -> bool`.
 pub const AUTHORIZED_DELEGATES: Symbol = symbol_short!("DELEGATES");
 
+/// Storage key for delegate expiration timestamps.
+/// Stored under `(DELEGATE_EXPIRY, schema_uid, delegate_address) -> u64`.
+pub const DELEGATE_EXPIRY: Symbol = symbol_short!("DELEXP");
+
+/// Storage key for schema delegate lists.
+/// Stored under `(SCHEMA_DELEGATES, schema_uid) -> Vec<Address>`.
+pub const SCHEMA_DELEGATES: Symbol = symbol_short!("SCH_DEL");
+
 /// Storage key for a schema's multi-signature owner set (#288).
 /// Stored under `(SCHEMA_OWNERS, schema_uid) -> OwnerSet`.
 pub const SCHEMA_OWNERS: Symbol = symbol_short!("OWNERS");
