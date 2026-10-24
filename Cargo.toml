@@ -16,6 +16,7 @@ members = [
     "tools/prometheus-exporter",
     "contracts/cross-chain-verifier",
     "contracts/zk-verifier",
+    "tools/sas-docgen",
 ]
 exclude = ["fuzz", "tools/gas-profiler"]
 resolver = "2"

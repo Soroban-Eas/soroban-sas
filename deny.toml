@@ -16,6 +16,9 @@ ignore = [
     "RUSTSEC-2026-0009",
     # rand unsoundness pulled in via soroban-env-host.
     "RUSTSEC-2026-0097",
+    # tokio AsyncFd I/O-safety unsoundness; the fixed tokio needs Rust 1.85 but
+    # the workspace is pinned to 1.83. Dev-only (SDK tests); AsyncFd is unused.
+    "RUSTSEC-2026-0386",
     # webpki-roots: transitive via ureq 2.12.1 holding webpki-roots 0.26.11.
     "RUSTSEC-2026-0381",
     # rustls-webpki / webpki transitive via ureq.

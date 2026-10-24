@@ -363,9 +363,90 @@ fn test_record_schema_registered() {
     m.record_event(&event, "test_contract");
     assert_eq!(m.schema_registered_total.get(), 1.0);
     assert_eq!(m.active_schemas.get(), 1.0);
+    assert_eq!(m.total_active_schemas.get(), 1.0);
 }
 
-// ── Registry completeness ─────────────────────────────────────────────────────
+#[test]
+fn test_record_batch_metrics() {
+    let metrics = SasMetrics::new().unwrap();
+
+    let event = SasEvent::BatchAttested(BatchAttested {
+        count: 25,
+        attester_count: 8,
+    });
+    metrics.record_event(&event, "test_contract");
+
+    assert_eq!(metrics.registered_attesters.get(), 8.0);
+    assert_eq!(metrics.total_registered_attesters.get(), 8.0);
+    assert_eq!(metrics.batch_size_distribution.get_sample_count(), 1);
+    assert_eq!(metrics.batch_size_distribution.get_sample_sum(), 25.0);
+
+    metrics.record_batch_size(15);
+    assert_eq!(metrics.batch_size_distribution.get_sample_count(), 2);
+    assert_eq!(metrics.batch_size_distribution.get_sample_sum(), 40.0);
+}
+
+#[test]
+fn test_record_cpu_instructions() {
+    let metrics = SasMetrics::new().unwrap();
+    metrics.record_cpu_instructions(1_500_000);
+    metrics.record_cpu_instructions(2_500_000);
+
+    assert_eq!(metrics.transaction_cpu_instructions.get_sample_count(), 2);
+    assert_eq!(
+        metrics.transaction_cpu_instructions.get_sample_sum(),
+        4_000_000.0
+    );
+}
+
+#[test]
+fn test_contract_reverts_and_pause() {
+    let metrics = SasMetrics::new().unwrap();
+
+    // Reentrancy error (502)
+    metrics.record_contract_revert(502);
+    // Contract paused error (501)
+    metrics.record_contract_revert(501);
+
+    assert_eq!(
+        metrics
+            .contract_reverts_total
+            .with_label_values(&["502"])
+            .get(),
+        1.0
+    );
+    assert_eq!(
+        metrics
+            .contract_reverts_total
+            .with_label_values(&["501"])
+            .get(),
+        1.0
+    );
+    // Error 501 sets paused gauge to 1.0
+    assert_eq!(metrics.contract_paused.get(), 1.0);
+
+    metrics.set_contract_paused(false);
+    assert_eq!(metrics.contract_paused.get(), 0.0);
+}
+
+#[test]
+fn test_attester_and_schema_gauges() {
+    let metrics = SasMetrics::new().unwrap();
+
+    metrics.set_active_schemas(42.0);
+    assert_eq!(metrics.active_schemas.get(), 42.0);
+    assert_eq!(metrics.total_active_schemas.get(), 42.0);
+
+    metrics.set_registered_attesters(10.0);
+    assert_eq!(metrics.registered_attesters.get(), 10.0);
+    assert_eq!(metrics.total_registered_attesters.get(), 10.0);
+
+    metrics.record_attester_registered();
+    assert_eq!(metrics.registered_attesters.get(), 11.0);
+
+    metrics.record_attester_revoked();
+    assert_eq!(metrics.registered_attesters.get(), 10.0);
+}
 
 #[test]
 fn test_registry_contains_all_required_issue_569_metrics() {
@@ -405,6 +486,7 @@ fn test_registry_contains_all_required_issue_569_metrics() {
 #[test]
 fn test_registry_contains_all_existing_metrics() {
     let m = make_metrics();
+    m.record_contract_revert(500);
     let metric_families = m.registry.gather();
     let names: Vec<&str> = metric_families.iter().map(|f| f.get_name()).collect();
 
@@ -417,7 +499,14 @@ fn test_registry_contains_all_existing_metrics() {
     assert!(names.contains(&"sas_indexer_strict_updated_total"));
     assert!(names.contains(&"sas_active_attestations"));
     assert!(names.contains(&"sas_active_schemas"));
+    assert!(names.contains(&"sas_total_active_schemas"));
+    assert!(names.contains(&"sas_registered_attesters"));
+    assert!(names.contains(&"sas_total_registered_attesters"));
+    assert!(names.contains(&"sas_contract_paused"));
     assert!(names.contains(&"sas_event_processing_duration_seconds"));
+    assert!(names.contains(&"sas_batch_size_distribution"));
+    assert!(names.contains(&"sas_transaction_cpu_instructions"));
+    assert!(names.contains(&"sas_contract_reverts_total"));
 }
 
 // ── Prometheus text exposition format ─────────────────────────────────────────

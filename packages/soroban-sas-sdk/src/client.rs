@@ -527,6 +527,37 @@ impl SASClient {
         Ok(result)
     }
 
+    /// Calls `SchemaRegistry::get_schemas(start, limit)` on `registry_contract_id` via
+    /// `simulateTransaction` to retrieve up to `limit` registered schemas from index `start`.
+    pub fn get_schemas(
+        &self,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        start: u32,
+        limit: u32,
+    ) -> Result<soroban_sdk::Vec<SchemaRecord>, SdkError> {
+        let env = &Env::default();
+        let args = vec![
+            simulate::encode_arg(env, &start)?,
+            simulate::encode_arg(env, &limit)?,
+        ];
+        invoke_read_only(env, rpc, registry_contract_id, "get_schemas", args)
+    }
+
+    /// Calls `SchemaRegistry::get_creator(uid)` on `registry_contract_id` via
+    /// `simulateTransaction` to retrieve the creator address of schema `uid`.
+    pub fn get_creator(
+        &self,
+        rpc: &RpcClient,
+        registry_contract_id: &str,
+        uid: &[u8; 32],
+    ) -> Result<Option<Address>, SdkError> {
+        let env = &Env::default();
+        let uid = UID(BytesN::from_array(env, uid));
+        let arg = simulate::encode_arg(env, &uid)?;
+        invoke_read_only(env, rpc, registry_contract_id, "get_creator", vec![arg])
+    }
+
     /// Calls `SchemaRegistry::get_schema_by_content(schema, resolver,
     /// revocable)` on `registry_contract_id` via `simulateTransaction` — a pure
     /// read, same as [`get_schema`](Self::get_schema).

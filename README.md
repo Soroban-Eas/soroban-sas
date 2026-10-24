@@ -384,6 +384,7 @@ TMPDIR=/tmp cargo test --workspace
 - [Fee Collection and Treasury Mechanics](docs/fee-collection-and-treasury.md): protocol fee configuration, treasury routing, and token withdrawals.
 - [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md): localization conventions, terminology glossary, and contribution guidelines.
 - [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
+- [Operations and Alerts Runbook](docs/OPERATIONS_AND_ALERTS_RUNBOOK.md): alert triage, incident response procedures, Alertmanager routing, and notification setup for PagerDuty and Discord.
 - [Time-Window Resolver](docs/time-window-resolver.md): enforcing minimum
   delays between recurring attestations issued to the same recipient, with
   cooldown boundaries, administrative updates, and storage expiry limits.

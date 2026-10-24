@@ -53,6 +53,7 @@
       <button type="button" role="tab" id="tab-browse" aria-controls="browse" aria-selected="true">Browse</button>
       <button type="button" role="tab" id="tab-validate" aria-controls="validate" aria-selected="false">Validate a schema</button>
       <button type="button" role="tab" id="tab-designer" aria-controls="designer" aria-selected="false">Schema designer</button>
+      <button type="button" role="tab" id="tab-verify" aria-controls="verify" aria-selected="false">Verify Attestation / QR</button>
       <button type="button" role="tab" id="tab-stream" aria-controls="stream" aria-selected="false">Live attestations</button>
     </nav>
 
@@ -157,6 +158,8 @@
         <button type="button" id="designer-register" class="primary">Register via Wallet (Testnet)</button>
         <p id="designer-registration-status" role="status" aria-live="polite"></p>
       </section>
+
+      <section id="verify" role="tabpanel" aria-labelledby="tab-verify" class="verify-panel" hidden></section>
     </main>
 
     <script type="module" src="./src/main.ts"></script>

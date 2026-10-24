@@ -58,7 +58,7 @@
 //! ```
 
 use crate::Attestation;
-use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env};
+use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 /// Prefix distinguishing SAS off-chain payloads from other signed messages
 /// (analogous to EIP-191's `\x19\x01` prefix).
@@ -105,6 +105,16 @@ pub struct AttestationDomain {
     pub contract: Address,
     /// Issuer-chosen nonce; a signature is only valid for this exact value.
     pub nonce: u64,
+}
+
+/// EIP-712 domain separator structure for off-chain message signing.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Eip712Domain {
+    pub name: String,
+    pub version: String,
+    pub chain_id: BytesN<32>,
+    pub verifying_contract: Address,
 }
 
 /// Hashes the domain separator.

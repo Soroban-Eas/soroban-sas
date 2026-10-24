@@ -17,6 +17,10 @@ Browsing remains read-only. The designer supports explicit Testnet registration 
   and Skill Certification templates; validates duplicate and illegal identifiers;
   computes a deterministic preview UID via a browser WebAssembly SHA-256 module
   over canonical Soroban XDR. Tests pin the Rust golden UID vector.
+- **QR Code & Mobile Verification (#485)**: Generates verifiable QR codes and
+  secure deep-link URLs for in-person checks, physical event badges, and ticketing.
+  Scanning opens a high-contrast mobile verification screen verifying directly against
+  Soroban RPC with offline Ed25519 signature fallback. Exportable as SVG and PNG.
 - **Live attestation feed**: streams recent attestations as they are
   emitted, with instant search by Attestation UID, Schema UID, recipient or
   attester. Matches are deep-linkable via the page URL, and each result
@@ -68,6 +72,10 @@ can serve it.
 | `src/fixtures.ts` | Demo data, and `FixtureCaller`, an in-memory registry with the contract's encoding and pagination rules |
 | `src/feed.ts` | Live attestation feed: polling, search filtering, status derivation and URL deep-linking |
 | `src/view.ts`, `src/app.ts` | DOM rendering and page wiring |
+| `src/qrcode.ts` | Zero-dependency QR Code generator, SVG and PNG export |
+| `src/attestation.ts` | Deep-link builder/parser, Soroban RPC verification, and offline cryptographic proof |
+| `src/mobile-verify.ts` | High-contrast mobile verification badge and UI |
+| `src/qr-view.ts` | Explorer QR Code generator panel with SVG/PNG download and deep-linking |
 
 ## Keeping the validator in sync with the contract
 

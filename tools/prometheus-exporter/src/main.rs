@@ -27,7 +27,9 @@
 use anyhow::Result;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
-use prometheus::{Counter, Encoder, Gauge, Histogram, HistogramOpts, Registry, TextEncoder};
+use prometheus::{
+    Counter, CounterVec, Encoder, Gauge, Histogram, HistogramOpts, Opts, Registry, TextEncoder,
+};
 use soroban_sas_sdk::events::SasEvent;
 use std::env;
 use std::net::SocketAddr;
@@ -98,22 +100,12 @@ pub struct SasMetrics {
 
     // ── Issue #569: required histograms ───────────────────────────────────────
     /// Distribution of batch sizes (attestations per batch operation).
-    ///
-    /// Use this to understand whether clients are using batching efficiently.
-    /// A p99 below 5 with a high `sas_attestations_total` rate indicates
-    /// clients are not batching and each attestation is a separate transaction.
     pub sas_attestation_batch_size: Histogram,
 
     /// End-to-end transaction latency from submission to ledger confirmation.
-    ///
-    /// Histogram buckets cover 1 ms–10 s. The p99 drives the SLA alert:
-    /// `histogram_quantile(0.99, rate(sas_transaction_latency_seconds_bucket[5m]))`
     pub sas_transaction_latency_seconds: Histogram,
 
     /// CPU instructions consumed per transaction as reported by Soroban.
-    ///
-    /// Soroban's hard limit is 100 M instructions; approaching that limit
-    /// means the transaction is near the compute ceiling.
     pub sas_cpu_instructions_consumed: Histogram,
 
     // ── Issue #569: required counters ─────────────────────────────────────────
@@ -136,7 +128,14 @@ pub struct SasMetrics {
     pub indexer_strict_updated_total: Counter,
     pub active_attestations: Gauge,
     pub active_schemas: Gauge,
+    pub total_active_schemas: Gauge,
+    pub registered_attesters: Gauge,
+    pub total_registered_attesters: Gauge,
+    pub contract_paused: Gauge,
     pub event_processing_duration: Histogram,
+    pub batch_size_distribution: Histogram,
+    pub transaction_cpu_instructions: Histogram,
+    pub contract_reverts_total: CounterVec,
 }
 
 impl SasMetrics {
@@ -245,6 +244,30 @@ impl SasMetrics {
         let active_schemas = Gauge::new("sas_active_schemas", "Current number of active schemas")?;
         registry.register(Box::new(active_schemas.clone()))?;
 
+        let total_active_schemas = Gauge::new(
+            "sas_total_active_schemas",
+            "Total number of active schemas registered on-chain",
+        )?;
+        registry.register(Box::new(total_active_schemas.clone()))?;
+
+        let registered_attesters = Gauge::new(
+            "sas_registered_attesters",
+            "Total number of currently registered attesters",
+        )?;
+        registry.register(Box::new(registered_attesters.clone()))?;
+
+        let total_registered_attesters = Gauge::new(
+            "sas_total_registered_attesters",
+            "Total count of registered attester keyholders",
+        )?;
+        registry.register(Box::new(total_registered_attesters.clone()))?;
+
+        let contract_paused = Gauge::new(
+            "sas_contract_paused",
+            "Circuit breaker pause status (1 if paused, 0 if operational)",
+        )?;
+        registry.register(Box::new(contract_paused.clone()))?;
+
         let event_processing_duration = Histogram::with_opts(
             HistogramOpts::new(
                 "sas_event_processing_duration_seconds",
@@ -255,6 +278,46 @@ impl SasMetrics {
             ]),
         )?;
         registry.register(Box::new(event_processing_duration.clone()))?;
+
+        let batch_size_distribution = Histogram::with_opts(
+            HistogramOpts::new(
+                "sas_batch_size_distribution",
+                "Distribution of transaction batch sizes for multi-attest and multi-revoke operations",
+            )
+            .buckets(vec![
+                1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0,
+            ]),
+        )?;
+        registry.register(Box::new(batch_size_distribution.clone()))?;
+
+        let transaction_cpu_instructions = Histogram::with_opts(
+            HistogramOpts::new(
+                "sas_transaction_cpu_instructions",
+                "Contract execution CPU instructions consumed per transaction",
+            )
+            .buckets(vec![
+                50_000.0,
+                100_000.0,
+                250_000.0,
+                500_000.0,
+                1_000_000.0,
+                2_500_000.0,
+                5_000_000.0,
+                10_000_000.0,
+                25_000_000.0,
+                50_000_000.0,
+            ]),
+        )?;
+        registry.register(Box::new(transaction_cpu_instructions.clone()))?;
+
+        let contract_reverts_total = CounterVec::new(
+            Opts::new(
+                "sas_contract_reverts_total",
+                "Total number of contract reverts grouped by error code",
+            ),
+            &["error_code"],
+        )?;
+        registry.register(Box::new(contract_reverts_total.clone()))?;
 
         Ok(Self {
             registry,
@@ -273,7 +336,14 @@ impl SasMetrics {
             indexer_strict_updated_total,
             active_attestations,
             active_schemas,
+            total_active_schemas,
+            registered_attesters,
+            total_registered_attesters,
+            contract_paused,
             event_processing_duration,
+            batch_size_distribution,
+            transaction_cpu_instructions,
+            contract_reverts_total,
         })
     }
 
@@ -303,16 +373,29 @@ impl SasMetrics {
                 self.sas_attestations_total.inc_by(count);
                 self.active_attestations.add(count);
                 self.sas_attestation_batch_size.observe(count);
+                self.batch_size_distribution.observe(count);
+                if batch.attester_count > 0 {
+                    self.registered_attesters.set(batch.attester_count as f64);
+                    self.total_registered_attesters
+                        .set(batch.attester_count as f64);
+                }
             }
             SasEvent::BatchRevoked(batch) => {
                 self.batch_revoked_total.inc();
                 let count = batch.count as f64;
                 self.sas_revocations_total.inc_by(count);
                 self.active_attestations.sub(count);
+                self.batch_size_distribution.observe(count);
+                if batch.attester_count > 0 {
+                    self.registered_attesters.set(batch.attester_count as f64);
+                    self.total_registered_attesters
+                        .set(batch.attester_count as f64);
+                }
             }
             SasEvent::SchemaRegistered(_) => {
                 self.schema_registered_total.inc();
                 self.active_schemas.inc();
+                self.total_active_schemas.inc();
             }
             SasEvent::FeeConfigUpdated(_) => {
                 self.fee_config_updated_total.inc();
@@ -324,37 +407,71 @@ impl SasMetrics {
         timer.observe_duration();
     }
 
+    pub fn record_batch_size(&self, size: u32) {
+        let count = size as f64;
+        self.sas_attestation_batch_size.observe(count);
+        self.batch_size_distribution.observe(count);
+    }
+
     /// Record the end-to-end latency for a single transaction (seconds).
-    ///
-    /// Call this after the transaction is confirmed on-ledger using the delta
-    /// between your submission timestamp and the ledger close time.
-    ///
-    /// ```rust,ignore
-    /// let start = std::time::Instant::now();
-    /// submit_transaction(&tx).await?;
-    /// metrics.record_transaction_latency(start.elapsed().as_secs_f64());
-    /// ```
     pub fn record_transaction_latency(&self, latency_seconds: f64) {
         self.sas_transaction_latency_seconds
             .observe(latency_seconds);
     }
 
     /// Record the CPU instruction count for a Soroban transaction.
-    ///
-    /// The `instructions` value comes from the `TransactionMeta::V3` field
-    /// `soroban_meta.resources.instructions` in the ledger close metadata.
     pub fn record_cpu_instructions(&self, instructions: u64) {
-        self.sas_cpu_instructions_consumed
-            .observe(instructions as f64);
+        let inst = instructions as f64;
+        self.sas_cpu_instructions_consumed.observe(inst);
+        self.transaction_cpu_instructions.observe(inst);
     }
 
     /// Increment the re-index failure counter.
-    ///
-    /// Call this when the indexer fails to process a ledger range and must
-    /// skip or defer it.  Any non-zero value in production should trigger an
-    /// alert.
     pub fn record_reindex_failure(&self) {
         self.sas_reindex_failures_total.inc();
+    }
+
+    pub fn record_contract_revert(&self, error_code: u32) {
+        let code_str = error_code.to_string();
+        self.contract_reverts_total
+            .with_label_values(&[&code_str])
+            .inc();
+        if error_code == 501 {
+            self.contract_paused.set(1.0);
+        }
+    }
+
+    pub fn record_contract_revert_str(&self, error_code: &str) {
+        self.contract_reverts_total
+            .with_label_values(&[error_code])
+            .inc();
+        if error_code == "501" || error_code == "ContractPaused" {
+            self.contract_paused.set(1.0);
+        }
+    }
+
+    pub fn set_active_schemas(&self, count: f64) {
+        self.active_schemas.set(count);
+        self.total_active_schemas.set(count);
+    }
+
+    pub fn set_registered_attesters(&self, count: f64) {
+        self.registered_attesters.set(count);
+        self.total_registered_attesters.set(count);
+    }
+
+    pub fn record_attester_registered(&self) {
+        self.registered_attesters.inc();
+        self.total_registered_attesters.inc();
+    }
+
+    pub fn record_attester_revoked(&self) {
+        self.registered_attesters.dec();
+        self.total_registered_attesters.dec();
+    }
+
+    pub fn set_contract_paused(&self, paused: bool) {
+        self.contract_paused.set(if paused { 1.0 } else { 0.0 });
     }
 }
 

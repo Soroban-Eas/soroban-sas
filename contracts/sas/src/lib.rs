@@ -196,6 +196,21 @@ fn exit_reentrancy_guard(env: &Env) {
     env.storage().instance().remove(&REENTRANCY_GUARD);
 }
 
+/// Returns the EIP-712 domain separator fields for off-chain structured
+/// message signing. Wallet connectors (Freighter `signAuthEntry`, Albedo,
+/// MetaMask Snaps) display these fields so users can verify what they sign.
+///
+/// The domain binds signatures to this network and contract address, matching
+/// the on-chain `AttestationDomain` used by `attest_by_delegation`.
+pub fn eip712_domain(env: &Env) -> soroban_sas_common::Eip712Domain {
+    soroban_sas_common::Eip712Domain {
+        name: soroban_sdk::String::from_str(env, "Stellar Attestation Service"),
+        version: soroban_sdk::String::from_str(env, "1"),
+        chain_id: env.ledger().network_id(),
+        verifying_contract: env.current_contract_address(),
+    }
+}
+
 /// Validates that an attestation has not expired. Returns `Ok(())` if valid,
 /// or `Err(SASError::AlreadyExpired)` if the expiration time is set and has passed.
 fn validate_expiration(env: &Env, expiration_time: u64) -> Result<(), SASError> {
@@ -2081,6 +2096,31 @@ impl SAS {
         soroban_sas_common::verify_offchain_signature(&env, &payload_hash, &public_key, &signature);
 
         true
+    }
+
+    /// Returns the EIP-712 typed-data domain for off-chain structured message
+    /// signing. Wallet connectors use this to render readable confirmation
+    /// screens (schema UID, recipient, claims) instead of opaque hex blobs.
+    ///
+    /// The returned domain matches the on-chain `AttestationDomain` used by
+    /// `attest_by_delegation`, so a signature produced over the typed payload
+    /// verifies accurately on-chain.
+    pub fn get_eip712_domain(env: Env) -> soroban_sas_common::Eip712Domain {
+        extend_instance_ttl(&env);
+        eip712_domain(&env)
+    }
+
+    /// Returns the EIP-712 typed-data payload hash for an off-chain attestation
+    /// signed under `nonce`. Wallets display the structured fields; the
+    /// resulting signature is verified by `attest_by_delegation`.
+    pub fn get_eip712_payload_hash(env: Env, attestation: Attestation, nonce: u64) -> BytesN<32> {
+        extend_instance_ttl(&env);
+        let domain = soroban_sas_common::AttestationDomain {
+            network_id: env.ledger().network_id(),
+            contract: env.current_contract_address(),
+            nonce,
+        };
+        soroban_sas_common::hash_offchain_attestation(&env, &attestation, &domain)
     }
 
     pub fn verify_attestation(env: Env, uid: UID) -> bool {
