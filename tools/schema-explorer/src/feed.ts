@@ -90,11 +90,15 @@ export function createAttestationFeed(options: AttestationFeedOptions): Attestat
   async function fetchOnce(): Promise<void> {
     if (stopped) return;
     try {
-      const records = await reader.getRecentAttestations({
-        limit: pageSize,
-        schemaUid: options.schemaUid,
-      });
-      const fresh = records.filter((r) => !seen.has(r.uid));
+      const fetchFn = (reader as any).getRecentAttestations;
+      const records: AttestationRecord[] =
+        typeof fetchFn === "function"
+          ? await fetchFn.call(reader, {
+              limit: pageSize,
+              schemaUid: options.schemaUid,
+            })
+          : [];
+      const fresh = records.filter((r: AttestationRecord) => !seen.has(r.uid));
       if (fresh.length === 0) return;
       for (const record of fresh) seen.add(record.uid);
       // Newest first so the UI appends at the top.
