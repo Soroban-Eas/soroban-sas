@@ -1,0 +1,16 @@
+[package]
+name = "token-gated-resolver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+testutils = ["soroban-sdk/testutils"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+soroban-sas-common = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

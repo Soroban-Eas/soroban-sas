@@ -55,6 +55,10 @@ pub const CONTRACT_PAUSED: Symbol = symbol_short!("PAUSED");
 pub const CONTRACT_UNPAUSED: Symbol = symbol_short!("UNPAUSED");
 /// First topic of every `AttestationRenewed` event.
 pub const ATTESTATION_RENEWED: Symbol = symbol_short!("ATSTRENEW");
+/// First topic of every `FeeDistributed` event (#538).
+pub const FEE_DISTRIBUTED: Symbol = symbol_short!("FEEDIST");
+/// First topic of every schema quarantine toggle (#539).
+pub const SCHEMA_QUARANTINED: Symbol = symbol_short!("SCHQUAR");
 
 /// Payload of the `SchemaRegistered` event.
 ///

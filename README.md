@@ -190,9 +190,9 @@ Precedence (explicit flag > environment variable > TOML default > built-in netwo
 
 ## Delegated Issuance
 
-Delegated issuance and revocation let an attester sign an operation off-chain
+Delegated issuance, revocation, and consented replacement let parties sign an operation off-chain
 while a separate relayer submits and pays for the transaction. See
-[Delegated Issuance and Revocation](docs/delegation.md) for the typed-data
+[Delegated Issuance and Replacement](docs/delegation.md) for the typed-data
 domain, nonce high-watermark rules, key rotation behavior, CLI commands, and
 SDK workflow.
 
