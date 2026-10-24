@@ -13,7 +13,7 @@ clap = { version = "4.0", features = ["derive", "env"] }
 # `editor`/`password` extras pull tempfile's getrandom 0.4 tree, which
 # needs a newer cargo than this workspace's pinned toolchain.
 dialoguer = { version = "0.12", default-features = false }
-ed25519-dalek = "2.0.0"
+ed25519-dalek = "3.0.0"
 hex = "0.4"
 # TOML configuration file support for default RPC/network settings.
 toml = "0.8"
