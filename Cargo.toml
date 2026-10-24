@@ -11,6 +11,7 @@ members = [
     "contracts/token-gated-resolver",
     "contracts/multisig-resolver",
     "contracts/endorsement-resolver",
+    "contracts/blacklist-resolver",
     "tools/prometheus-exporter",
     "contracts/cross-chain-verifier",
     "contracts/zk-verifier",

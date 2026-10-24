@@ -8,8 +8,9 @@ use crate::signature;
 use crate::simulate;
 use crate::strkey::{parse_address, AddressKind};
 use crate::transaction::{SubmissionPolicy, TransactionSubmitter};
+use crate::transaction_signer::TransactionSigner;
 use serde::{Deserialize, Serialize};
-use soroban_sas_common::{Attestation, ExpirationStatus, SchemaRecord, UID};
+use soroban_sas_common::{Attestation, SchemaRecord, UID};
 use soroban_sdk::xdr::{
     ContractDataDurability, ExtensionPoint, Hash, LedgerEntryData, LedgerKey,
     LedgerKeyContractData, Limits, Memo, MuxedAccount, Operation, OperationBody, Preconditions,
@@ -54,31 +55,12 @@ pub struct ArchivedInfo {
 /// simulation reports is added on top.
 const BASE_FEE: u32 = 100;
 
-/// Detailed resource consumption and limits breakdown for a simulated transaction.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceBreakdown {
-    /// CPU instructions consumed during simulation.
-    pub cpu_instructions: u32,
-    /// Memory/ledger read bytes.
-    pub read_bytes: u32,
-    /// Memory/ledger write bytes.
-    pub write_bytes: u32,
-    /// Count of ledger keys in read-only footprint.
-    pub read_only_entries: u32,
-    /// Count of ledger keys in read-write footprint.
-    pub read_write_entries: u32,
-    /// Whether any metric exceeds 80% of network limits.
-    pub approaches_limits: bool,
-    /// Warning messages for metrics exceeding 80% of limits.
-    pub limit_warnings: Vec<String>,
-}
-
 /// Outcome of simulating a write call without signing or submitting it
-/// (issue #329, #473's `--dry-run`): the resource footprint/fee a real submission
+/// (issue #329's `--dry-run`): the resource footprint/fee a real submission
 /// would need to carry, obtained from the same `simulateTransaction` draft
 /// step `SASClient::submit_write` runs before it ever builds a signed
 /// envelope. No sequence number is consumed and no signature is produced.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DryRunResult {
     /// The contract function that was simulated.
     pub function_name: String,
@@ -90,8 +72,6 @@ pub struct DryRunResult {
     pub total_fee: i64,
     /// The ledger the simulation ran against.
     pub latest_ledger: u32,
-    /// Detailed breakdown of CPU, RAM bytes, and storage footprint entries.
-    pub resources: Option<ResourceBreakdown>,
 }
 
 /// Configurable fee policy for simulated write transactions.
@@ -172,6 +152,7 @@ pub struct SASClient {
     secret_seed: Option<[u8; 32]>,
     /// Optional configured Schema Registry contract ID.
     registry_contract_id: Option<String>,
+    external_signer: Option<Arc<dyn TransactionSigner>>,
 }
 
 impl SASClient {
@@ -186,7 +167,38 @@ impl SASClient {
             network_passphrase: None,
             secret_seed: None,
             registry_contract_id: None,
+            external_signer: None,
         }
+    }
+
+    /// Use an external transaction signing backend (for example a Ledger).
+    pub fn with_external_signer(mut self, signer: Arc<dyn TransactionSigner>) -> Self {
+        self.external_signer = Some(signer);
+        self
+    }
+
+    fn effective_public_key(&self, seed: &[u8; 32]) -> Result<[u8; 32], SdkError> {
+        match &self.external_signer {
+            Some(signer) => signer.public_key(),
+            None => Ok(signature::derive_public_key(seed)),
+        }
+    }
+
+    fn verify_attester(
+        &self,
+        env: &Env,
+        seed: &[u8; 32],
+        att: &Attestation,
+    ) -> Result<(), SdkError> {
+        let key = self.effective_public_key(seed)?;
+        let strkey = stellar_strkey::ed25519::PublicKey(key).to_string();
+        let signer = Address::from_string(&SorobanString::from_str(env, &strkey));
+        if format!("{signer:?}") != format!("{:?}", att.attester) {
+            return Err(SdkError::ValidationError(
+                "attestation.attester does not match the selected signer".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Sets the [`SubmissionPolicy`] every write on this client uses.
@@ -337,7 +349,7 @@ impl SASClient {
             simulate::encode_arg(env, &token)?,
             simulate::encode_arg(env, &amount)?,
         ];
-        let public_key = signature::derive_public_key(admin_secret_seed);
+        let public_key = self.effective_public_key(admin_secret_seed)?;
         dry_run_write(rpc, &self.contract_id, "set_fee", args, &public_key)
     }
 
@@ -368,7 +380,7 @@ impl SASClient {
         rpc: &RpcClient,
         admin_secret_seed: &[u8; 32],
     ) -> Result<DryRunResult, SdkError> {
-        let public_key = signature::derive_public_key(admin_secret_seed);
+        let public_key = self.effective_public_key(admin_secret_seed)?;
         dry_run_write(rpc, &self.contract_id, "clear_fee", vec![], &public_key)
     }
 
@@ -725,7 +737,7 @@ impl SASClient {
             .parse()
             .map_err(|e| SdkError::RpcError(format!("invalid min_resource_fee: {e:?}")))?;
 
-        let public_key = signature::derive_public_key(secret_seed);
+        let public_key = self.effective_public_key(secret_seed)?;
         let policy = &self.submission_policy;
 
         let Some(manager) = self.sequence_manager.as_deref() else {
@@ -738,6 +750,7 @@ impl SASClient {
                 next_seq,
                 soroban_data,
                 min_resource_fee,
+                self.external_signer.as_deref(),
             )?;
             return TransactionSubmitter::submit_with_policy(rpc, &signed, policy);
         };
@@ -752,6 +765,7 @@ impl SASClient {
                 reservation.sequence(),
                 soroban_data.clone(),
                 min_resource_fee,
+                self.external_signer.as_deref(),
             )?;
             match TransactionSubmitter::submit_with_policy(rpc, &signed, policy) {
                 Ok(result) => {
@@ -818,7 +832,7 @@ impl SASClient {
         revocable: bool,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_public_key = self.effective_public_key(secret_seed)?;
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
         // The resolver is invoked as a contract on attest/revoke (see
@@ -859,7 +873,7 @@ impl SASClient {
         revocable: bool,
     ) -> Result<DryRunResult, SdkError> {
         let env = &Env::default();
-        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_public_key = self.effective_public_key(secret_seed)?;
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
         let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
@@ -895,7 +909,7 @@ impl SASClient {
         fee_policy: &FeePolicy,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_public_key = self.effective_public_key(secret_seed)?;
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
         let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
@@ -915,6 +929,7 @@ impl SASClient {
             "register",
             args,
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 
@@ -939,7 +954,7 @@ impl SASClient {
         value: i128,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_public_key = self.effective_public_key(secret_seed)?;
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
         let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
@@ -979,7 +994,7 @@ impl SASClient {
         value: i128,
     ) -> Result<DryRunResult, SdkError> {
         let env = &Env::default();
-        let owner_public_key = signature::derive_public_key(secret_seed);
+        let owner_public_key = self.effective_public_key(secret_seed)?;
         let owner_strkey = stellar_strkey::ed25519::PublicKey(owner_public_key).to_string();
         let owner = Address::from_string(&SorobanString::from_str(env, &owner_strkey));
         let resolver = parse_address(env, resolver, AddressKind::Contract, "resolver")?;
@@ -1049,7 +1064,7 @@ impl SASClient {
             simulate::encode_arg(env, &token)?,
             simulate::encode_arg(env, &amount)?,
         ];
-        let public_key = signature::derive_public_key(admin_secret_seed);
+        let public_key = self.effective_public_key(admin_secret_seed)?;
         dry_run_write(rpc, registry_contract_id, "set_fee", args, &public_key)
     }
 
@@ -1083,7 +1098,7 @@ impl SASClient {
         admin_secret_seed: &[u8; 32],
         registry_contract_id: &str,
     ) -> Result<DryRunResult, SdkError> {
-        let public_key = signature::derive_public_key(admin_secret_seed);
+        let public_key = self.effective_public_key(admin_secret_seed)?;
         dry_run_write(rpc, registry_contract_id, "clear_fee", vec![], &public_key)
     }
 
@@ -1123,7 +1138,7 @@ impl SASClient {
         let env = &Env::default();
         let treasury = parse_address(env, treasury, AddressKind::Either, "treasury")?;
         let args = vec![simulate::encode_arg(env, &treasury)?];
-        let public_key = signature::derive_public_key(admin_secret_seed);
+        let public_key = self.effective_public_key(admin_secret_seed)?;
         dry_run_write(rpc, registry_contract_id, "set_treasury", args, &public_key)
     }
 
@@ -1178,7 +1193,7 @@ impl SASClient {
             ));
         }
         let args = vec![simulate::encode_arg(env, &amount)?];
-        let public_key = signature::derive_public_key(admin_secret_seed);
+        let public_key = self.effective_public_key(admin_secret_seed)?;
         dry_run_write(
             rpc,
             registry_contract_id,
@@ -1530,7 +1545,7 @@ impl SASClient {
         attestation: Attestation,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = attestation.attester.env();
-        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        self.verify_attester(env, secret_seed, &attestation)?;
         let arg = simulate::encode_arg(env, &attestation)?;
         self.submit_write(
             rpc,
@@ -1553,7 +1568,7 @@ impl SASClient {
         fee_policy: &FeePolicy,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        self.verify_attester(env, secret_seed, &attestation)?;
         let arg = simulate::encode_arg(env, &attestation)?;
         invoke_write_with_fee_policy(
             rpc,
@@ -1563,21 +1578,8 @@ impl SASClient {
             "attest",
             vec![arg],
             fee_policy,
+            self.external_signer.as_deref(),
         )
-    }
-
-    /// Simulates `attest` without signing or submitting to estimate fees and resource usage.
-    pub fn attest_dry_run(
-        &self,
-        rpc: &RpcClient,
-        secret_seed: &[u8; 32],
-        attestation: Attestation,
-    ) -> Result<DryRunResult, SdkError> {
-        let env = attestation.attester.env();
-        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
-        let arg = simulate::encode_arg(env, &attestation)?;
-        let public_key = signature::derive_public_key(secret_seed);
-        dry_run_write(rpc, &self.contract_id, "attest", vec![arg], &public_key)
     }
 
     /// Calls `SAS::attest_with_value(attestation, token, value)`: like
@@ -1597,7 +1599,7 @@ impl SASClient {
         value: i128,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        ensure_attester_matches_secret(env, secret_seed, &attestation)?;
+        self.verify_attester(env, secret_seed, &attestation)?;
         let token_address = parse_address(env, token, AddressKind::Contract, "token")?;
         let args = vec![
             simulate::encode_arg(env, &attestation)?,
@@ -1653,6 +1655,7 @@ impl SASClient {
             "multi_attest",
             vec![encode_multi_attest_arg(env, &attestations)?],
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 
@@ -1698,21 +1701,8 @@ impl SASClient {
             "revoke",
             vec![arg],
             fee_policy,
+            self.external_signer.as_deref(),
         )
-    }
-
-    /// Simulates `revoke` without signing or submitting to estimate fees and resource usage.
-    pub fn revoke_dry_run(
-        &self,
-        rpc: &RpcClient,
-        secret_seed: &[u8; 32],
-        uid: &[u8; 32],
-    ) -> Result<DryRunResult, SdkError> {
-        let env = &Env::default();
-        let uid = UID(BytesN::from_array(env, uid));
-        let arg = simulate::encode_arg(env, &uid)?;
-        let public_key = signature::derive_public_key(secret_seed);
-        dry_run_write(rpc, &self.contract_id, "revoke", vec![arg], &public_key)
     }
 
     /// Calls `SAS::multi_revoke(uids)`: encodes each UID into one Soroban
@@ -1754,6 +1744,7 @@ impl SASClient {
             "multi_revoke",
             vec![encode_multi_revoke_arg(env, uids)?],
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 
@@ -1827,6 +1818,7 @@ impl SASClient {
             "attest_by_delegation",
             args,
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 
@@ -1895,6 +1887,7 @@ impl SASClient {
             "revoke_by_delegation",
             args,
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 
@@ -1981,7 +1974,7 @@ impl SASClient {
         new_data: Attestation,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        ensure_attester_matches_secret(env, secret_seed, &new_data)?;
+        self.verify_attester(env, secret_seed, &new_data)?;
         let old_uid = UID(BytesN::from_array(env, old_uid));
         let args = vec![
             simulate::encode_arg(env, &old_uid)?,
@@ -2010,7 +2003,7 @@ impl SASClient {
         fee_policy: &FeePolicy,
     ) -> Result<GetTransactionResult, SdkError> {
         let env = &Env::default();
-        ensure_attester_matches_secret(env, secret_seed, &new_data)?;
+        self.verify_attester(env, secret_seed, &new_data)?;
         let old_uid = UID(BytesN::from_array(env, old_uid));
         let args = vec![
             simulate::encode_arg(env, &old_uid)?,
@@ -2024,6 +2017,7 @@ impl SASClient {
             "replace_attestation",
             args,
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 
@@ -2042,7 +2036,7 @@ impl SASClient {
         // Verify the secret seed matches the attester by fetching the attestation first
         let attestation = self.get_attestation(rpc, uid)?;
         if let Some(att) = attestation {
-            ensure_attester_matches_secret(env, secret_seed, &att)?;
+            self.verify_attester(env, secret_seed, &att)?;
         } else {
             return Err(SdkError::InvalidInput("attestation not found".to_string()));
         }
@@ -2076,7 +2070,7 @@ impl SASClient {
         let env = &Env::default();
         let attestation = self.get_attestation(rpc, uid)?;
         if let Some(att) = attestation {
-            ensure_attester_matches_secret(env, secret_seed, &att)?;
+            self.verify_attester(env, secret_seed, &att)?;
         } else {
             return Err(SdkError::InvalidInput("attestation not found".to_string()));
         }
@@ -2093,6 +2087,7 @@ impl SASClient {
             "renew_attestation",
             args,
             fee_policy,
+            self.external_signer.as_deref(),
         )
     }
 }
@@ -2469,25 +2464,6 @@ impl IndexerClient {
             vec![arg],
         )
     }
-
-    /// Calls `Indexer::get_count_by_expiration(expiration_status)` via
-    /// `simulateTransaction`. See [`IndexerClient::get_count_by_recipient`]
-    /// for semantics.
-    pub fn get_count_by_expiration(
-        &self,
-        rpc: &RpcClient,
-        expiration_status: ExpirationStatus,
-    ) -> Result<u32, SdkError> {
-        let env = &Env::default();
-        let arg = simulate::encode_arg(env, &expiration_status)?;
-        invoke_read_only(
-            env,
-            rpc,
-            &self.contract_id,
-            "get_count_by_expiration",
-            vec![arg],
-        )
-    }
 }
 
 /// Decodes the first entry of a `getLedgerEntries` response as a
@@ -2529,22 +2505,6 @@ fn is_archived_error(msg: &str) -> bool {
 /// `secret_seed`. The contract requires `attester.require_auth()`, so a
 /// mismatch here can only ever fail on-chain — surfacing it locally saves a
 /// round trip and a wasted signature over a doomed transaction.
-fn ensure_attester_matches_secret(
-    env: &Env,
-    secret_seed: &[u8; 32],
-    attestation: &Attestation,
-) -> Result<(), SdkError> {
-    let public_key = signature::derive_public_key(secret_seed);
-    let signer_strkey = stellar_strkey::ed25519::PublicKey(public_key).to_string();
-    let signer = Address::from_string(&SorobanString::from_str(env, &signer_strkey));
-    if format!("{:?}", signer) != format!("{:?}", attestation.attester) {
-        return Err(SdkError::ValidationError(
-            "attestation.attester does not match the account derived from secret_seed".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 /// Simulates a read-only call to `function_name` on `contract_id` and
 /// decodes its return value as `T`.
 fn invoke_read_only<T>(
@@ -2591,6 +2551,7 @@ fn build_signed_write(
     function_name: &str,
     args: &[ScVal],
     next_seq: i64,
+    signer: Option<&dyn TransactionSigner>,
 ) -> Result<String, SdkError> {
     build_signed_write_at_sequence(
         rpc,
@@ -2602,6 +2563,7 @@ fn build_signed_write(
         function_name,
         args,
         &FeePolicy::Default,
+        signer,
     )
 }
 
@@ -2621,6 +2583,7 @@ fn build_signed_write_at_sequence(
     function_name: &str,
     args: &[ScVal],
     fee_policy: &FeePolicy,
+    signer: Option<&dyn TransactionSigner>,
 ) -> Result<String, SdkError> {
     // 1. Simulate a draft (V0, base-fee) transaction to get the real
     //    resource footprint and fee a submittable one needs to carry.
@@ -2696,8 +2659,13 @@ fn build_signed_write_at_sequence(
 
     simulate::validate_simulated_transaction(&final_tx, contract_id, function_name, args)?;
 
-    let network_id = simulate::network_id(network_passphrase);
-    simulate::sign_transaction_with_network_id(&network_id, final_tx, secret_seed)
+    match signer {
+        Some(signer) => signer.sign_transaction(network_passphrase, final_tx),
+        None => {
+            let network_id = simulate::network_id(network_passphrase);
+            simulate::sign_transaction_with_network_id(&network_id, final_tx, secret_seed)
+        }
+    }
 }
 
 /// Builds, simulates (to obtain the final fee and footprint), and signs a
@@ -2711,6 +2679,7 @@ fn build_signed_restore_at_sequence(
     next_seq: i64,
     soroban_data: SorobanTransactionData,
     min_resource_fee: i64,
+    signer: Option<&dyn TransactionSigner>,
 ) -> Result<String, SdkError> {
     let operation = Operation {
         source_account: None,
@@ -2771,8 +2740,13 @@ fn build_signed_restore_at_sequence(
         ext: TransactionExt::V1(final_soroban_data),
     };
 
-    let network_id = simulate::network_id(network_passphrase);
-    simulate::sign_transaction_with_network_id(&network_id, final_tx, secret_seed)
+    match signer {
+        Some(signer) => signer.sign_transaction(network_passphrase, final_tx),
+        None => {
+            let network_id = simulate::network_id(network_passphrase);
+            simulate::sign_transaction_with_network_id(&network_id, final_tx, secret_seed)
+        }
+    }
 }
 
 /// Like [`invoke_write`] but allows the caller to specify a
@@ -2788,8 +2762,12 @@ fn invoke_write_with_fee_policy(
     function_name: &str,
     args: Vec<ScVal>,
     fee_policy: &FeePolicy,
+    signer: Option<&dyn TransactionSigner>,
 ) -> Result<GetTransactionResult, SdkError> {
-    let public_key = signature::derive_public_key(secret_seed);
+    let public_key = match signer {
+        Some(signer) => signer.public_key()?,
+        None => signature::derive_public_key(secret_seed),
+    };
     let next_seq = account::fetch_sequence_number(rpc, &public_key)? + 1;
     let signed = build_signed_write_at_sequence(
         rpc,
@@ -2801,6 +2779,7 @@ fn invoke_write_with_fee_policy(
         function_name,
         &args,
         fee_policy,
+        signer,
     )?;
     TransactionSubmitter::submit_with_policy(rpc, &signed, &SubmissionPolicy::default())
 }
@@ -2836,7 +2815,7 @@ impl SASClient {
         function_name: &str,
         args: Vec<ScVal>,
     ) -> Result<GetTransactionResult, SdkError> {
-        let public_key = signature::derive_public_key(secret_seed);
+        let public_key = self.effective_public_key(secret_seed)?;
         let policy = &self.submission_policy;
 
         let Some(manager) = self.sequence_manager.as_deref() else {
@@ -2852,6 +2831,7 @@ impl SASClient {
                 function_name,
                 &args,
                 next_seq,
+                self.external_signer.as_deref(),
             )?;
             return TransactionSubmitter::submit_with_policy(rpc, &signed, policy);
         };
@@ -2870,6 +2850,7 @@ impl SASClient {
                 function_name,
                 &args,
                 reservation.sequence(),
+                self.external_signer.as_deref(),
             )?;
             match TransactionSubmitter::submit_with_policy(rpc, &signed, policy) {
                 Ok(result) => {
@@ -2881,7 +2862,6 @@ impl SASClient {
                     error_result_xdr,
                 }) if attempt == 0 && is_bad_sequence(error_result_xdr.as_deref()) => {
                     reservation.failed();
-                    let _ = manager.sync_on_chain(rpc, &public_key);
                     let _ = status;
                     continue;
                 }
@@ -2939,66 +2919,11 @@ fn dry_run_write(
         .unwrap_or("0")
         .parse()
         .map_err(|e| SdkError::RpcError(format!("invalid simulated minResourceFee: {e:?}")))?;
-
-    let mut resources = None;
-    if let Some(ref b64) = sim.transaction_data {
-        if let Ok(data) = SorobanTransactionData::from_xdr_base64(
-            b64,
-            crate::limits::default_rpc_response_limits(),
-        ) {
-            let cpu = data.resources.instructions;
-            let read_bytes = data.resources.read_bytes;
-            let write_bytes = data.resources.write_bytes;
-            let ro_entries = data.resources.footprint.read_only.len() as u32;
-            let rw_entries = data.resources.footprint.read_write.len() as u32;
-            let total_entries = ro_entries + rw_entries;
-
-            let mut warnings = Vec::new();
-            if cpu > 80_000_000 {
-                warnings.push(format!(
-                    "CPU instructions ({cpu}) exceed 80% of limit (100,000,000)"
-                ));
-            }
-            if read_bytes > 160_000 {
-                warnings.push(format!(
-                    "Read bytes ({read_bytes} B) exceed 80% of limit (200,000 B)"
-                ));
-            }
-            if write_bytes > 104_000 {
-                warnings.push(format!(
-                    "Write bytes ({write_bytes} B) exceed 80% of limit (130,000 B)"
-                ));
-            }
-            if total_entries > 32 {
-                warnings.push(format!(
-                    "Total storage keys ({total_entries}) exceed 80% of limit (40)"
-                ));
-            }
-            if rw_entries > 20 {
-                warnings.push(format!(
-                    "Write storage keys ({rw_entries}) exceed 80% of limit (25)"
-                ));
-            }
-
-            let approaches_limits = !warnings.is_empty();
-            resources = Some(ResourceBreakdown {
-                cpu_instructions: cpu,
-                read_bytes,
-                write_bytes,
-                read_only_entries: ro_entries,
-                read_write_entries: rw_entries,
-                approaches_limits,
-                limit_warnings: warnings,
-            });
-        }
-    }
-
     Ok(DryRunResult {
         function_name: function_name.to_string(),
         min_resource_fee,
         total_fee: i64::from(BASE_FEE) + min_resource_fee,
         latest_ledger: sim.latest_ledger,
-        resources,
     })
 }
 
@@ -3009,6 +2934,47 @@ mod tests {
     use soroban_sdk::Bytes;
     use soroban_sdk::{testutils::Address as _, BytesN};
     use std::io::{BufRead, BufReader, Read, Write};
+
+    struct MockHardwareSigner([u8; 32]);
+
+    impl TransactionSigner for MockHardwareSigner {
+        fn public_key(&self) -> Result<[u8; 32], SdkError> {
+            Ok(self.0)
+        }
+        fn sign_transaction(
+            &self,
+            _network_passphrase: &str,
+            _tx: Transaction,
+        ) -> Result<String, SdkError> {
+            Err(SdkError::TransportError(
+                "simulated device rejection".to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn external_signer_is_used_instead_of_legacy_secret_seed() {
+        let expected = [3u8; 32];
+        let client = SASClient::new("dummy-contract".to_string())
+            .with_external_signer(Arc::new(MockHardwareSigner(expected)));
+        assert_eq!(client.effective_public_key(&[0u8; 32]).unwrap(), expected);
+        let tx = simulate::build_invoke_transaction(
+            &expected,
+            1,
+            100,
+            TransactionExt::V0,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+            "get_fee",
+            vec![],
+            VecM::default(),
+        )
+        .unwrap();
+        let signer = client.external_signer.as_ref().unwrap();
+        let err = signer
+            .sign_transaction("Test SDF Network ; September 2015", tx)
+            .unwrap_err();
+        assert!(err.to_string().contains("simulated device rejection"));
+    }
 
     /// Spawns a background thread that accepts exactly one HTTP connection
     /// and replies with `response_body` as a `200 OK` JSON response. Returns
