@@ -108,8 +108,10 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   A collection of shell scripts to assist with local environment setup, contract deployment, and invocation.
 
 - `tools/schema-explorer`
-  A prototype read-only web dashboard for browsing a Schema Registry and validating draft schemas.
-  See the [Schema Explorer README](tools/schema-explorer/README.md).
+  A web dashboard for browsing a Schema Registry, validating draft schemas, and visually composing new schemas.
+  The visual Schema Builder lets you add fields for all supported Soroban types, configure resolvers, preview the
+  deterministic `schema_uid` in real time, register directly on testnet via Freighter, and copy ready-to-run CLI
+  commands and SDK snippets. See the [Schema Explorer README](tools/schema-explorer/README.md).
 
 - `tools/prometheus-exporter`
   A Prometheus metrics exporter that monitors SAS contract events and exposes metrics for observability.
