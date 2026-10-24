@@ -280,7 +280,7 @@ fn indexing_is_authorized_by_the_bound_sas_alone() {
     let forged = UID(BytesN::from_array(&d.env, &[0xABu8; 32]));
     assert!(d
         .indexer
-        .try_index_attestation(&forged, &recipient, &d.schema_uid, &d.attester)
+        .try_index_attestation(&forged, &recipient, &d.schema_uid, &d.attester, &0)
         .is_err());
     assert_eq!(d.indexer.get_count_by_recipient(&recipient), 1);
 }

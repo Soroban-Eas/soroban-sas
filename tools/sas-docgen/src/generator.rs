@@ -23,7 +23,8 @@ impl DocGenerator {
         // 2. Generate individual schema markdown files
         for schema in schemas {
             let filename = format!("{}.md", schema.uid);
-            let schema_content = Self::generate_schema_markdown(schema, network, registry_contract_id);
+            let schema_content =
+                Self::generate_schema_markdown(schema, network, registry_contract_id);
             fs::write(output_dir.join(filename), schema_content)?;
         }
 
@@ -78,7 +79,9 @@ impl DocGenerator {
         field_table.push_str("|------------|------|-----------------|-------------|\n");
 
         if schema.fields.is_empty() {
-            field_table.push_str("| *(none)* | *(empty schema)* | — | Schema contains no field declarations |\n");
+            field_table.push_str(
+                "| *(none)* | *(empty schema)* | — | Schema contains no field declarations |\n",
+            );
         } else {
             for field in &schema.fields {
                 let role = if field.is_metadata_uri {
@@ -196,7 +199,11 @@ Raw canonical definition registered on-chain:
                 } else {
                     schema.uid.clone()
                 };
-                let status = if schema.deprecated { "Deprecated" } else { "Active" };
+                let status = if schema.deprecated {
+                    "Deprecated"
+                } else {
+                    "Active"
+                };
                 let revocable = if schema.revocable { "Yes" } else { "No" };
                 let raw_truncated = if schema.raw_schema.len() > 30 {
                     format!("{}...", &schema.raw_schema[..30])
@@ -248,7 +255,8 @@ Authoritative documentation for all schemas registered on the Soroban SAS Schema
 
     /// Generates `SUMMARY.md` for mdBook compatibility.
     pub fn generate_summary_markdown(schemas: &[SchemaDocItem]) -> String {
-        let mut summary = String::from("# Summary\n\n[Overview](index.md)\n\n## Registered Schemas\n\n");
+        let mut summary =
+            String::from("# Summary\n\n[Overview](index.md)\n\n## Registered Schemas\n\n");
         for schema in schemas {
             let uid_short = if schema.uid.len() > 16 {
                 format!("{}...", &schema.uid[..16])

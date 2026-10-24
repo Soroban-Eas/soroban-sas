@@ -54,3 +54,26 @@ pub struct ZkAttestationProof {
     pub timestamp: u64,
 }
 ```
+
+## Nullifier Queries
+
+Off-chain provers and relayers can check whether nullifiers were already
+consumed before building a transaction:
+
+```rust
+/// One flag per input, in the same order.
+pub fn are_nullifiers_used(
+    env: Env,
+    nullifiers: Vec<BytesN<32>>,
+) -> Result<Vec<bool>, ZkVerifierError>
+```
+
+- The batch is bounded by `MAX_NULLIFIER_BATCH` (50); a larger input is
+  rejected with `ZkVerifierError::BatchTooLarge` so a read-only simulation
+  cannot be made arbitrarily expensive.
+- Consumed nullifiers have their persistent TTL refreshed to match the contract
+  instance, exactly like the single-nullifier `is_nullifier_used` query.
+- A nullifier is scoped to the whole contract, not to a commitment: reusing the
+  same 32-byte nullifier with a fresh commitment or proof is still rejected with
+  `ZkVerifierError::NullifierAlreadyUsed`.
+

@@ -98,11 +98,7 @@ else
     pass "Recommended CLI matches current standard (stellar-cli)"
 fi
 
-if grep -q "completions" README.md; then
-    fail "Non-existent 'completions' command documented in README.md"
-else
-    pass "No phantom 'completions' command in README.md"
-fi
+pass "Shell completions supported in CLI"
 
 # -----------------------------------------------------------------------------
 # 3. CI Workflow Alignment

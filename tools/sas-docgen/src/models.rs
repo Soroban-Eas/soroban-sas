@@ -43,7 +43,9 @@ impl NetworkConfig {
             },
             "localnet" | "standalone" => Self {
                 name: "localnet".to_string(),
-                rpc_url: custom_rpc.unwrap_or("http://localhost:8000/soroban/rpc").to_string(),
+                rpc_url: custom_rpc
+                    .unwrap_or("http://localhost:8000/soroban/rpc")
+                    .to_string(),
                 network_passphrase: "Standalone Network ; February 2017".to_string(),
             },
             _ => Self {

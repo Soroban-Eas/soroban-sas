@@ -153,7 +153,10 @@ fn main() -> Result<()> {
     }
 
     let network = NetworkConfig::for_network(&args.network, args.rpc_url.as_deref());
-    info!("Configured network: {} (RPC: {})", network.name, network.rpc_url);
+    info!(
+        "Configured network: {} (RPC: {})",
+        network.name, network.rpc_url
+    );
 
     let schemas: Vec<SchemaDocItem> = if let Some(ref file_path) = args.from_file {
         fetcher::load_schemas_from_file(file_path)?
@@ -186,9 +189,17 @@ fn main() -> Result<()> {
     );
 
     DocGenerator::generate_site(&schemas, &network, registry_display, &args.output_dir)
-        .with_context(|| format!("Failed to generate documentation site in {:?}", args.output_dir))?;
+        .with_context(|| {
+            format!(
+                "Failed to generate documentation site in {:?}",
+                args.output_dir
+            )
+        })?;
 
-    info!("Schema documentation generated successfully in {:?}", args.output_dir);
+    info!(
+        "Schema documentation generated successfully in {:?}",
+        args.output_dir
+    );
     println!("Documentation generation complete: {:?}", args.output_dir);
     Ok(())
 }

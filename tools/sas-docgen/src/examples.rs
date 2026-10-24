@@ -10,7 +10,7 @@ impl IntegrationExamples {
         let mut field_assigns = String::new();
 
         for field in &schema.fields {
-            let dummy_val = match field.field_type.to_lowercase().as_str() {
+            let _dummy_val = match field.field_type.to_lowercase().as_str() {
                 "string" => format!("\"example_{}\".to_string()", field.name),
                 "bool" => "true".to_string(),
                 "u32" => "100u32".to_string(),
@@ -19,7 +19,10 @@ impl IntegrationExamples {
                 "address" => "recipient_addr.clone()".to_string(),
                 _ => format!("/* {} */ vec![]", field.field_type),
             };
-            field_assigns.push_str(&format!("        // {}: {}\n", field.name, field.field_type));
+            field_assigns.push_str(&format!(
+                "        // {}: {}\n",
+                field.name, field.field_type
+            ));
         }
 
         format!(
@@ -42,10 +45,10 @@ async fn main() -> Result<()> {{
     // 3. Prepare attestation payload
     // Schema fields: {raw_schema}
 {field_assigns}
-    println!("Ready to issue attestation under schema {}", hex::encode(schema_uid));
+    println!("Ready to issue attestation under schema {{}}", hex::encode(schema_uid));
     Ok(())
 }}
-"#,
+#"#,
             rpc_url = network.rpc_url,
             uid = uid,
             raw_schema = schema.raw_schema,
@@ -64,10 +67,15 @@ async fn main() -> Result<()> {{
                 "bool" => "true".to_string(),
                 "u32" | "u64" => "42".to_string(),
                 "i128" => "1000000n".to_string(),
-                "address" => "\"GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\"".to_string(),
+                "address" => {
+                    "\"GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5\"".to_string()
+                }
                 _ => "\"0x00\"".to_string(),
             };
-            field_obj.push_str(&format!("    {}: {}, // {}\n", field.name, sample_val, field.field_type));
+            field_obj.push_str(&format!(
+                "    {}: {}, // {}\n",
+                field.name, sample_val, field.field_type
+            ));
         }
 
         format!(

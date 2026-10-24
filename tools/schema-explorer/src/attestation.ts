@@ -2,19 +2,17 @@
 
 import {
   Account,
-  Address,
   BASE_FEE,
   Contract,
   Keypair,
   TransactionBuilder,
-  nativeToScVal,
   rpc,
   scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 import { PRESETS } from "./config.js";
-import { hexToBytes, isUidHex } from "./hex.js";
+import { hexToBytes } from "./hex.js";
 
 export interface AttestationVerificationQuery {
   uid: string;
@@ -224,7 +222,7 @@ export async function verifyOnChainRpc(
 /** Computes SHA-256 in browser or node runtime. */
 async function computeSha256(data: Uint8Array): Promise<Uint8Array> {
   if (typeof crypto !== "undefined" && crypto.subtle) {
-    const hash = await crypto.subtle.digest("SHA-256", data);
+    const hash = await crypto.subtle.digest("SHA-256", data as unknown as BufferSource);
     return new Uint8Array(hash);
   }
   // Node fallback

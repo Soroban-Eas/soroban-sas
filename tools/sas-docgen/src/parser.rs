@@ -71,13 +71,18 @@ fn generate_field_description(name: &str, field_type: &str) -> String {
         return "Unix timestamp in seconds".to_string();
     }
 
-    if lower_name.contains("addr") || lower_name.contains("recipient") || lower_name.contains("owner") {
+    if lower_name.contains("addr")
+        || lower_name.contains("recipient")
+        || lower_name.contains("owner")
+    {
         return "Stellar/Soroban account or contract address".to_string();
     }
 
     match lower_type.as_str() {
         "string" => format!("UTF-8 text value for `{}`", name),
-        "bytes" | "bytesn<32>" => format!("Raw binary payload or 32-byte identifier for `{}`", name),
+        "bytes" | "bytesn<32>" => {
+            format!("Raw binary payload or 32-byte identifier for `{}`", name)
+        }
         "address" => format!("Soroban Address (account or contract) for `{}`", name),
         "u32" | "u64" => format!("Unsigned integer value representing `{}`", name),
         "i32" | "i64" | "i128" => format!("Signed integer or balance amount for `{}`", name),

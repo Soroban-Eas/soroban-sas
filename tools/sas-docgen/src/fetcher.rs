@@ -73,7 +73,10 @@ pub fn fetch_on_chain_schemas(
         doc_items.push(item);
     }
 
-    info!("Successfully fetched {} schema(s) from on-chain", doc_items.len());
+    info!(
+        "Successfully fetched {} schema(s) from on-chain",
+        doc_items.len()
+    );
     Ok(doc_items)
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{NetworkConfig, SchemaDocItem, SchemaField};
+use crate::models::{NetworkConfig, SchemaDocItem};
 use crate::parser::{is_uri_field, parse_schema_fields};
 use std::fs;
 

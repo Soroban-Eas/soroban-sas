@@ -225,3 +225,125 @@ fn test_zk_proof_timelocked_attestation_activation() {
 
     assert!(client.verify_and_consume_proof(&proof_activated));
 }
+
+// ---------------------------------------------------------------------------
+// Nullifier set management (issue #547)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_batch_nullifier_query_reports_consumption() {
+    let (env, _admin, _sas, client) = setup_test();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let schema_uid = UID(BytesN::from_array(&env, &[51u8; 32]));
+    let used_nullifier = [52u8; 32];
+    let unused_nullifier = [53u8; 32];
+
+    let proof = create_proof(
+        &env,
+        UID(BytesN::from_array(&env, &[0u8; 32])),
+        schema_uid,
+        used_nullifier,
+        [54u8; 32],
+        1000,
+    );
+    assert!(client.verify_and_consume_proof(&proof));
+
+    let query = Vec::from_array(
+        &env,
+        [
+            BytesN::from_array(&env, &used_nullifier),
+            BytesN::from_array(&env, &unused_nullifier),
+        ],
+    );
+    let used = client.are_nullifiers_used(&query);
+
+    assert_eq!(used, Vec::from_array(&env, [true, false]));
+}
+
+#[test]
+fn test_batch_nullifier_query_rejects_oversized_batch() {
+    let (env, _admin, _sas, client) = setup_test();
+    let mut nullifiers = Vec::new(&env);
+    for i in 0..=MAX_NULLIFIER_BATCH {
+        let mut bytes = [0u8; 32];
+        bytes[0] = i as u8;
+        nullifiers.push_back(BytesN::from_array(&env, &bytes));
+    }
+
+    let res = client.try_are_nullifiers_used(&nullifiers);
+    assert_eq!(res.err().unwrap().unwrap(), ZkVerifierError::BatchTooLarge);
+}
+
+#[test]
+fn test_distinct_nullifiers_are_independent() {
+    let (env, _admin, _sas, client) = setup_test();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let schema_uid = UID(BytesN::from_array(&env, &[61u8; 32]));
+    let first = create_proof(
+        &env,
+        UID(BytesN::from_array(&env, &[0u8; 32])),
+        schema_uid.clone(),
+        [62u8; 32],
+        [63u8; 32],
+        1000,
+    );
+    let second = create_proof(
+        &env,
+        UID(BytesN::from_array(&env, &[0u8; 32])),
+        schema_uid,
+        [64u8; 32],
+        [65u8; 32],
+        1000,
+    );
+
+    assert!(client.verify_and_consume_proof(&first));
+    assert!(client.verify_and_consume_proof(&second));
+
+    let query = Vec::from_array(
+        &env,
+        [
+            BytesN::from_array(&env, &[62u8; 32]),
+            BytesN::from_array(&env, &[64u8; 32]),
+        ],
+    );
+    assert_eq!(
+        client.are_nullifiers_used(&query),
+        Vec::from_array(&env, [true, true])
+    );
+}
+
+#[test]
+fn test_nullifier_collision_is_rejected_even_with_a_new_commitment() {
+    let (env, _admin, _sas, client) = setup_test();
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let schema_uid = UID(BytesN::from_array(&env, &[71u8; 32]));
+    let nullifier = [72u8; 32];
+
+    let first = create_proof(
+        &env,
+        UID(BytesN::from_array(&env, &[0u8; 32])),
+        schema_uid.clone(),
+        nullifier,
+        [73u8; 32],
+        1000,
+    );
+    assert!(client.verify_and_consume_proof(&first));
+
+    // Same nullifier, different commitment and proof: still a replay.
+    let second = create_proof(
+        &env,
+        UID(BytesN::from_array(&env, &[0u8; 32])),
+        schema_uid,
+        nullifier,
+        [74u8; 32],
+        1000,
+    );
+    let res = client.try_verify_and_consume_proof(&second);
+    assert_eq!(
+        res.err().unwrap().unwrap(),
+        ZkVerifierError::NullifierAlreadyUsed
+    );
+}
