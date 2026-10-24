@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 soroban-sdk.workspace = true
 soroban-sas-common = { path = "../soroban-sas-common" }
+soroban-sas-schema-macro = { path = "../soroban-sas-schema-macro" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
@@ -15,6 +16,9 @@ ed25519-dalek = "2.0.0"
 stellar-strkey = "0.0.8"
 sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+thiserror = "1"
+
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

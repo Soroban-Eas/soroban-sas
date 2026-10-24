@@ -64,6 +64,7 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Maintains mappings from recipient addresses to their respective attestations.
   - Maintains mappings from schemas to all associated attestations.
   - Supports newest-first cursor pages for recipient, schema, and attester history.
+  - Answers whether a UID has been indexed with one direct record read (`is_attestation_indexed`), without walking chunks.
 
 - `contracts/cross-chain-verifier`
   **Role**: Verifies remote attestation status updates authenticated by an Axelar GMP gateway.
@@ -72,6 +73,14 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Rejects unapproved, stale or expired updates and exposes short-lived remote verdicts.
   - Accepts versioned proof payloads carrying EVM schema, recipient, mapped Stellar address, and data.
   - Documents its [wire format and trust limits](docs/cross-chain-verification.md).
+
+- `contracts/time-window-resolver`
+  **Role**: Enforces a minimum delay between attestations issued to the same recipient.
+  **Duties**:
+  - Records the last accepted issuance time per recipient.
+  - Rejects issuance inside the configured cooldown with `SASError::CooldownActive`.
+  - Lets the resolver admin adjust the cooldown window with authorization.
+  - Documents its [cooldown semantics and storage limits](docs/time-window-resolver.md).
 
 ### Rust Packages
 
@@ -162,6 +171,25 @@ Detailed usage and flags for every subcommand are available via:
 cargo run -p soroban-sas-cli -- --help
 ```
 
+### Shell Completions
+
+Generate shell completions for tab-completing commands, subcommands, and flags:
+
+```bash
+# Bash
+cargo run -p soroban-sas-cli -- completions bash > ~/.local/share/bash-completion/completions/sas
+
+# Zsh
+cargo run -p soroban-sas-cli -- completions zsh > ~/.zfunc/_sas
+
+# Fish
+cargo run -p soroban-sas-cli -- completions fish > ~/.config/fish/completions/sas.fish
+
+# PowerShell
+cargo run -p soroban-sas-cli -- completions powershell > ./sas.ps1
+```
+
+
 ## TOML Configuration File
 
 The CLI can read default RPC and network settings from a TOML configuration file.
@@ -190,9 +218,9 @@ Precedence (explicit flag > environment variable > TOML default > built-in netwo
 
 ## Delegated Issuance
 
-Delegated issuance and revocation let an attester sign an operation off-chain
+Delegated issuance, revocation, and consented replacement let parties sign an operation off-chain
 while a separate relayer submits and pays for the transaction. See
-[Delegated Issuance and Revocation](docs/delegation.md) for the typed-data
+[Delegated Issuance and Replacement](docs/delegation.md) for the typed-data
 domain, nonce high-watermark rules, key rotation behavior, CLI commands, and
 SDK workflow.
 
@@ -356,6 +384,9 @@ TMPDIR=/tmp cargo test --workspace
 - [Fee Collection and Treasury Mechanics](docs/fee-collection-and-treasury.md): protocol fee configuration, treasury routing, and token withdrawals.
 - [Internationalization (i18n) and Translation Guidelines](docs/i18n-translation-guidelines.md): localization conventions, terminology glossary, and contribution guidelines.
 - [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md): staged upgrade and forward-recovery procedures for `schema-registry`, `sas`, and `indexer`.
+- [Time-Window Resolver](docs/time-window-resolver.md): enforcing minimum
+  delays between recurring attestations issued to the same recipient, with
+  cooldown boundaries, administrative updates, and storage expiry limits.
 - [Glossary of Terms](docs/glossary.md): authoritative protocol definitions for Attestation, Schema, Issuer, Resolver, UID, and lifecycle terms.
 
 ## Project Roadmap

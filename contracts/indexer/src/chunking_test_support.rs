@@ -30,8 +30,8 @@ pub fn check_chunking(pairs: &[([u8; 4], [u8; 32])]) {
             input.append(&Bytes::from_slice(&env, &(position as u32).to_be_bytes()));
             let uid = UID(env.crypto().sha256(&input).into());
             let (recipient, schema) = keys(&env, key);
-            index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL);
-            index_uid_uid(&env, &schema, &uid, SCHEMA_TOTAL);
+            index_address_uid(&env, &recipient, &uid, RECIPIENT_TOTAL, DIM_RECIPIENT);
+            index_uid_uid(&env, &schema, &uid, SCHEMA_TOTAL, DIM_SCHEMA);
             let entries = expected.entry(*key).or_default();
             entries.push(uid);
             if matches!(entries.len(), 99 | 100 | 101 | 200 | 201 | 300 | 301) {

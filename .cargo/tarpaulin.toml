@@ -11,6 +11,7 @@ workspace = true
 # integration test helpers. These contain no production logic worth tracking.
 exclude = [
     "fuzz",
+    "soroban-sas-schema-macro",
 ]
 exclude-files = [
     "benches/*",

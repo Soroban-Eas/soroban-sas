@@ -328,10 +328,10 @@
                     },
                     {
                       "key": {
-                        "symbol": "expiration_time"
+                        "symbol": "packed_meta"
                       },
                       "val": {
-                        "u64": 0
+                        "bytes": "03000000000000000000000000000000000000000000000064"
                       }
                     },
                     {
@@ -356,22 +356,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "revocable"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "revocation_time"
-                      },
-                      "val": {
-                        "u64": 100
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "schema_uid"
                       },
                       "val": {
@@ -380,34 +364,6 @@
                             "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
                           }
                         ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "valid_from"
-                      },
-                      "val": {
-                        "u64": 0
                       }
                     }
                   ]
@@ -2053,17 +2009,147 @@
               },
               {
                 "error": {
-                  "contract": 202
+                  "object": "unexpected_size"
                 }
+              }
+            ],
+            "data": {
+              "string": "differing host map and output slice lengths when unpacking map to slice"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "log"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "string": "failing with contract error"
+                  "string": "caught panic 'called `Result::unwrap()` on an `Err` value: HostError: Error(Object, UnexpectedSize)\\n\\nEvent log (newest first):\\n   0: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[error, Error(Object, UnexpectedSize)], data:\"differing host map and output slice lengths when unpacking map to slice\"\\n   1: [Diagnostic Event] topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000002), verify_offchain_attestation], data:[{attester: GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP, data: Bytes(010203), expiration_time: 0, recipient: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4, ref_uid: [Bytes(0000000000000000000000000000000000000000000000000000000000000000)], revocable: true, revocation_time: 0, schema_uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)], time: 1000, uid: [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)], valid_from: 0}, 7, Bytes(43046bfe4092b3e94994eada15dcc20d8aaa07b658fd3954eb8e0efb8bdca5de), Bytes(1acf1bee88219152864301a61e4405e93b62dbf6e3aa1d472d375f24f65befad16a3a8069d36187ce369daffa8df23d62a041fede72f5a2826260330f5a2d501)]\\n   2: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_return, revoke], data:Void\\n   3: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[fn_return, on_revoke], data:Void\\n   4: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), on_revoke], data:{attester: GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP, data: Bytes(010203), expiration_time: 0, recipient: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4, ref_uid: [Bytes(0000000000000000000000000000000000000000000000000000000000000000)], revocable: true, revocation_time: 100, schema_uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)], time: 0, uid: [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)], valid_from: 0}\\n   5: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[fn_return, get_schema], data:{deprecated: false, resolver: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, revocable: true, schema: \"bool like\", uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)]}\\n   6: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), get_schema], data:[Bytes(0202020202020202020202020202020202020202020202020202020202020202)]\\n   7: [Contract Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[REVOKED, [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)]], data:{timestamp: 100, uid: [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)]}\\n   8: [Diagnostic Event] topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000002), revoke], data:[Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)]\\n   9: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_return, attest], data:[Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)]\\n   10: [Contract Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[ATTESTED, [Bytes(0202020202020202020202020202020202020202020202020202020202020202)], GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP], data:{attester: GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP, recipient: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4, schema_uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)], uid: [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)]}\\n   11: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[fn_return, on_attest], data:Void\\n   12: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), on_attest], data:{attester: GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP, data: Bytes(010203), expiration_time: 0, recipient: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4, ref_uid: [Bytes(0000000000000000000000000000000000000000000000000000000000000000)], revocable: true, revocation_time: 0, schema_uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)], time: 1000, uid: [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)], valid_from: 0}\\n   13: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[error, Error(Context, MissingValue)], data:[\"contract try_call failed\", get_schema_policy, [[Bytes(0202020202020202020202020202020202020202020202020202020202020202)]]]\\n   14: [Failed Diagnostic Event (not emitted)] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[error, Error(Context, MissingValue)], data:[\"calling unknown contract function\", get_schema_policy]\\n   15: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), get_schema_policy], data:[Bytes(0202020202020202020202020202020202020202020202020202020202020202)]\\n   16: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[fn_return, is_authorized], data:true\\n   17: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), is_authorized], data:[[Bytes(0202020202020202020202020202020202020202020202020202020202020202)], GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP]\\n   18: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[error, Error(Context, MissingValue)], data:[\"contract try_call failed\", get_max_ttl, [[Bytes(0202020202020202020202020202020202020202020202020202020202020202)]]]\\n   19: [Failed Diagnostic Event (not emitted)] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[error, Error(Context, MissingValue)], data:[\"calling unknown contract function\", get_max_ttl]\\n   20: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), get_max_ttl], data:[Bytes(0202020202020202020202020202020202020202020202020202020202020202)]\\n   21: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, topics:[fn_return, get_schema], data:{deprecated: false, resolver: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM, revocable: true, schema: \"bool like\", uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)]}\\n   22: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000001), get_schema], data:[Bytes(0202020202020202020202020202020202020202020202020202020202020202)]\\n   23: [Diagnostic Event] topics:[fn_call, Bytes(0000000000000000000000000000000000000000000000000000000000000002), attest], data:{attester: GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP, data: Bytes(010203), expiration_time: 0, recipient: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4, ref_uid: [Bytes(0000000000000000000000000000000000000000000000000000000000000000)], revocable: true, revocation_time: 0, schema_uid: [Bytes(0202020202020202020202020202020202020202020202020202020202020202)], time: 1000, uid: [Bytes(b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791)], valid_from: 0}\\n   24: [Diagnostic Event] contract:CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4, topics:[fn_return, init], data:Void\\n   25: ... 3 events elided ...\\n\\nBacktrace (newest first):\\n   0: backtrace::backtrace::libunwind::trace\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.69/src/backtrace/libunwind.rs:93:5\\n      backtrace::backtrace::trace_unsynchronized\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.69/src/backtrace/mod.rs:66:5\\n   1: backtrace::backtrace::trace\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.69/src/backtrace/mod.rs:53:14\\n   2: backtrace::capture::Backtrace::create\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.69/src/capture.rs:176:9\\n   3: backtrace::capture::Backtrace::new_unresolved\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.69/src/capture.rs:170:9\\n   4: soroban_env_host::host::error::<impl soroban_env_host::host::Host>::maybe_get_debug_info::{{closure}}\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/error.rs:293:37\\n   5: soroban_env_host::budget::Budget::with_shadow_mode\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/budget.rs:972:21\\n   6: soroban_env_host::host::Host::with_debug_mode\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host.rs:615:24\\n   7: soroban_env_host::host::error::<impl soroban_env_host::host::Host>::maybe_get_debug_info\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/error.rs:290:13\\n   8: soroban_env_host::host::error::<impl soroban_env_host::host::Host>::error::{{closure}}\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/error.rs:274:23\\n   9: soroban_env_host::budget::Budget::with_shadow_mode\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/budget.rs:972:21\\n  10: soroban_env_host::host::Host::with_debug_mode\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host.rs:615:24\\n  11: soroban_env_host::host::error::<impl soroban_env_host::host::Host>::error\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/error.rs:261:9\\n  12: soroban_env_host::host::error::<impl soroban_env_host::host::Host>::err\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/error.rs:251:9\\n  13: <soroban_env_host::host::Host as soroban_env_common::env::EnvBase>::map_unpack_to_slice::{{closure}}\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host.rs:938:28\\n  14: soroban_env_host::host_object::<impl soroban_env_host::host::Host>::visit_obj::{{closure}}\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host_object.rs:458:26\\n  15: soroban_env_host::host_object::<impl soroban_env_host::host::Host>::visit_obj_untyped\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host_object.rs:421:13\\n  16: soroban_env_host::host_object::<impl soroban_env_host::host::Host>::visit_obj\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host_object.rs:449:9\\n  17: <soroban_env_host::host::Host as soroban_env_common::env::EnvBase>::map_unpack_to_slice\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host.rs:936:9\\n  18: <soroban_sdk::env::Env as soroban_env_common::env::EnvBase>::map_unpack_to_slice\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-21.7.7/src/env.rs:1625:12\\n  19: <soroban_sas_common::Attestation as soroban_env_common::convert::TryFromVal<soroban_sdk::env::Env,soroban_env_common::val::Val>>::try_from_val\\n             at /Users/vida/Downloads/DRIPS/soroban-eas/packages/soroban-sas-common/src/lib.rs:171:1\\n  20: soroban_sdk::storage::Storage::get\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-21.7.7/src/storage.rs:186:18\\n      soroban_sdk::storage::Persistent::get\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-21.7.7/src/storage.rs:319:9\\n  21: sas::SAS::verify_offchain_attestation\\n             at src/lib.rs:1889:31\\n  22: sas::__verify_offchain_attestation::invoke_raw\\n             at src/lib.rs:304:1\\n  23: sas::__verify_offchain_attestation::invoke_raw_slice\\n             at src/lib.rs:304:1\\n  24: core::ops::function::Fn::call\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/ops/function.rs:79:5\\n  25: sas::__sas_fn_set_registry::call::{{closure}}\\n             at src/lib.rs:21:1\\n  26: core::option::Option<T>::map\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/option.rs:1113:29\\n  27: sas::__sas_fn_set_registry::call\\n             at src/lib.rs:21:1\\n  28: <sas::SAS as soroban_sdk::testutils::ContractFunctionSet>::call\\n             at src/lib.rs:21:1\\n  29: <soroban_sdk::env::Env::register_contract::InternalContractFunctionSet<T> as soroban_env_host::host::frame::ContractFunctionSet>::call\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-21.7.7/src/env.rs:628:17\\n  30: soroban_env_host::host::frame::<impl soroban_env_host::host::Host>::call_n_internal::{{closure}}::{{closure}}\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/frame.rs:868:60\\n  31: core::ops::function::FnOnce::call_once\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/ops/function.rs:250:5\\n  32: <core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/panic/unwind_safe.rs:272:9\\n  33: std::panicking::try::do_call\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:557:40\\n  34: ___rust_try\\n  35: std::panicking::try\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:520:19\\n      std::panic::catch_unwind\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panic.rs:358:14\\n  36: soroban_env_host::testutils::call_with_suppressed_panic_hook\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/testutils.rs:57:15\\n  37: soroban_env_host::host::frame::<impl soroban_env_host::host::Host>::call_n_internal::{{closure}}\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/frame.rs:870:25\\n  38: soroban_env_host::host::frame::<impl soroban_env_host::host::Host>::with_frame\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/frame.rs:453:19\\n  39: soroban_env_host::host::frame::<impl soroban_env_host::host::Host>::call_n_internal\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host/frame.rs:845:24\\n  40: <soroban_env_host::host::Host as soroban_env_common::vmcaller_env::VmCallerEnv>::try_call\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-host-21.2.1/src/host.rs:2334:19\\n  41: soroban_env_common::vmcaller_env::<impl soroban_env_common::env::Env for T>::try_call\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-env-common-21.2.1/src/vmcaller_env.rs:195:84\\n  42: <soroban_sdk::env::Env as soroban_env_common::env::Env>::try_call\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-21.7.7/src/env.rs:1667:50\\n  43: soroban_sdk::env::Env::try_invoke_contract\\n             at /Users/vida/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-21.7.7/src/env.rs:404:18\\n  44: sas::SASClient::try_verify_offchain_attestation\\n             at src/lib.rs:304:1\\n  45: sas::test::test_verify_offchain_attestation_invalidated_by_onchain_revocation\\n             at src/test.rs:1871:15\\n  46: sas::test::test_verify_offchain_attestation_invalidated_by_onchain_revocation::{{closure}}\\n             at src/test.rs:1861:72\\n  47: core::ops::function::FnOnce::call_once\\n             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/ops/function.rs:250:5\\n\\n' from contract function 'Symbol(obj#513)'"
                 },
                 {
-                  "u32": 202
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "attester"
+                      },
+                      "val": {
+                        "address": "GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "data"
+                      },
+                      "val": {
+                        "bytes": "010203"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "expiration_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "recipient"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "ref_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocable"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "revocation_time"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "schema_uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "time"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "uid"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "bytes": "b352b7ab15d0fbba61e1a91cb568df45df46a149f1b43ecd8105b0b1fdbb9791"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "valid_from"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    }
+                  ]
+                },
+                {
+                  "u64": 7
+                },
+                {
+                  "bytes": "43046bfe4092b3e94994eada15dcc20d8aaa07b658fd3954eb8e0efb8bdca5de"
+                },
+                {
+                  "bytes": "1acf1bee88219152864301a61e4405e93b62dbf6e3aa1d472d375f24f65befad16a3a8069d36187ce369daffa8df23d62a041fede72f5a2826260330f5a2d501"
                 }
               ]
             }
@@ -2085,32 +2171,7 @@
               },
               {
                 "error": {
-                  "contract": 202
-                }
-              }
-            ],
-            "data": {
-              "string": "escalating error to panic"
-            }
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "error"
-              },
-              {
-                "error": {
-                  "contract": 202
+                  "wasm_vm": "invalid_action"
                 }
               }
             ],
@@ -2135,7 +2196,7 @@
               },
               {
                 "error": {
-                  "contract": 202
+                  "wasm_vm": "invalid_action"
                 }
               }
             ],

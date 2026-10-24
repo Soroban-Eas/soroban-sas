@@ -137,6 +137,76 @@ fn is_valid_type(bytes: &[u8], start: u32, end: u32) -> bool {
     has_alpha && !prev_space
 }
 
+fn eq_ignore_ascii_case(bytes: &[u8], a0: u32, a1: u32, b0: u32, b1: u32) -> bool {
+    if a1 < a0 || b1 < b0 || a1 - a0 != b1 - b0 {
+        return false;
+    }
+    let mut offset = 0u32;
+    while offset < a1 - a0 {
+        let Some(a) = bytes.get((a0 + offset) as usize).copied() else {
+            return false;
+        };
+        let Some(b) = bytes.get((b0 + offset) as usize).copied() else {
+            return false;
+        };
+        if a.to_ascii_lowercase() != b.to_ascii_lowercase() {
+            return false;
+        }
+        offset += 1;
+    }
+    true
+}
+
+/// True when `[name_start, name_end)` matches an earlier field name in
+/// `[from, until)`, ignoring ASCII case.
+fn field_name_collides(
+    bytes: &[u8],
+    from: u32,
+    until: u32,
+    name_start: u32,
+    name_end: u32,
+) -> bool {
+    let mut cursor = from;
+    while cursor < until {
+        let mut field_end = cursor;
+        while field_end < until {
+            let Some(byte) = bytes.get(field_end as usize).copied() else {
+                return false;
+            };
+            if byte == b',' {
+                break;
+            }
+            field_end += 1;
+        }
+        let Some((field_start, trimmed_end)) = trim_bounds(bytes, cursor, field_end) else {
+            break;
+        };
+        let mut split = field_start;
+        while split < trimmed_end {
+            let Some(byte) = bytes.get(split as usize).copied() else {
+                return false;
+            };
+            if byte == b' ' {
+                break;
+            }
+            split += 1;
+        }
+        if split > field_start
+            && eq_ignore_ascii_case(bytes, field_start, split, name_start, name_end)
+        {
+            return true;
+        }
+        if field_end >= until {
+            break;
+        }
+        cursor = field_end + 1;
+        if cursor < until && bytes.get(cursor as usize).copied() == Some(b' ') {
+            cursor += 1;
+        }
+    }
+    false
+}
+
 pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASError> {
     let schema_len = schema.len() as usize;
     if schema_len == 0 {
@@ -156,6 +226,7 @@ pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASErro
     let Some((mut start, end)) = trim_bounds(schema_bytes, 0, schema_len as u32) else {
         return Err(SASError::InvalidSchemaDefinition);
     };
+    let region_start = start;
 
     let slice = &schema_bytes[start as usize..end as usize];
     // Reject leading or trailing delimiters
@@ -222,6 +293,17 @@ pub fn validate_schema_syntax(_env: &Env, schema: &String) -> Result<(), SASErro
         if !is_valid_identifier(schema_bytes, field_start, split_index)
             || !is_valid_type(schema_bytes, ty_start, fe)
         {
+            return Err(SASError::InvalidSchemaDefinition);
+        }
+        // Case-insensitive name collisions serialize to the same JSON Schema
+        // property (#537).
+        if field_name_collides(
+            schema_bytes,
+            region_start,
+            field_start,
+            field_start,
+            split_index,
+        ) {
             return Err(SASError::InvalidSchemaDefinition);
         }
         field_count += 1;

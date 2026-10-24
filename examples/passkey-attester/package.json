@@ -1,0 +1,23 @@
+{
+  "name": "@stellar/passkey-attester-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser demo showing Passkey / WebAuthn signing for Stellar smart wallets",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^13.1.0",
+    "buffer": "^6.0.3",
+    "process": "^0.11.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.2",
+    "vite": "^5.2.0"
+  }
+}
