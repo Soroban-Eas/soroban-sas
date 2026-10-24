@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Account, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { Client as ContractClient, basicNodeSigner } from "@stellar/stellar-sdk/contract";
 import { SASClient, type SASClientConfig } from "../src/client.js";
+import { createNodeSASClient } from "../src/node.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,11 +49,26 @@ describe("SEP-43 wallet signing integration", () => {
     }));
   });
 
-  it("rejects mixing raw secrets and external wallet callbacks", async () => {
+  it("supports secret signing through the Node-only helper", async () => {
     const pair = Keypair.random();
-    const signer = basicNodeSigner(pair, Networks.TESTNET);
-    vi.spyOn(ContractClient, "from");
-    const client = new SASClient({ ...base, secret: pair.secret(), signTransaction: signer.signTransaction });
-    await expect(client.revoke("aa".repeat(32))).rejects.toThrow(/either a Node secret signer or wallet callbacks/);
+    const from = vi.spyOn(ContractClient, "from").mockResolvedValue({
+      revoke: async () => ({
+        signAndSend: async () => ({
+          sendTransactionResponse: { hash: "mock-node-hash" },
+        }),
+      }),
+    } as unknown as ContractClient);
+
+    const client = createNodeSASClient({ ...base, secret: pair.secret() });
+
+    await expect(client.revoke("aa".repeat(32))).resolves.toEqual({
+      hash: "mock-node-hash",
+    });
+
+    expect(from).toHaveBeenCalledWith(expect.objectContaining({
+      publicKey: pair.publicKey(),
+      signTransaction: expect.any(Function),
+      networkPassphrase: Networks.TESTNET,
+    }));
   });
 });

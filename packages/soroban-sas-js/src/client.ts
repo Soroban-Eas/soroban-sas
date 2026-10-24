@@ -16,9 +16,9 @@
 // exercised against a live RPC node in this environment — see
 // packages/soroban-sas-js/README.md's "Scope and limitations" section.
 
-import { Client as ContractClient, basicNodeSigner } from "@stellar/stellar-sdk/contract";
-import type { ClientOptions } from "@stellar/stellar-sdk/contract";
-import { Keypair } from "@stellar/stellar-sdk";
+import { Buffer } from "buffer";
+import { Client as ContractClient } from "@stellar/stellar-sdk/contract";
+import type { ClientOptions, SignTransaction } from "@stellar/stellar-sdk/contract";
 import type { Attestation, DelegatedAttestation, SchemaRecord, UID } from "./types.js";
 
 export interface SASClientConfig {
@@ -32,11 +32,9 @@ export interface SASClientConfig {
   networkPassphrase: string;
   /** Account (G...) that pays for and authorizes submitted transactions. */
   publicKey?: string;
-  /** ed25519 secret seed (S...) for `publicKey`; enables signAndSend. */
-  secret?: string;
-  /** SEP-43 signer callback (e.g. Freighter). Never expose secret seeds in dApps. */
-  signTransaction?: ClientOptions["signTransaction"];
-  /** Optional SEP-43 authorization signer for delegated/multi-auth invocations. */
+  /** Browser wallet callback used to sign and optionally submit transactions. */
+  signTransaction?: SignTransaction;
+  /** Optional SEP-43 authorization signer for multi-auth invocations. */
   signAuthEntry?: ClientOptions["signAuthEntry"];
 }
 
@@ -71,21 +69,8 @@ export class SASClient {
 
   constructor(private readonly config: SASClientConfig) {}
 
-  private signer(): Pick<ClientOptions, "signTransaction" | "signAuthEntry"> {
-    if (this.config.secret && (this.config.signTransaction || this.config.signAuthEntry)) {
-      throw new Error("Specify either a Node secret signer or wallet callbacks, not both");
-    }
-    if (this.config.secret) {
-      return basicNodeSigner(Keypair.fromSecret(this.config.secret), this.config.networkPassphrase);
-    }
-    return {
-      signTransaction: this.config.signTransaction,
-      signAuthEntry: this.config.signAuthEntry,
-    };
-  }
-
   private publicKey(): string | undefined {
-    return this.config.publicKey ?? (this.config.secret ? Keypair.fromSecret(this.config.secret).publicKey() : undefined);
+    return this.config.publicKey;
   }
 
   private async sas(): Promise<ContractClient> {
@@ -95,7 +80,8 @@ export class SASClient {
         rpcUrl: this.config.rpcUrl,
         networkPassphrase: this.config.networkPassphrase,
         publicKey: this.publicKey(),
-        ...this.signer(),
+        signTransaction: this.config.signTransaction,
+        signAuthEntry: this.config.signAuthEntry,
       });
     }
     return this.sasClient;
@@ -111,7 +97,8 @@ export class SASClient {
         rpcUrl: this.config.rpcUrl,
         networkPassphrase: this.config.networkPassphrase,
         publicKey: this.publicKey(),
-        ...this.signer(),
+        signTransaction: this.config.signTransaction,
+        signAuthEntry: this.config.signAuthEntry,
       });
     }
     return this.registryClient;
@@ -153,7 +140,7 @@ export class SASClient {
   /** Calls `SchemaRegistry::register(owner, schema, resolver, revocable)`. */
   async registerSchema(schema: string, resolver: string, revocable: boolean): Promise<UID> {
     const owner = this.publicKey();
-    if (!owner) throw new Error("registerSchema requires config.publicKey or config.secret");
+    if (!owner) throw new Error("registerSchema requires config.publicKey");
     const client = await this.registry();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tx = await (client as any).register({ owner, schema, resolver, revocable });

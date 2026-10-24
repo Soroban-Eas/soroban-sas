@@ -50,7 +50,7 @@ export function parseSchema(schema: string): ParsedSchema {
 function parseType(source: string): SchemaType {
   if (!source || source.includes("  ")) throw new Error(`invalid schema type: ${source}`);
   if (source.endsWith("?")) return { kind: "option", item: parseType(source.slice(0, -1)) };
-  const array = /^\[(.+)]$/u.exec(source);
+  const array = /^\[(.+)\]$/u.exec(source);
   if (array) return { kind: "array", item: parseType(array[1]) };
   const generic = /^(Option|Vec|Map)<(.+)>$/u.exec(source);
   if (generic) {
@@ -175,7 +175,7 @@ function encodeValue(type: SchemaType, value: unknown, path: string): ScVal {
     const entries = value instanceof Map ? [...value.entries()] : (value && typeof value === "object" ? Object.entries(value) : invalid());
     const encoded = entries.map(([key, item]) => ({ key: encodeValue(type.key, key, `${path}.key`), val: encodeValue(type.value, item, `${path}[${String(key)}]`) }));
     encoded.sort((a, b) => Buffer.compare(a.key.toXDR(), b.key.toXDR()));
-    return xdr.ScVal.scvMap(encoded);
+    return xdr.ScVal.scvMap(encoded.map(({ key, val }) => new xdr.ScMapEntry({ key, val })));
   }
   const name = normalizePrimitive(type.name);
   if (["string", "symbol"].includes(name) && typeof value === "string") return name === "symbol" ? xdr.ScVal.scvSymbol(value) : xdr.ScVal.scvString(value);
@@ -199,8 +199,10 @@ function encodeValue(type: SchemaType, value: unknown, path: string): ScVal {
 function decodeValue(type: SchemaType, value: ScVal): unknown {
   if (type.kind === "option") {
     const vals = value.vec();
-    if (!vals || vals.length === 1 && vals[0].sym() === "None") return null;
-    if (!vals || vals.length !== 2 || vals[0].sym() !== "Some") throw new Error("invalid encoded Option");
+    if (!vals || vals.length === 0) throw new Error("invalid encoded Option");
+    const tag = Buffer.from(vals[0].sym()).toString("utf8");
+    if (vals.length === 1 && tag === "None") return null;
+    if (vals.length !== 2 || tag !== "Some") throw new Error("invalid encoded Option");
     return decodeValue(type.item, vals[1]);
   }
   if (type.kind === "array" || type.kind === "vector" || type.kind === "tuple") {
@@ -213,7 +215,7 @@ function decodeValue(type: SchemaType, value: ScVal): unknown {
   if (type.kind === "map") {
     const map = value.map();
     if (!map) throw new Error("expected encoded map");
-    return new Map(map.map(({ key, val }) => [decodeValue(type.key, key), decodeValue(type.value, val)]));
+    return new Map(map.map((entry) => [decodeValue(type.key, entry.key()), decodeValue(type.value, entry.val())]));
   }
   const n = normalizePrimitive(type.name);
   if (["string", "symbol"].includes(n)) return n === "symbol" ? value.sym() : value.str().toString();

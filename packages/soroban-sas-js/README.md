@@ -13,14 +13,19 @@ Schema Registry contract.
 npm install @soroban-sas/sdk
 ```
 
+The SDK requires Node.js 20.19.0 or newer for Node/CommonJS consumers. This
+is required by the published Noble 2.4.0 packages used for SHA-256 and Ed25519;
+browser consumers are unaffected. Node 18 is not supported because the Noble
+2.x packages are ESM-only and the CJS entry cannot load them there.
+
 ## Hashing (byte-identical with the Rust contracts)
 
 `computeSchemaUid`, `computeAttestationUid`, and `hashTypedData` are ports of
 `soroban_sas_common::schema_uid`, `soroban_sas_common::attestation_uid`, and
 `soroban_sas_common::typed_data::hash_offchain_attestation` respectively.
 Every field the Rust side hashes via `.to_xdr(env)` — a `String`, `Address`,
-`Bytes`, or the `UID` newtype — is encoded here as the identical `ScVal` XDR
-shape using `@stellar/stellar-sdk`; fields Rust hashes as raw bytes (`u64`
+`Bytes`, or the `UID` newtype — is encoded here as the identical canonical
+`ScVal` XDR shape by the lightweight browser core; fields Rust hashes as raw bytes (`u64`
 big-endian, `BytesN<32>` arrays) are encoded the same way here, never
 XDR-wrapped. See `src/hashing.ts`'s doc comments for the exact preimage
 layout of each function, and `test/hashing.test.ts` for golden vectors
@@ -53,7 +58,7 @@ the SDK's `Type name` order are both accepted. `uint64` decodes to `bigint`;
 Nested `Vec<T>` and `Option<T>` are supported.
 
 ```ts
-import { parseSchema } from "@soroban-sas/sdk";
+import { parseSchema } from "@soroban-sas/sdk/schema";
 
 const claim = parseSchema("bool verified, uint64 score, string id");
 const data = claim.encode({ verified: true, score: 42n, id: "alice" });
@@ -82,7 +87,7 @@ comment with each source schema type. Payload values encode as a Soroban
 `ScVal` vector in schema field order, matching a Soroban struct's XDR shape.
 
 ```ts
-import { encodeSchemaValue, generateTypeScript } from "@soroban-sas/sdk";
+import { encodeSchemaValue, generateTypeScript } from "@soroban-sas/sdk/typegen";
 
 const schema = "name string, age uint32, verified bool, account address";
 const source = generateTypeScript(schema, "Profile");
@@ -131,14 +136,15 @@ the deployed contract's on-chain XDR spec and uses it to build the
 hand-encoding argument layouts.
 
 ```ts
-import { SASClient } from "@soroban-sas/sdk";
+import { SASClient } from "@soroban-sas/sdk/client";
 
 const client = new SASClient({
   contractId: "C...", // SAS contract id
   registryContractId: "C...", // Schema Registry contract id
   rpcUrl: "https://soroban-testnet.stellar.org",
   networkPassphrase: "Test SDF Network ; September 2015",
-  secret: "S...", // pays for and authorizes submitted transactions
+  publicKey: walletAddress,
+  signTransaction: (xdr, options) => wallet.signTransaction(xdr, options),
 });
 
 const schemaUid = await client.registerSchema("bool verified", resolverAddress, true);
@@ -297,6 +303,54 @@ without storing it, and `setNetworkFailure()` (cleared with
 `clearNetworkFailure()`) makes every call reject for a whole test.
 
 ## Scope and limitations
+
+### Browser and wallet integration
+
+The default package entry is a lightweight browser core and can be imported directly from Vite or a Next.js client component. It contains the canonical-compatible hashing, StrKey, and delegated-signature APIs. Transaction submission is available from the separate `/client` entry and uses the wallet callback shape exposed by `@stellar/stellar-sdk`:
+
+```ts
+import { SASClient } from "@soroban-sas/sdk/client";
+
+const sas = new SASClient({
+  contractId: "C...",
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  publicKey: walletAddress,
+  signTransaction: (xdr, options) => wallet.signTransaction(xdr, options),
+});
+```
+
+The browser entry does not accept secret seeds. Keep private keys out of browser bundles and provide a wallet signing callback instead. The callback receives the unsigned transaction XDR and returns the wallet's signed transaction XDR. This replaces the earlier `SASClientConfig.secret` path; callers that previously supplied a seed should adapt it to a signer callback or sign outside the browser.
+
+The browser and ESM conditions for the default entry resolve to a self-contained
+browser core. The full contract client is retained at
+`@soroban-sas/sdk/client`, and the explicit `@soroban-sas/sdk/node` entry remains
+available for Node secret-seed signing. The optional contract-client dependency
+cost is measured separately from the default core.
+
+For server-side Node applications that need the previous secret-seed signing
+convenience, use the explicit Node-only entry. It is intentionally not part of
+the browser graph:
+
+```ts
+import { createNodeSASClient } from "@soroban-sas/sdk/node";
+
+const client = createNodeSASClient({
+  contractId: "C...",
+  rpcUrl: "http://localhost:8000",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  secret: process.env.SAS_SECRET!,
+});
+```
+
+The Node helper is the supported replacement for the removed
+`SASClientConfig.secret` constructor option. Never import it in client-side
+code or expose its secret value to a browser.
+
+This release intentionally makes the default root entry browser-core-only:
+`SASClient` is no longer exported from `@soroban-sas/sdk`. Migrate imports to
+`@soroban-sas/sdk/client`; migrate secret-seed signing to
+`@soroban-sas/sdk/node` and `createNodeSASClient`.
 
 - `hashing.ts` and `delegation.ts` are cross-checked byte-for-byte against
   Rust golden vectors (see `test/hashing.test.ts` and
