@@ -450,10 +450,10 @@
                     },
                     {
                       "key": {
-                        "symbol": "expiration_time"
+                        "symbol": "packed_meta"
                       },
                       "val": {
-                        "u64": 0
+                        "bytes": "01000000000000000000000000000000000000000000000000"
                       }
                     },
                     {
@@ -478,22 +478,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "revocable"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "revocation_time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "schema_uid"
                       },
                       "val": {
@@ -502,34 +486,6 @@
                             "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
                           }
                         ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "30a4debd135b3bf9db199aba50335c73aad8c7d04b93f40dceb60468b6989961"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "valid_from"
-                      },
-                      "val": {
-                        "u64": 0
                       }
                     }
                   ]
@@ -590,10 +546,10 @@
                     },
                     {
                       "key": {
-                        "symbol": "expiration_time"
+                        "symbol": "packed_meta"
                       },
                       "val": {
-                        "u64": 0
+                        "bytes": "01000000000000000000000000000000000000000000000000"
                       }
                     },
                     {
@@ -618,22 +574,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "revocable"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "revocation_time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "schema_uid"
                       },
                       "val": {
@@ -642,34 +582,6 @@
                             "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
                           }
                         ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "4edf911542820862c070a6d7d6ea43ba616bb28599a0628db67c128abd5068a5"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "valid_from"
-                      },
-                      "val": {
-                        "u64": 0
                       }
                     }
                   ]
@@ -730,10 +642,10 @@
                     },
                     {
                       "key": {
-                        "symbol": "expiration_time"
+                        "symbol": "packed_meta"
                       },
                       "val": {
-                        "u64": 0
+                        "bytes": "01000000000000000000000000000000000000000000000000"
                       }
                     },
                     {
@@ -758,22 +670,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "revocable"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "revocation_time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "schema_uid"
                       },
                       "val": {
@@ -782,34 +678,6 @@
                             "bytes": "0202020202020202020202020202020202020202020202020202020202020202"
                           }
                         ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "time"
-                      },
-                      "val": {
-                        "u64": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "uid"
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "bytes": "6a4bc299731f525eabe581624a8e8e20bd6c45fbf521ffe90874b2f10bfd334b"
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "valid_from"
-                      },
-                      "val": {
-                        "u64": 0
                       }
                     }
                   ]

@@ -18,7 +18,7 @@ Soroban Attestation Service (SAS) welcomes responsible security research from th
 ### Scope
 
 The following components within this repository are in scope for security vulnerability reports:
-- **Core Smart Contracts**: `contracts/sas`, `contracts/schema-registry`, `contracts/indexer`, `contracts/cross-chain-verifier`, `contracts/zk-verifier`
+- **Core Smart Contracts**: `contracts/sas`, `contracts/schema-registry`, `contracts/indexer`, `contracts/cross-chain-verifier`, `contracts/zk-verifier`, `contracts/time-window-resolver`
 - **Core Protocol Packages**: `packages/soroban-sas-common`, `packages/soroban-sas-sdk`, `packages/soroban-sas-cli`
 - **Cryptographic & Verification Logic**: Off-chain typed data EIP-712-style hashing, Ed25519 signature checks, zero-knowledge attestation commitment proofs, replay defense nonces, and timestamp anchoring.
 

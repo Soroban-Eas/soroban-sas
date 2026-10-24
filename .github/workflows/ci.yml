@@ -82,6 +82,36 @@ jobs:
       - name: Run Tests
         run: cargo test --workspace
 
+  wasm-sdk:
+    name: WASM SDK (edge runtimes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.83.0
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      # The SDK must keep compiling for `wasm32-unknown-unknown` so it can run
+      # on Cloudflare Workers, Deno and other edge runtimes (#553).
+      - name: Check SDK (WASM)
+        run: cargo check -p soroban-sas-sdk --target wasm32-unknown-unknown --features wasm
+      - name: Run Clippy (WASM)
+        run: cargo clippy -p soroban-sas-sdk --target wasm32-unknown-unknown --features wasm -- -D warnings
+      - name: Check the Cloudflare Worker example (WASM)
+        run: cargo check --manifest-path examples/cloudflare-worker/Cargo.toml --target wasm32-unknown-unknown
+
   build-contracts:
     name: Build contracts (WASM)
     runs-on: ubuntu-latest

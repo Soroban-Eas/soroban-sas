@@ -1,0 +1,66 @@
+[
+  {
+    "uid": "3b08e2a1490226cfa877c8e9bda53243f721d092d6e4a2bc1d8c199209581f5c",
+    "raw_schema": "name String, age u32, verified bool, metadata_uri String",
+    "resolver": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    "revocable": true,
+    "deprecated": false,
+    "creator": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    "metadata_uri": "https://ipfs.io/ipfs/bafkreiaxxxxxxxxxxxx",
+    "fields": [
+      {
+        "name": "name",
+        "field_type": "String",
+        "is_metadata_uri": false,
+        "description": "Full legal or display name of the identity"
+      },
+      {
+        "name": "age",
+        "field_type": "u32",
+        "is_metadata_uri": false,
+        "description": "Age in completed years"
+      },
+      {
+        "name": "verified",
+        "field_type": "bool",
+        "is_metadata_uri": false,
+        "description": "Verification status flag"
+      },
+      {
+        "name": "metadata_uri",
+        "field_type": "String",
+        "is_metadata_uri": true,
+        "description": "Decentralized metadata pointer"
+      }
+    ]
+  },
+  {
+    "uid": "8f12a9c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcde",
+    "raw_schema": "credential_hash BytesN<32>, issuer Address, issue_date u64",
+    "resolver": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    "revocable": false,
+    "deprecated": false,
+    "creator": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    "metadata_uri": null,
+    "fields": [
+      {
+        "name": "credential_hash",
+        "field_type": "BytesN<32>",
+        "is_metadata_uri": false,
+        "description": "Cryptographic hash of the credential claim"
+      },
+      {
+        "name": "issuer",
+        "field_type": "Address",
+        "is_metadata_uri": false,
+        "description": "Issuing institution address"
+      },
+      {
+        "name": "issue_date",
+        "field_type": "u64",
+        "is_metadata_uri": false,
+        "description": "Issuance ledger timestamp"
+      }
+    ]
+  }
+]

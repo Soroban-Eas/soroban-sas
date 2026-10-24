@@ -8,13 +8,43 @@ edition = "2021"
 [dependencies]
 soroban-sdk.workspace = true
 soroban-sas-common = { path = "../soroban-sas-common" }
+soroban-sas-schema-macro = { path = "../soroban-sas-schema-macro" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 ed25519-dalek = "2.0.0"
 stellar-strkey = "0.0.8"
 sha2 = "0.10"
+base64 = "0.13"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 tokio = { version = "1", features = ["full"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+thiserror = "1"
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `soroban-sdk` is `no_std` on wasm targets. Enabling its `alloc` feature keeps
+# it from defining its own panic handler, which would clash with `std`.
+soroban-sdk = { workspace = true, features = ["alloc"] }
+# The guest XDR environment is built without `std`, so the base64 helpers and
+# `Limits` used by the SDK are missing there. Enabling them on the very same
+# `stellar-xdr` build the environment uses restores them on wasm targets.
+stellar-xdr = { version = "=21.2.0", features = ["base64", "serde"] }
+# Required for ed25519-dalek's RNG on wasm32-unknown-unknown.
+getrandom = { version = "0.2", features = ["js"] }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Headers",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Window",
+    "WorkerGlobalScope",
+] }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
@@ -23,3 +53,12 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] 
 
 [features]
 testutils = []
+# Edge runtimes (Cloudflare Workers, Deno, browsers): replaces the native ureq
+# transport with a web-sys fetch implementation exposed through the *_async RPC
+# methods. Synchronous RPC methods return a clear error under wasm.
+wasm = [
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+]

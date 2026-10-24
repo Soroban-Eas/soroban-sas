@@ -1,0 +1,675 @@
+{
+  "generators": {
+    "address": 3,
+    "nonce": 0
+  },
+  "auth": [
+    [],
+    [],
+    []
+  ],
+  "ledger": {
+    "protocol_version": 21,
+    "sequence_number": 0,
+    "timestamp": 0,
+    "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "base_reserve": 0,
+    "min_persistent_entry_ttl": 4096,
+    "min_temp_entry_ttl": 16,
+    "max_entry_ttl": 6312000,
+    "ledger_entries": [
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+            "key": "ledger_key_contract_instance",
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                  "contract_instance": {
+                    "executable": {
+                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
+                    "storage": [
+                      {
+                        "key": {
+                          "symbol": "CFG"
+                        },
+                        "val": {
+                          "map": [
+                            {
+                              "key": {
+                                "symbol": "signers"
+                              },
+                              "val": {
+                                "vec": [
+                                  {
+                                    "bytes": "3a39ec59863a8cca59b07960377fc557df3b10440db528d90e6c3608d8e537d0"
+                                  },
+                                  {
+                                    "bytes": "353d53f4f1bb50d2a1c3d4169b13ff2f158056b39fd5a21d65e95bf692d5abb9"
+                                  },
+                                  {
+                                    "bytes": "9ec52a7eb8fb6edc45f2fd0e52526ad14ad4f874fed4da10093f92e1f5069986"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "threshold"
+                              },
+                              "val": {
+                                "u32": 2
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ],
+      [
+        {
+          "contract_code": {
+            "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_code": {
+                "ext": "v0",
+                "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "code": ""
+              }
+            },
+            "ext": "v0"
+          },
+          6307200
+        ]
+      ]
+    ]
+  },
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
+              },
+              {
+                "symbol": "init"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "u32": 2
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "3a39ec59863a8cca59b07960377fc557df3b10440db528d90e6c3608d8e537d0"
+                    },
+                    {
+                      "bytes": "353d53f4f1bb50d2a1c3d4169b13ff2f158056b39fd5a21d65e95bf692d5abb9"
+                    },
+                    {
+                      "bytes": "9ec52a7eb8fb6edc45f2fd0e52526ad14ad4f874fed4da10093f92e1f5069986"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "init"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
+              },
+              {
+                "symbol": "on_attest"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "attester"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "data"
+                  },
+                  "val": {
+                    "bytes": "3a39ec59863a8cca59b07960377fc557df3b10440db528d90e6c3608d8e537d006ae9fa77c342a6061cb687beb3c4ddb52fec212d33ea21910807ed666f9a98f21cb67d765639274d60e3341bf7a83a53c7920a8421016ac0ac53b4dffd794003a39ec59863a8cca59b07960377fc557df3b10440db528d90e6c3608d8e537d006ae9fa77c342a6061cb687beb3c4ddb52fec212d33ea21910807ed666f9a98f21cb67d765639274d60e3341bf7a83a53c7920a8421016ac0ac53b4dffd79400353d53f4f1bb50d2a1c3d4169b13ff2f158056b39fd5a21d65e95bf692d5abb9f4d2ddd72459bf3b1a7e2d86e3e49c9e71eb3a237228b52a1066843f85aacc30f5cf047b6593c971b19a644b607a108fe78f6462af55cbc1208de50ce0cdc700"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "expiration_time"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "recipient"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "ref_uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocable"
+                  },
+                  "val": {
+                    "bool": true
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocation_time"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "schema_uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "time"
+                  },
+                  "val": {
+                    "u64": 1700000000
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0909090909090909090909090909090909090909090909090909090909090909"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "on_attest"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
+              },
+              {
+                "symbol": "on_attest"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "attester"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "data"
+                  },
+                  "val": {
+                    "bytes": "3a39ec59863a8cca59b07960377fc557df3b10440db528d90e6c3608d8e537d006ae9fa77c342a6061cb687beb3c4ddb52fec212d33ea21910807ed666f9a98f21cb67d765639274d60e3341bf7a83a53c7920a8421016ac0ac53b4dffd79400"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "expiration_time"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "recipient"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "ref_uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocable"
+                  },
+                  "val": {
+                    "bool": true
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "revocation_time"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "schema_uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "time"
+                  },
+                  "val": {
+                    "u64": 1700000000
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "uid"
+                  },
+                  "val": {
+                    "vec": [
+                      {
+                        "bytes": "0909090909090909090909090909090909090909090909090909090909090909"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "valid_from"
+                  },
+                  "val": {
+                    "u64": 0
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 6
+                }
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "failing with contract error"
+                },
+                {
+                  "u32": 6
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 6
+                }
+              }
+            ],
+            "data": {
+              "string": "escalating error to panic"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 6
+                }
+              }
+            ],
+            "data": {
+              "string": "caught error from function"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 6
+                }
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "contract try_call failed"
+                },
+                {
+                  "symbol": "on_attest"
+                },
+                {
+                  "vec": [
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "attester"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "data"
+                          },
+                          "val": {
+                            "bytes": "3a39ec59863a8cca59b07960377fc557df3b10440db528d90e6c3608d8e537d006ae9fa77c342a6061cb687beb3c4ddb52fec212d33ea21910807ed666f9a98f21cb67d765639274d60e3341bf7a83a53c7920a8421016ac0ac53b4dffd79400"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "expiration_time"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "recipient"
+                          },
+                          "val": {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "ref_uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "revocable"
+                          },
+                          "val": {
+                            "bool": true
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "revocation_time"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "schema_uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0101010101010101010101010101010101010101010101010101010101010101"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "time"
+                          },
+                          "val": {
+                            "u64": 1700000000
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "uid"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0909090909090909090909090909090909090909090909090909090909090909"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "valid_from"
+                          },
+                          "val": {
+                            "u64": 0
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
+}

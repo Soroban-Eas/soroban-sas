@@ -2,7 +2,11 @@
 // main.ts, and parameterized over the document and caller factory, so the
 // whole UI can be driven in tests against FixtureCaller.
 
+import { parseAttestationDeepLink, type AttestationVerificationQuery } from "./attestation.js";
+import { renderMobileVerificationView } from "./mobile-verify.js";
+import { renderQrCodeGeneratorPanel } from "./qr-view.js";
 import { PRESETS, configFromQuery, configToQuery, findPreset, validateConfig, type ExplorerConfig } from "./config.js";
+import { mountDesigner } from "./designer-ui.js";
 import { DEMO_REGISTRY_ID, FixtureCaller } from "./fixtures.js";
 import { isUidHex, normalizeUid } from "./hex.js";
 import { RegistryReader, RpcContractCaller, type ContractCaller, type SchemaRecord } from "./registry.js";
@@ -239,18 +243,45 @@ export function mountExplorer(doc: Document, options: MountOptions = {}) {
   });
 
   // --- tabs --------------------------------------------------------------
+  const verifyPanel = byId(doc, "verify");
+  const tabVerify = byId<HTMLButtonElement>(doc, "tab-verify");
+
   const tabs = [
     { tab: byId<HTMLButtonElement>(doc, "tab-browse"), panel: byId(doc, "browse") },
     { tab: byId<HTMLButtonElement>(doc, "tab-validate"), panel: byId(doc, "validate") },
+    { tab: byId<HTMLButtonElement>(doc, "tab-designer"), panel: byId(doc, "designer") },
+    { tab: tabVerify, panel: verifyPanel },
   ];
+
+  function switchTab(targetTab: HTMLButtonElement) {
+    for (const t of tabs) {
+      const active = t.tab === targetTab;
+      t.tab.setAttribute("aria-selected", String(active));
+      t.panel.hidden = !active;
+    }
+  }
+
   for (const { tab } of tabs) {
-    tab.addEventListener("click", () => {
-      for (const t of tabs) {
-        const active = t.tab === tab;
-        t.tab.setAttribute("aria-selected", String(active));
-        t.panel.hidden = !active;
-      }
-    });
+    tab.addEventListener("click", () => switchTab(tab));
+  }
+
+  function showQrPanel() {
+    verifyPanel.replaceChildren(
+      renderQrCodeGeneratorPanel(registry.value || undefined, (q) => showMobileVerify(q)),
+    );
+  }
+
+  function showMobileVerify(query: AttestationVerificationQuery) {
+    switchTab(tabVerify);
+    verifyPanel.replaceChildren(renderMobileVerificationView(query, () => showQrPanel()));
+  }
+
+  showQrPanel();
+
+  // Check for deep-link verification URL parameter (e.g. ?verify=1&uid=...)
+  const deepLink = parseAttestationDeepLink(search);
+  if (deepLink) {
+    showMobileVerify(deepLink);
   }
 
   // --- draft validator ---------------------------------------------------
@@ -260,6 +291,7 @@ export function mountExplorer(doc: Document, options: MountOptions = {}) {
   }
   draft.addEventListener("input", renderDraft);
   renderDraft();
+  mountDesigner(doc);
 
   // `?demo=1` opens straight into the offline fixtures (handy for sharing a preview).
   if (new URLSearchParams(search).get("demo") === "1") demoBtn.click();
