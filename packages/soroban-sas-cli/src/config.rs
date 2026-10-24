@@ -243,8 +243,10 @@ mod tests {
         let config_file = tmp_dir.join("config.toml");
         std::env::set_var("SAS_CONFIG_PATH", &config_file);
 
-        let mut config = Config::default();
-        config.active_profile = "mainnet".to_string();
+        let config = Config {
+            active_profile: "mainnet".to_string(),
+            ..Default::default()
+        };
         save_config(&config).unwrap();
 
         assert!(config_file.exists());
