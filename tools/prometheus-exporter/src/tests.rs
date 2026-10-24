@@ -77,9 +77,9 @@ fn test_sas_attestations_total_batch() {
 #[test]
 fn test_sas_attestations_total_accumulates_across_events() {
     let m = make_metrics();
-    m.record_event(&issued_event(), "c1");         // +1
+    m.record_event(&issued_event(), "c1"); // +1
     m.record_event(&batch_attested_event(4), "c1"); // +4
-    m.record_event(&issued_event(), "c1");          // +1
+    m.record_event(&issued_event(), "c1"); // +1
     assert_eq!(m.sas_attestations_total.get(), 6.0);
 }
 
@@ -111,7 +111,7 @@ fn test_sas_revocations_total_batch() {
 #[test]
 fn test_sas_revocations_total_accumulates() {
     let m = make_metrics();
-    m.record_event(&revoked_event(), "c1");        // +1
+    m.record_event(&revoked_event(), "c1"); // +1
     m.record_event(&batch_revoked_event(9), "c1"); // +9
     assert_eq!(m.sas_revocations_total.get(), 10.0);
 }
@@ -182,9 +182,9 @@ fn test_sas_attestation_batch_size_batch_event() {
 #[test]
 fn test_sas_attestation_batch_size_multiple_observations() {
     let m = make_metrics();
-    m.record_event(&issued_event(), "c1");          // obs 1.0
+    m.record_event(&issued_event(), "c1"); // obs 1.0
     m.record_event(&batch_attested_event(10), "c1"); // obs 10.0
-    m.record_event(&batch_attested_event(5), "c1");  // obs 5.0
+    m.record_event(&batch_attested_event(5), "c1"); // obs 5.0
     let families = m.registry.gather();
     let hist = families
         .iter()

@@ -97,7 +97,6 @@ pub struct SasMetrics {
     pub registry: Registry,
 
     // ── Issue #569: required histograms ───────────────────────────────────────
-
     /// Distribution of batch sizes (attestations per batch operation).
     ///
     /// Use this to understand whether clients are using batching efficiently.
@@ -118,7 +117,6 @@ pub struct SasMetrics {
     pub sas_cpu_instructions_consumed: Histogram,
 
     // ── Issue #569: required counters ─────────────────────────────────────────
-
     /// Monotonic count of all attestations written to the ledger (singles + batches).
     pub sas_attestations_total: Counter,
 
@@ -129,7 +127,6 @@ pub struct SasMetrics {
     pub sas_reindex_failures_total: Counter,
 
     // ── Existing metrics retained for backward compatibility ──────────────────
-
     pub attestation_issued_total: Counter,
     pub attestation_revoked_total: Counter,
     pub batch_attested_total: Counter,
@@ -245,8 +242,7 @@ impl SasMetrics {
         )?;
         registry.register(Box::new(active_attestations.clone()))?;
 
-        let active_schemas =
-            Gauge::new("sas_active_schemas", "Current number of active schemas")?;
+        let active_schemas = Gauge::new("sas_active_schemas", "Current number of active schemas")?;
         registry.register(Box::new(active_schemas.clone()))?;
 
         let event_processing_duration = Histogram::with_opts(
@@ -339,7 +335,8 @@ impl SasMetrics {
     /// metrics.record_transaction_latency(start.elapsed().as_secs_f64());
     /// ```
     pub fn record_transaction_latency(&self, latency_seconds: f64) {
-        self.sas_transaction_latency_seconds.observe(latency_seconds);
+        self.sas_transaction_latency_seconds
+            .observe(latency_seconds);
     }
 
     /// Record the CPU instruction count for a Soroban transaction.
@@ -347,7 +344,8 @@ impl SasMetrics {
     /// The `instructions` value comes from the `TransactionMeta::V3` field
     /// `soroban_meta.resources.instructions` in the ledger close metadata.
     pub fn record_cpu_instructions(&self, instructions: u64) {
-        self.sas_cpu_instructions_consumed.observe(instructions as f64);
+        self.sas_cpu_instructions_consumed
+            .observe(instructions as f64);
     }
 
     /// Increment the re-index failure counter.
