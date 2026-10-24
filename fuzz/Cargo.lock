@@ -1552,6 +1552,7 @@ dependencies = [
 name = "soroban-sas-fuzz"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "libfuzzer-sys",
  "sas",
  "schema-registry",
