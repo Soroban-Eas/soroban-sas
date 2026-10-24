@@ -18,4 +18,4 @@ hex = "0.4"
 schema-registry = { path = "../schema-registry", features = ["testutils"] }
 soroban-sas-indexer = { path = "../indexer", features = ["testutils"] }
 soroban-sdk = { workspace = true, features = ["testutils"] }
-stellar-strkey = "0.0.8"
+stellar-strkey = "1.0.0"

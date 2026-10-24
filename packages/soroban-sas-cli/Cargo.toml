@@ -22,7 +22,7 @@ serde_json = "1.0"
 soroban-sas-common = { path = "../soroban-sas-common" }
 soroban-sas-sdk = { path = "../soroban-sas-sdk" }
 soroban-sdk = { workspace = true, features = ["testutils"] }
-stellar-strkey = "0.0.8"
+stellar-strkey = "1.0.0"
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
