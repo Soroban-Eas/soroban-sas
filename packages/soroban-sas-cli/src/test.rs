@@ -2128,4 +2128,51 @@ mod wizard_tests {
         };
         assert_eq!(resolver.as_deref(), Some(WIZARD_RESOLVER));
     }
+
+    #[test]
+    fn test_completions_cli_parsing() {
+        let shells = [
+            ("bash", clap_complete::Shell::Bash),
+            ("zsh", clap_complete::Shell::Zsh),
+            ("fish", clap_complete::Shell::Fish),
+            ("powershell", clap_complete::Shell::PowerShell),
+            ("elvish", clap_complete::Shell::Elvish),
+        ];
+
+        for (name, expected_shell) in shells {
+            let cli = Cli::try_parse_from(["sas", "completions", name]).unwrap();
+            match cli.command {
+                Some(Commands::Completions { shell }) => assert_eq!(shell, expected_shell),
+                _ => panic!("expected Completions command for {name}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_completions_script_generation() {
+        use clap::CommandFactory;
+
+        let shells = [
+            clap_complete::Shell::Bash,
+            clap_complete::Shell::Zsh,
+            clap_complete::Shell::Fish,
+            clap_complete::Shell::PowerShell,
+            clap_complete::Shell::Elvish,
+        ];
+
+        for shell in shells {
+            let mut buf = Vec::new();
+            let mut cmd = Cli::command();
+            crate::completions::generate_completions(&mut cmd, shell, &mut buf);
+            let script = String::from_utf8(buf).expect("completions should be valid UTF-8");
+            assert!(
+                !script.is_empty(),
+                "completions script for {shell:?} should not be empty"
+            );
+            assert!(
+                script.contains("sas"),
+                "completions script should reference 'sas'"
+            );
+        }
+    }
 }

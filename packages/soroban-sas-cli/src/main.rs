@@ -2,6 +2,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 mod bulk;
 mod cache;
+mod completions;
 mod config;
 mod hardware;
 mod identity;
@@ -664,6 +665,11 @@ enum Commands {
         /// Write the page to this file instead of stdout
         #[arg(long, help = "Write the man page to this file instead of stdout")]
         path: Option<std::path::PathBuf>,
+    },
+    /// Generate shell completion scripts (issue #475)
+    Completions {
+        /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
+        shell: clap_complete::Shell,
     },
 }
 
@@ -1661,6 +1667,11 @@ fn main() {
             }
         }
         Some(Commands::Man { path }) => manpage::write_man_page(&Cli::command(), path.as_deref()),
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            completions::generate_completions(&mut cmd, shell, &mut std::io::stdout());
+            Ok(())
+        }
         _ => emit_ok(
             output,
             || println!("CLI initialized"),

@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p target/completions
           for shell in bash zsh fish powershell; do
-            cargo run --release --package sas -- completions "$shell" > "target/completions/sas.$shell"
+            cargo run --release --package soroban-sas-cli -- completions "$shell" > "target/completions/sas.$shell"
           done
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

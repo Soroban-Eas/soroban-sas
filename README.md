@@ -171,6 +171,25 @@ Detailed usage and flags for every subcommand are available via:
 cargo run -p soroban-sas-cli -- --help
 ```
 
+### Shell Completions
+
+Generate shell completions for tab-completing commands, subcommands, and flags:
+
+```bash
+# Bash
+cargo run -p soroban-sas-cli -- completions bash > ~/.local/share/bash-completion/completions/sas
+
+# Zsh
+cargo run -p soroban-sas-cli -- completions zsh > ~/.zfunc/_sas
+
+# Fish
+cargo run -p soroban-sas-cli -- completions fish > ~/.config/fish/completions/sas.fish
+
+# PowerShell
+cargo run -p soroban-sas-cli -- completions powershell > ./sas.ps1
+```
+
+
 ## TOML Configuration File
 
 The CLI can read default RPC and network settings from a TOML configuration file.

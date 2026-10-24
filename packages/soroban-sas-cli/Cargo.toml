@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 base64 = "0.23"
 clap = { version = "4.0", features = ["derive", "env"] }
+clap_complete = "4.5.20"
 # Interactive terminal prompts (validators, confirmations) for the
 # `schema wizard` command (#469). Default features off: the optional
 # `editor`/`password` extras pull tempfile's getrandom 0.4 tree, which
