@@ -76,7 +76,7 @@ debug-assertions = true
 panic = "unwind"
 
 [workspace.dependencies]
-soroban-sdk = "21.7.7"
+soroban-sdk = "22.0.0"
 criterion = { version = "0.5", features = ["html_reports"] }
 soroban-sas-common = { path = "packages/soroban-sas-common" }
 
