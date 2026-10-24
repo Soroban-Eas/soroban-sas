@@ -56,6 +56,52 @@ fn renew_schema_record(env: &Env, uid: &UID) {
 /// not been initialized yet. The non-panicking counterpart of
 /// [`require_registry_admin`], used by the upgrade validation path so a
 /// candidate can be rejected with a typed error before any state is written.
+/// Lineage lookups are bounded to prevent an unbounded read-cost attack.
+const MAX_SCHEMA_HISTORY_DEPTH: u32 = 64;
+
+/// A compatible derivative may only append new fields. This preserves the
+/// original field names, types and relative positions byte-for-byte. The
+/// shared schema syntax validator runs on both definitions before this check.
+fn is_append_only_schema(predecessor: &String, successor: &String) -> bool {
+    let old_len = predecessor.len() as usize;
+    let new_len = successor.len() as usize;
+    if new_len <= old_len || old_len > 1024 || new_len > 1024 {
+        return false;
+    }
+    let mut old_buf = [0u8; 1024];
+    let mut new_buf = [0u8; 1024];
+    predecessor.copy_into_slice(&mut old_buf[..old_len]);
+    successor.copy_into_slice(&mut new_buf[..new_len]);
+    new_buf[..old_len] == old_buf[..old_len] && new_buf[old_len] == b','
+}
+
+/// Traverses stored predecessor edges newest-first, including the input UID.
+/// The linkage and every record are stored separately from SchemaRecord so
+/// deployed schema metadata retains its original serialized shape.
+fn schema_history(env: &Env, uid: UID) -> Vec<UID> {
+    let mut history = Vec::new(env);
+    let mut current = uid;
+    loop {
+        if history.len() >= MAX_SCHEMA_HISTORY_DEPTH {
+            panic_with_error!(env, SASError::InvalidSchemaDefinition);
+        }
+        if !env.storage().persistent().has(&current) {
+            panic_with_error!(env, SASError::SchemaNotFound);
+        }
+        renew_schema_record(env, &current);
+        history.push_back(current.clone());
+        let key = (SCHEMA_PREDECESSOR, current);
+        let Some(parent): Option<UID> = env.storage().persistent().get(&key) else {
+            break;
+        };
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        current = parent;
+    }
+    history
+}
+
 fn registry_admin(env: &Env) -> Result<Address, SASError> {
     match env.storage().instance().get(&REGISTRY_ADMIN) {
         Some(admin) => Ok(admin),
@@ -1119,6 +1165,79 @@ impl SchemaRegistry {
         env.events().publish((SCHEMA_DEPRECATED, uid), sender);
     }
 
+    /// Registers a derivative schema under the predecessor owner's authority.
+    ///
+    /// Existing `register` methods keep their unchanged ABI. A migration uses
+    /// this explicit entry point, an append-only field extension and a durable
+    /// predecessor link; no mutation of an existing schema UID is permitted.
+    pub fn register_with_predecessor(
+        env: Env,
+        owner: Address,
+        schema: String,
+        resolver: Address,
+        revocable: bool,
+        predecessor_uid: UID,
+    ) -> UID {
+        if let Err(error) = validate_schema_syntax(&env, &schema) {
+            panic_with_error!(&env, error);
+        }
+        let predecessor: SchemaRecord = env
+            .storage()
+            .persistent()
+            .get(&predecessor_uid)
+            .unwrap_or_else(|| panic_with_error!(&env, SASError::SchemaNotFound));
+        // The predecessor's current owner must personally authorize the
+        // derivative, even if its new owner is a different address.
+        let predecessor_owner = schema_creator(&env, &predecessor_uid)
+            .unwrap_or_else(|| panic_with_error!(&env, SASError::SchemaNotFound));
+        if let Err(error) = validate_schema_syntax(&env, &predecessor.schema) {
+            panic_with_error!(&env, error);
+        }
+        if !is_append_only_schema(&predecessor.schema, &schema) {
+            panic_with_error!(&env, SASError::InvalidSchemaDefinition);
+        }
+
+        // Require both parties, without allowing the registry administrator or
+        // unrelated delegates to bypass predecessor ownership.
+        predecessor_owner.require_auth();
+        owner.require_auth();
+
+        // Bound ancestry before adding another edge.
+        if schema_history(&env, predecessor_uid.clone()).len() >= MAX_SCHEMA_HISTORY_DEPTH {
+            panic_with_error!(&env, SASError::InvalidSchemaDefinition);
+        }
+        let uid = Self::register_internal(env.clone(), owner, schema, resolver, revocable, 0);
+        let key = (SCHEMA_PREDECESSOR, uid.clone());
+        env.storage().persistent().set(&key, &predecessor_uid);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        uid
+    }
+
+    /// Returns UIDs ordered newest-to-genesis. Unlinked legacy schemas have
+    /// a single-entry history, and unknown/expired UIDs fail explicitly.
+    pub fn get_schema_history(env: Env, schema_uid: UID) -> Vec<UID> {
+        extend_instance_ttl(&env);
+        schema_history(&env, schema_uid)
+    }
+
+    /// Returns the direct predecessor when a schema was registered as a
+    /// migration; legacy and genesis schemas return None.
+    pub fn get_schema_predecessor(env: Env, schema_uid: UID) -> Option<UID> {
+        extend_instance_ttl(&env);
+        if !env.storage().persistent().has(&schema_uid) {
+            panic_with_error!(&env, SASError::SchemaNotFound);
+        }
+        let key = (SCHEMA_PREDECESSOR, schema_uid);
+        let result: Option<UID> = env.storage().persistent().get(&key);
+        if result.is_some() {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        }
+        result
+    }
     /// Protocol admin toggles quarantine on a schema (#539).
     ///
     /// Quarantine blocks new attestations. Existing attestations stay stored

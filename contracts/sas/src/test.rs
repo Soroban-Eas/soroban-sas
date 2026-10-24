@@ -4531,3 +4531,200 @@ mod view_functions {
         );
     }
 }
+
+// Regression tests for bundled Stellar Wave issues #525, #532 and #533.
+#[test]
+fn test_multi_asset_fee_allowlist_and_treasury_settlement() {
+    let (env, sas_client, _sas_id, admin, attester, recipient) = fee_test_env();
+    let treasury = Address::generate(&env);
+    let default_token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let alternate = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let unknown = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let default_client = soroban_sdk::token::Client::new(&env, &default_token);
+    let alternate_client = soroban_sdk::token::Client::new(&env, &alternate);
+    soroban_sdk::token::StellarAssetClient::new(&env, &default_token).mint(&attester, &1_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &alternate).mint(&attester, &1_000);
+
+    sas_client.set_treasury(&treasury);
+    sas_client.set_fee(&default_token, &100);
+    sas_client.set_accepted_fee(&alternate, &250);
+    assert_eq!(sas_client.get_accepted_fee(&alternate), Some(250));
+
+    let a = attestation_fixture(&env, &attester, &recipient, [81u8; 32]);
+    sas_client.attest_with_value(&a, &alternate, &250);
+    assert_eq!(alternate_client.balance(&treasury), 250);
+    assert_eq!(alternate_client.balance(&attester), 750);
+
+    let b = attestation_fixture(&env, &attester, &recipient, [82u8; 32]);
+    sas_client.attest_with_value(&b, &default_token, &100);
+    assert_eq!(default_client.balance(&treasury), 100);
+
+    let c = attestation_fixture(&env, &attester, &recipient, [83u8; 32]);
+    assert_eq!(
+        sas_client.try_attest_with_value(&c, &unknown, &250),
+        Err(Ok(SASError::InvalidToken.into()))
+    );
+    assert!(!sas_client.verify_attestation(&c.uid));
+
+    sas_client.remove_accepted_fee(&alternate);
+    assert_eq!(sas_client.get_accepted_fee(&alternate), None);
+    let d = attestation_fixture(&env, &attester, &recipient, [84u8; 32]);
+    assert_eq!(
+        sas_client.try_attest_with_value(&d, &alternate, &250),
+        Err(Ok(SASError::InvalidToken.into()))
+    );
+}
+
+#[test]
+fn test_rolling_ledger_rate_limit_bursts_and_exemptions() {
+    let (env, sas_client, _sas_id, _admin, attester, recipient) = fee_test_env();
+    sas_client.set_issuance_rate_limit(&2, &3);
+    assert_eq!(sas_client.get_issuance_rate_limit(), Some((2, 3)));
+
+    for seed in [91u8, 92u8] {
+        let att = attestation_fixture(&env, &attester, &recipient, [seed; 32]);
+        sas_client.attest(&att);
+    }
+    let blocked = attestation_fixture(&env, &attester, &recipient, [93u8; 32]);
+    assert_eq!(
+        sas_client.try_attest(&blocked),
+        Err(Ok(SASError::RateLimitExceeded.into()))
+    );
+
+    env.ledger().with_mut(|li| li.sequence_number += 3);
+    sas_client.attest(&blocked);
+    let blocked_again = attestation_fixture(&env, &attester, &recipient, [94u8; 32]);
+    sas_client.set_rate_limit_exempt(&attester, &true);
+    assert!(sas_client.is_rate_limit_exempt(&attester));
+    sas_client.attest(&blocked_again);
+    sas_client.set_rate_limit_exempt(&attester, &false);
+
+    let other = Address::generate(&env);
+    let other_att = attestation_fixture(&env, &other, &recipient, [95u8; 32]);
+    sas_client.attest(&other_att);
+    sas_client.clear_issuance_rate_limit();
+    assert_eq!(sas_client.get_issuance_rate_limit(), None);
+}
+
+#[test]
+fn test_rate_limit_rejects_invalid_admin_configuration() {
+    let (env, sas_client, _sas_id, _admin, _attester, _recipient) = fee_test_env();
+    assert_eq!(
+        sas_client.try_set_issuance_rate_limit(&0, &3),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+    assert_eq!(
+        sas_client.try_set_issuance_rate_limit(&2, &0),
+        Err(Ok(SASError::InvalidValue.into()))
+    );
+    env.set_auths(&[]);
+    assert!(sas_client.try_set_issuance_rate_limit(&2, &3).is_err());
+}
+
+// Three external resolver hops, followed by an attempted callback to SAS.
+mod callback_loop {
+    use super::*;
+    #[contract]
+    pub struct Hop;
+    #[contractimpl]
+    impl Hop {
+        pub fn configure(env: Env, next: Address, terminal: bool) {
+            env.storage().instance().set(&symbol_short!("NEXT"), &next);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("FINAL"), &terminal);
+        }
+        pub fn on_attest(env: Env, attestation: Attestation) {
+            let next: Address = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("NEXT"))
+                .unwrap();
+            let terminal: bool = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("FINAL"))
+                .unwrap();
+            if terminal {
+                env.invoke_contract::<()>(&next, &symbol_short!("pause"), soroban_sdk::vec![&env]);
+            } else {
+                env.invoke_contract::<()>(
+                    &next,
+                    &symbol_short!("on_attest"),
+                    soroban_sdk::vec![&env, attestation.into_val(&env)],
+                );
+            }
+        }
+        pub fn on_revoke(_env: Env, _attestation: Attestation) {}
+    }
+
+    #[contract]
+    pub struct LoopRegistry;
+    #[contractimpl]
+    impl LoopRegistry {
+        pub fn set_resolver(env: Env, resolver: Address) {
+            env.storage()
+                .instance()
+                .set(&symbol_short!("RESOLVER"), &resolver);
+        }
+        pub fn sasreg(_env: Env) -> bool {
+            true
+        }
+        pub fn get_schema(env: Env, uid: UID) -> Option<soroban_sas_common::SchemaRecord> {
+            let resolver: Address = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("RESOLVER"))
+                .unwrap();
+            Some(soroban_sas_common::SchemaRecord {
+                uid,
+                resolver,
+                revocable: true,
+                schema: soroban_sdk::String::from_str(&env, "loop"),
+                deprecated: false,
+            })
+        }
+        pub fn is_authorized(_env: Env, _uid: UID, _attester: Address) -> bool {
+            true
+        }
+    }
+}
+
+#[test]
+fn test_three_contract_resolver_reentrancy_loop_rolls_back() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let a = env.register_contract(None, callback_loop::Hop);
+    let b = env.register_contract(None, callback_loop::Hop);
+    let c = env.register_contract(None, callback_loop::Hop);
+    let registry = env.register_contract(None, callback_loop::LoopRegistry);
+    let sas = env.register_contract(None, SAS);
+    let admin = Address::generate(&env);
+    let client = SASClient::new(&env, &sas);
+    client.init(&admin, &registry);
+    callback_loop::LoopRegistryClient::new(&env, &registry).set_resolver(&a);
+    let hop_a = callback_loop::HopClient::new(&env, &a);
+    let hop_b = callback_loop::HopClient::new(&env, &b);
+    let hop_c = callback_loop::HopClient::new(&env, &c);
+    hop_a.configure(&b, &false);
+    hop_b.configure(&c, &false);
+    hop_c.configure(&sas, &true);
+
+    let attester = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let att = attestation_fixture(&env, &attester, &recipient, [101u8; 32]);
+    assert!(client.try_attest(&att).is_err());
+    assert!(!client.verify_attestation(&att.uid));
+
+    // A trapped callback must not poison the context for future issuances.
+    let good_resolver = env.register_contract(None, mock3::MockResolver);
+    callback_loop::LoopRegistryClient::new(&env, &registry).set_resolver(&good_resolver);
+    let clean = attestation_fixture(&env, &attester, &recipient, [102u8; 32]);
+    assert_eq!(client.attest(&clean), clean.uid);
+}

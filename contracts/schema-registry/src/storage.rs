@@ -89,3 +89,7 @@ pub const SCHEMA_OWNER_TRANSFER_CANCELLED: Symbol = symbol_short!("OWNCANC");
 /// cost of every approval scan so a hostile configuration cannot make owner
 /// checks unbounded.
 pub const MAX_OWNER_SET: u32 = 10;
+
+/// Version lineage: (SCHEMA_PREDECESSOR, derivative_uid) -> predecessor_uid.
+/// Separate from SchemaRecord to retain its frozen XDR layout.
+pub const SCHEMA_PREDECESSOR: Symbol = symbol_short!("PREDSCHE");

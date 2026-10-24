@@ -1839,3 +1839,146 @@ mod snapshot_tests {
         assert_eq!(client.get_schema_max_ttl(&uid), 0);
     }
 }
+
+#[test]
+fn test_schema_migration_append_only_lineage_and_legacy_compatibility() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let registry = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &registry);
+    let owner = Address::generate(&env);
+    let next_owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+
+    let genesis = client.register(
+        &owner,
+        &String::from_str(&env, "name string"),
+        &resolver,
+        &true,
+    );
+    assert_eq!(client.get_schema_predecessor(&genesis), None);
+    assert_eq!(
+        client.get_schema_history(&genesis),
+        soroban_sdk::vec![&env, genesis.clone()]
+    );
+
+    let second = client.register_with_predecessor(
+        &next_owner,
+        &String::from_str(&env, "name string, age u32"),
+        &resolver,
+        &true,
+        &genesis,
+    );
+    assert_eq!(
+        client.get_schema_predecessor(&second),
+        Some(genesis.clone())
+    );
+    assert_eq!(
+        client.get_schema_history(&second),
+        soroban_sdk::vec![&env, second.clone(), genesis.clone()],
+    );
+
+    let third = client.register_with_predecessor(
+        &next_owner,
+        &String::from_str(&env, "name string, age u32, active bool"),
+        &resolver,
+        &true,
+        &second,
+    );
+    assert_eq!(
+        client.get_schema_history(&third),
+        soroban_sdk::vec![&env, third.clone(), second.clone(), genesis.clone()],
+    );
+    assert_eq!(
+        client.get_schema(&genesis).unwrap().schema,
+        String::from_str(&env, "name string")
+    );
+    assert_eq!(
+        client.get_schema(&third).unwrap().schema,
+        String::from_str(&env, "name string, age u32, active bool"),
+    );
+}
+
+#[test]
+fn test_schema_migration_rejects_field_mutation_deletion_and_unknown_parent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let registry = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &registry);
+    let owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let genesis = client.register(
+        &owner,
+        &String::from_str(&env, "name string, age u32"),
+        &resolver,
+        &true,
+    );
+    for candidate in [
+        "name bytes, age u32, extra bool",
+        "name string",
+        "age u32, name string, extra bool",
+        "name string, age i128",
+    ] {
+        assert_eq!(
+            client.try_register_with_predecessor(
+                &owner,
+                &String::from_str(&env, candidate),
+                &resolver,
+                &true,
+                &genesis,
+            ),
+            Err(Ok(
+                soroban_sas_common::SASError::InvalidSchemaDefinition.into()
+            )),
+        );
+    }
+    let missing = soroban_sas_common::UID(BytesN::from_array(&env, &[0x71; 32]));
+    assert_eq!(
+        client.try_register_with_predecessor(
+            &owner,
+            &String::from_str(&env, "name string, age u32, extra bool"),
+            &resolver,
+            &true,
+            &missing,
+        ),
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into())),
+    );
+    assert_eq!(
+        client.try_get_schema_history(&missing),
+        Err(Ok(soroban_sas_common::SASError::SchemaNotFound.into())),
+    );
+}
+
+#[test]
+fn test_schema_migration_requires_predecessor_owner_signature() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let registry = env.register_contract(None, SchemaRegistry);
+    let client = SchemaRegistryClient::new(&env, &registry);
+    let owner = Address::generate(&env);
+    let derivative_owner = Address::generate(&env);
+    let resolver = Address::generate(&env);
+    let genesis = client.register(
+        &owner,
+        &String::from_str(&env, "name string"),
+        &resolver,
+        &true,
+    );
+
+    // Neither the new owner nor a relayer may migrate the original
+    // without the predecessor's actual authorization.
+    env.set_auths(&[]);
+    assert!(client
+        .try_register_with_predecessor(
+            &derivative_owner,
+            &String::from_str(&env, "name string, age u32"),
+            &resolver,
+            &true,
+            &genesis,
+        )
+        .is_err());
+    assert_eq!(
+        client.get_schema_history(&genesis),
+        soroban_sdk::vec![&env, genesis.clone()]
+    );
+}

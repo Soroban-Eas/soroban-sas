@@ -33,6 +33,14 @@ pub const TREASURY: Symbol = symbol_short!("TREASURY");
 /// Instance key for the `(fee_token, fee_amount)` pair required by
 /// `attest_with_value`. Absent means attestation is fee-free (#164).
 pub const FEE_CONFIG: Symbol = symbol_short!("FEECFG");
+/// Additional SAC fee assets; the legacy FEE_CONFIG stays the default.
+pub const FEE_ASSET: Symbol = symbol_short!("FEEASSET");
+pub const MULTI_ASSET_ACTIVE: Symbol = symbol_short!("MULTIFEE");
+/// Instance configuration (maximum issuances, rolling ledger width).
+pub const RATE_LIMIT_CONFIG: Symbol = symbol_short!("RATECFG");
+pub const RATE_EXEMPT: Symbol = symbol_short!("RATEEX");
+/// Temporary per-attester issuance ledger sequences (bounded by quota).
+pub const RATE_HISTORY: Symbol = symbol_short!("RATEHIST");
 /// Instance key for the fail-closed indexing toggle. When `true`, a failed
 /// Indexer push aborts attestation issuance with `IndexerUnavailable`
 /// instead of emitting `IndexFailed` (#161). Defaults to `false` (fail-open).
@@ -73,6 +81,8 @@ pub const MAX_VERIFY_BATCH: u32 = 100;
 /// for the duration of a batch and removed on the success path; a nested
 /// `multi_attest` while it is held aborts with `SASError::Reentrancy` (#296).
 pub const REENTRANCY_GUARD: Symbol = symbol_short!("REENTRY");
+/// Active guarded execution frames (callbacks and nested internal operations).
+pub const CALL_DEPTH: Symbol = symbol_short!("CALLDEP");
 const REGISTRY_INTERFACE_VERSION: Symbol = symbol_short!("SASREG");
 
 fn extend_instance_ttl(env: &Env) {
@@ -199,6 +209,101 @@ fn exit_reentrancy_guard(env: &Env) {
     env.storage().instance().remove(&REENTRANCY_GUARD);
 }
 
+/// All public mutating entrypoints must reject a callback into SAS.
+fn reject_reentrant(env: &Env) {
+    let guarded = env
+        .storage()
+        .instance()
+        .get::<_, bool>(&REENTRANCY_GUARD)
+        .unwrap_or(false);
+    let depth = env
+        .storage()
+        .instance()
+        .get::<_, u32>(&CALL_DEPTH)
+        .unwrap_or(0);
+    if guarded || depth > 0 {
+        panic_with_error!(env, SASError::ReentrancyDetected);
+    }
+}
+
+/// The batch entrypoints already hold the outer guard. Every private
+/// callback-capable operation increments the context depth and releases
+/// precisely its own frame on normal return.
+fn enter_callback_context(env: &Env) -> bool {
+    let guarded = env
+        .storage()
+        .instance()
+        .get::<_, bool>(&REENTRANCY_GUARD)
+        .unwrap_or(false);
+    let depth = env
+        .storage()
+        .instance()
+        .get::<_, u32>(&CALL_DEPTH)
+        .unwrap_or(0);
+    let next = depth.checked_add(1).unwrap_or_else(|| {
+        panic_with_error!(env, SASError::ReentrancyDetected);
+    });
+    env.storage().instance().set(&CALL_DEPTH, &next);
+    if !guarded {
+        env.storage().instance().set(&REENTRANCY_GUARD, &true);
+    }
+    !guarded
+}
+
+fn exit_callback_context(env: &Env, owns_guard: bool) {
+    let depth = env
+        .storage()
+        .instance()
+        .get::<_, u32>(&CALL_DEPTH)
+        .unwrap_or(0);
+    if depth <= 1 {
+        env.storage().instance().remove(&CALL_DEPTH);
+    } else {
+        env.storage().instance().set(&CALL_DEPTH, &(depth - 1));
+    }
+    if owns_guard {
+        exit_reentrancy_guard(env);
+    }
+}
+
+/// Sliding-window quota with bounded temporary storage. Old ledger entries
+/// are discarded on every successful issuance; the key auto-expires.
+fn consume_issuance_quota(env: &Env, attester: &Address) {
+    let Some((max_issuances, window)): Option<(u32, u32)> =
+        env.storage().instance().get(&RATE_LIMIT_CONFIG)
+    else {
+        return;
+    };
+    if env
+        .storage()
+        .instance()
+        .get::<_, bool>(&(RATE_EXEMPT, attester.clone()))
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let key = (RATE_HISTORY, attester.clone());
+    let prior: soroban_sdk::Vec<u32> = env
+        .storage()
+        .temporary()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    let now = env.ledger().sequence();
+    let oldest = now.saturating_sub(window.saturating_sub(1));
+    let mut recent = soroban_sdk::Vec::new(env);
+    for issued_at in prior.iter() {
+        if issued_at >= oldest && issued_at <= now {
+            recent.push_back(issued_at);
+        }
+    }
+    if recent.len() >= max_issuances {
+        panic_with_error!(env, SASError::RateLimitExceeded);
+    }
+    recent.push_back(now);
+    env.storage().temporary().set(&key, &recent);
+    env.storage().temporary().extend_ttl(&key, window, window);
+}
+
 /// Returns the EIP-712 domain separator fields for off-chain structured
 /// message signing. Wallet connectors (Freighter `signAuthEntry`, Albedo,
 /// MetaMask Snaps) display these fields so users can verify what they sign.
@@ -213,7 +318,6 @@ pub fn eip712_domain(env: &Env) -> soroban_sas_common::Eip712Domain {
         verifying_contract: env.current_contract_address(),
     }
 }
-
 /// Validates that an attestation has not expired. Returns `Ok(())` if valid,
 /// or `Err(SASError::AlreadyExpired)` if the expiration time is set and has passed.
 fn validate_expiration(env: &Env, expiration_time: u64) -> Result<(), SASError> {
@@ -405,6 +509,7 @@ impl SAS {
     }
 
     pub fn init(env: Env, admin: Address, registry: Address) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         if env.storage().instance().has(&SAS_ADMIN) {
             panic_with_error!(&env, SASError::AlreadyInitialized);
@@ -455,6 +560,7 @@ impl SAS {
 
     /// Activates the next audited WASM version in place.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>, new_version: u32) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let layout_admin = match validate_upgrade(&env, &new_wasm_hash, new_version) {
             Ok(values) => values,
@@ -475,6 +581,7 @@ impl SAS {
     /// Overwrites any pending proposal (allows cancellation by re-proposing self or another).
     /// Emits `AdminTransferProposed`.
     pub fn propose_admin(env: Env, new_admin: Address) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let current_admin = require_admin(&env);
         current_admin.require_auth();
@@ -491,6 +598,7 @@ impl SAS {
     /// Overwrites `SAS_ADMIN` with `pending_admin` and removes `PENDING_ADMIN`.
     /// Emits `AdminTransferCompleted`.
     pub fn accept_admin(env: Env) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let pending_admin: Address = match env.storage().instance().get(&PENDING_ADMIN) {
             Some(admin) => admin,
@@ -509,6 +617,7 @@ impl SAS {
     /// Emergency pause: blocks all write operations while keeping read-only
     /// operations active (#255). Only the admin can pause. Emits `ContractPaused`.
     pub fn pause(env: Env) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -520,6 +629,7 @@ impl SAS {
     /// Emergency unpause: resumes write operations after a `pause` (#255).
     /// Only the admin can unpause. Emits `ContractUnpaused`.
     pub fn unpause(env: Env) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -543,6 +653,7 @@ impl SAS {
 
     /// Binds an Indexer contract that should mirror newly issued attestations.
     pub fn set_indexer(env: Env, indexer: Address) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -553,6 +664,7 @@ impl SAS {
     }
 
     pub fn set_treasury(env: Env, treasury: Address) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -573,10 +685,85 @@ impl SAS {
         env.storage().instance().get(&FEE_CONFIG)
     }
 
+    /// Configures another authorized Stellar Asset Contract fee option.
+    /// Does not change the original set_fee / get_fee interface.
+    pub fn set_accepted_fee(env: Env, token: Address, amount: i128) {
+        reject_reentrant(&env);
+        extend_instance_ttl(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        env.storage().instance().set(&(FEE_ASSET, token), &amount);
+        env.storage().instance().set(&MULTI_ASSET_ACTIVE, &true);
+    }
+
+    /// Removes an additional accepted fee token without touching the default.
+    pub fn remove_accepted_fee(env: Env, token: Address) {
+        reject_reentrant(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().remove(&(FEE_ASSET, token));
+        extend_instance_ttl(&env);
+    }
+
+    pub fn get_accepted_fee(env: Env, token: Address) -> Option<i128> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&(FEE_ASSET, token))
+    }
+
+    /// Admin-configured limit; zero is not a valid quota.
+    /// Both limits are bounded to keep temporary history cheap.
+    pub fn set_issuance_rate_limit(env: Env, max_issuances: u32, window: u32) {
+        reject_reentrant(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        if max_issuances == 0 || max_issuances > 100 || window == 0 || window > 10_000 {
+            panic_with_error!(&env, SASError::InvalidValue);
+        }
+        env.storage()
+            .instance()
+            .set(&RATE_LIMIT_CONFIG, &(max_issuances, window));
+        extend_instance_ttl(&env);
+    }
+
+    pub fn clear_issuance_rate_limit(env: Env) {
+        reject_reentrant(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage().instance().remove(&RATE_LIMIT_CONFIG);
+        extend_instance_ttl(&env);
+    }
+
+    pub fn get_issuance_rate_limit(env: Env) -> Option<(u32, u32)> {
+        extend_instance_ttl(&env);
+        env.storage().instance().get(&RATE_LIMIT_CONFIG)
+    }
+
+    pub fn set_rate_limit_exempt(env: Env, attester: Address, exempt: bool) {
+        reject_reentrant(&env);
+        let admin = require_admin(&env);
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&(RATE_EXEMPT, attester), &exempt);
+        extend_instance_ttl(&env);
+    }
+
+    pub fn is_rate_limit_exempt(env: Env, attester: Address) -> bool {
+        extend_instance_ttl(&env);
+        env.storage()
+            .instance()
+            .get(&(RATE_EXEMPT, attester))
+            .unwrap_or(false)
+    }
+
     /// Admin: pin the fee asset and exact amount for `attest_with_value`.
     /// `amount` must be positive; call `clear_fee` for fee-free schemas
     /// instead of encoding "no fee" as an arbitrary zero (#164).
     pub fn set_fee(env: Env, token: Address, amount: i128) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -594,6 +781,7 @@ impl SAS {
     /// Admin: remove the fee requirement. `attest_with_value` is then callable
     /// only with `value == 0` (#164).
     pub fn clear_fee(env: Env) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -610,6 +798,7 @@ impl SAS {
         amount: i128,
         destination: Address,
     ) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         if amount <= 0 {
             panic_with_error!(&env, SASError::InvalidValue);
@@ -634,6 +823,7 @@ impl SAS {
     }
 
     pub fn attest(env: Env, attestation: Attestation) -> UID {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -658,6 +848,7 @@ impl SAS {
         signature: soroban_sdk::BytesN<64>,
         public_key: soroban_sdk::BytesN<32>,
     ) -> UID {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -768,6 +959,7 @@ impl SAS {
     }
 
     fn attest_internal(env: Env, mut attestation: Attestation) -> UID {
+        let owns_guard = enter_callback_context(&env);
         extend_instance_ttl(&env);
         // Resolved up front so a missing registry is always reported as the
         // configuration failure it is, instead of being masked by whichever
@@ -898,6 +1090,8 @@ impl SAS {
             panic_with_error!(&env, SASError::Unauthorized);
         }
 
+        consume_issuance_quota(&env, &attestation.attester);
+
         // Validate policy compliance during attestation creation (#448).
         // Queries tri-state policy if supported by registry, otherwise maps from bool.
         let policy: soroban_sas_common::RevocationPolicy =
@@ -955,6 +1149,7 @@ impl SAS {
 
         events::publish_attested(&env, &attestation);
         extend_instance_ttl(&env);
+        exit_callback_context(&env, owns_guard);
 
         attestation.uid.clone()
     }
@@ -1042,6 +1237,7 @@ impl SAS {
     /// operators pair with health checks, rotation via `set_indexer`, and the
     /// `reindex_attestation` recovery path.
     pub fn set_indexer_strict(env: Env, strict: bool) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let admin = require_admin(&env);
         admin.require_auth();
@@ -1075,6 +1271,7 @@ impl SAS {
     /// `SASError::IndexerUnavailable` so callers know to retry later. On
     /// success emits `Reindexed(uid)`.
     pub fn bulk_reindex(env: Env, uids: soroban_sdk::Vec<UID>) -> soroban_sdk::Vec<UID> {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         if uids.len() > 100 {
             panic_with_error!(&env, SASError::BatchTooLarge);
@@ -1101,6 +1298,7 @@ impl SAS {
     }
 
     pub fn reindex_attestation(env: Env, uid: UID) {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let Some(attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
@@ -1115,6 +1313,7 @@ impl SAS {
     }
 
     pub fn revoke(env: Env, uid: UID) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1129,6 +1328,7 @@ impl SAS {
     /// `authorizer` must either be the original attester, or an authorized
     /// delegate / primary owner of the schema recorded in the registry (#7).
     pub fn revoke_by_authorizer(env: Env, uid: UID, authorizer: Address) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1159,6 +1359,7 @@ impl SAS {
 
     /// Convenience alias for `revoke_by_authorizer` using a delegate address (#7).
     pub fn revoke_by_delegate(env: Env, uid: UID, delegate: Address) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1178,6 +1379,7 @@ impl SAS {
         signature: soroban_sdk::BytesN<64>,
         public_key: soroban_sdk::BytesN<32>,
     ) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1230,6 +1432,7 @@ impl SAS {
         signatures: soroban_sdk::Vec<BytesN<64>>,
         public_keys: soroban_sdk::Vec<BytesN<32>>,
     ) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1309,6 +1512,7 @@ impl SAS {
     }
 
     fn revoke_internal(env: Env, uid: UID) {
+        let owns_guard = enter_callback_context(&env);
         extend_instance_ttl(&env);
         let Some(mut attestation) = read_attestation(&env, &uid) else {
             panic_with_error!(&env, SASError::AttestationNotFound);
@@ -1373,6 +1577,7 @@ impl SAS {
                 soroban_sdk::vec![&env, uid.clone().into_val(&env)],
             );
         }
+        exit_callback_context(&env, owns_guard);
     }
 
     /// Atomically replaces `old_uid` with `new_data`: revokes the old
@@ -1393,6 +1598,7 @@ impl SAS {
     /// Replacing with `expiration_time == 0` (perpetual) is always allowed.
     /// See `docs/attestations.md` and `specs/protocol-v1.md` (#252).
     pub fn replace_attestation(env: Env, old_uid: UID, new_data: Attestation) -> UID {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1521,6 +1727,7 @@ impl SAS {
     /// storage TTL accordingly, and emits an `AttestationRenewed` event.
     /// The resolver's `on_revoke` is NOT invoked (this is not a revocation).
     pub fn renew_attestation(env: Env, uid: UID, new_expiration_time: u64) -> UID {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1666,6 +1873,7 @@ impl SAS {
         token: Address,
         value: i128,
     ) -> UID {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1674,29 +1882,43 @@ impl SAS {
             panic_with_error!(&env, SASError::InvalidValue);
         }
 
-        // Bind payment to authenticated configuration rather than caller input.
+        // The legacy token keeps its existing fee and error semantics.
+        // Additional accepted SACs are read from authenticated admin state.
         let configured: Option<(Address, i128)> = env.storage().instance().get(&FEE_CONFIG);
-        match configured {
-            Some((fee_token, fee_amount)) => {
-                if token != fee_token || value != fee_amount {
-                    panic_with_error!(&env, SASError::FeeMismatch);
-                }
+        let additional: Option<i128> = env.storage().instance().get(&(FEE_ASSET, token.clone()));
+        let is_default = configured
+            .as_ref()
+            .map(|(fee_token, _)| fee_token == &token)
+            .unwrap_or(false);
+        let required = if is_default {
+            configured.as_ref().map(|(_, amount)| *amount)
+        } else {
+            additional
+        };
+        match required {
+            Some(amount) if amount == value => {}
+            Some(_) => panic_with_error!(&env, SASError::FeeMismatch),
+            None if configured.is_none() && value == 0 => {}
+            None if env
+                .storage()
+                .instance()
+                .get(&MULTI_ASSET_ACTIVE)
+                .unwrap_or(false) =>
+            {
+                panic_with_error!(&env, SASError::InvalidToken);
             }
-            None => {
-                if value != 0 {
-                    panic_with_error!(&env, SASError::FeeMismatch);
-                }
-            }
+            None => panic_with_error!(&env, SASError::FeeMismatch),
         }
 
         attestation.attester.require_auth();
 
         if value > 0 {
-            token::Client::new(&env, &token).transfer(
-                &attestation.attester,
-                &env.current_contract_address(),
-                &value,
-            );
+            let treasury: Option<Address> = env.storage().instance().get(&TREASURY);
+            if !is_default && treasury.is_none() {
+                panic_with_error!(&env, SASError::TreasuryNotSet);
+            }
+            let destination = treasury.unwrap_or_else(|| env.current_contract_address());
+            token::Client::new(&env, &token).transfer(&attestation.attester, &destination, &value);
             distribute_attestation_fee(&env, &attestation.schema_uid, &token, value);
         }
 
@@ -1712,6 +1934,7 @@ impl SAS {
     /// dedup, like `multi_attest`), and the actual state mutations go
     /// through `revoke_internal` so storage-read/auth work is not repeated.
     pub fn multi_revoke(env: Env, uids: soroban_sdk::Vec<UID>) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1777,6 +2000,7 @@ impl SAS {
     /// Re-registering after a revocation is allowed and starts a new
     /// version.
     pub fn register_attester_key(env: Env, attester: Address, public_key: soroban_sdk::BytesN<32>) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1832,6 +2056,7 @@ impl SAS {
         attester: Address,
         new_public_key: soroban_sdk::BytesN<32>,
     ) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -1888,6 +2113,7 @@ impl SAS {
     /// so a future `register_attester_key` call continues the version
     /// sequence instead of restarting at `1`.
     pub fn revoke_attester_key(env: Env, attester: Address) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -2086,6 +2312,7 @@ impl SAS {
     /// Invalidates a range of delegation nonces `[min_nonce, max_nonce]` for `attester` (#437).
     /// Requires direct caller authorization (`attester.require_auth()`).
     pub fn invalidate_nonces(env: Env, attester: Address, min_nonce: u64, max_nonce: u64) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -2101,6 +2328,7 @@ impl SAS {
     /// Sets the nonce high-water mark for `attester` to `new_nonce` (#437).
     /// Requires direct caller authorization (`attester.require_auth()`).
     pub fn set_nonce_highwater_mark(env: Env, attester: Address, new_nonce: u64) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -2125,6 +2353,7 @@ impl SAS {
         signature: soroban_sdk::BytesN<64>,
         public_key: soroban_sdk::BytesN<32>,
     ) {
+        reject_reentrant(&env);
         if is_paused_status(&env) {
             panic_with_error!(&env, SASError::ContractPaused);
         }
@@ -2388,6 +2617,7 @@ impl SAS {
     /// Migrates a legacy `Attestation` storage entry to `CompactAttestation` format (#438).
     /// Returns `true` if migration occurred, `false` if entry was already compact or missing.
     pub fn migrate_attestation(env: Env, uid: UID) -> bool {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         if let Some(val) = env.storage().persistent().get::<_, Val>(&uid) {
             if CompactAttestation::try_from_val(&env, &val).is_ok() {
@@ -2413,6 +2643,7 @@ impl SAS {
     /// Batch migrates a slice of UIDs to `CompactAttestation` format (#438).
     /// Returns the number of successfully migrated records.
     pub fn migrate_attestations(env: Env, uids: soroban_sdk::Vec<UID>) -> u32 {
+        reject_reentrant(&env);
         extend_instance_ttl(&env);
         let mut count = 0u32;
         for uid in uids.iter() {
