@@ -683,7 +683,7 @@ impl StatefulIndexerFuzzer {
 
                 let actual_res = self.env.as_contract(&self.sas, || {
                     self.client
-                        .try_index_attestation(&uid, &recip_addr, &schema_uid, &attester_addr)
+                        .try_index_attestation(&uid, &recip_addr, &schema_uid, &attester_addr, &0u64)
                 });
 
                 match expected_res {
