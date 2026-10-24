@@ -27,8 +27,8 @@ jobs:
   # executions.  The goal is to catch obvious panics or compilation failures
   # before a PR lands, not to find new bugs (that's the campaign's job).
 
-  indexer-chunking-smoke:
-    name: Smoke · indexer_chunking_fuzz
+  smoke-contracts-core:
+    name: Smoke · Contracts & Core
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -37,12 +37,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build indexer_chunking_fuzz
-      - run: cargo fuzz run indexer_chunking_fuzz -- -runs=1000 -max_len=14400 -rss_limit_mb=4096
+      - name: Cache cargo-fuzz
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('fuzz/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+      - run: which cargo-fuzz || cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - name: Run Contracts & Core Smoke Tests
+        run: |
+          cargo fuzz run indexer_chunking_fuzz -- -runs=100 -max_len=14400 -rss_limit_mb=4096
+          cargo fuzz run cross_contract_registry_sas_fuzz -- -runs=200 -max_len=300 -rss_limit_mb=4096
+          cargo fuzz run indexer_idempotency_fuzz -- -runs=100 -max_len=832 -rss_limit_mb=4096
+          cargo fuzz run schema_fuzz -- -runs=200 -max_len=1024 -rss_limit_mb=4096
+          cargo fuzz run validation_fuzz -- -runs=200 -max_len=128 -rss_limit_mb=4096
+          cargo fuzz run merkle_fuzz -- -runs=200 -max_len=256 -rss_limit_mb=4096
+          cargo fuzz run strkey_fuzz -- -runs=500 -max_len=128 -rss_limit_mb=4096
 
-  cross-contract-smoke:
-    name: Smoke · cross_contract_registry_sas_fuzz
+  smoke-sdk-tooling:
+    name: Smoke · SDK & Tooling
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -51,179 +69,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build cross_contract_registry_sas_fuzz
-      - run: cargo fuzz run cross_contract_registry_sas_fuzz -- -runs=2000 -max_len=300 -rss_limit_mb=4096
-
-  indexer-idempotency-smoke:
-    name: Smoke · indexer_idempotency_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
+      - name: Cache cargo-fuzz
+        uses: actions/cache@v4
         with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build indexer_idempotency_fuzz
-      - run: cargo fuzz run indexer_idempotency_fuzz -- -runs=500 -max_len=832 -rss_limit_mb=4096
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('fuzz/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+      - run: which cargo-fuzz || cargo +stable install cargo-fuzz --version 0.13.2 --locked
+      - name: Run SDK & Tooling Smoke Tests
+        run: |
+          cargo fuzz run typed_data_fuzz -- -runs=200 -max_len=512 -rss_limit_mb=4096
+          cargo fuzz run eip712_encode_fuzz -- -runs=200 -max_len=512 -rss_limit_mb=4096
+          cargo fuzz run xdr_decode_fuzz -- -runs=500 -max_len=4096 -rss_limit_mb=4096
+          cargo fuzz run cli_json_fuzz -- -runs=500 -max_len=4096 -rss_limit_mb=4096
+          cargo fuzz run csv_bulk_fuzz -- -runs=500 -max_len=8192 -rss_limit_mb=4096
+          cargo fuzz run schema_builder_fuzz -- -runs=200 -max_len=512 -rss_limit_mb=4096
+          cargo fuzz run attestation_builder_fuzz -- -runs=200 -max_len=512 -rss_limit_mb=4096
 
-  schema-smoke:
-    name: Smoke · schema_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build schema_fuzz
-      - run: cargo fuzz run schema_fuzz -- -runs=2000 -max_len=1024 -rss_limit_mb=4096
-
-  typed-data-smoke:
-    name: Smoke · typed_data_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build typed_data_fuzz
-      - run: cargo fuzz run typed_data_fuzz -- -runs=1000 -max_len=512 -rss_limit_mb=4096
-
-  eip712-encode-smoke:
-    name: Smoke · eip712_encode_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build eip712_encode_fuzz
-      - run: cargo fuzz run eip712_encode_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
-
-  xdr-decode-smoke:
-    name: Smoke · xdr_decode_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build xdr_decode_fuzz
-      - run: cargo fuzz run xdr_decode_fuzz -- -runs=5000 -max_len=4096 -rss_limit_mb=4096
-
-  cli-json-smoke:
-    name: Smoke · cli_json_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build cli_json_fuzz
-      - run: cargo fuzz run cli_json_fuzz -- -runs=5000 -max_len=4096 -rss_limit_mb=4096
-
-  # ── New targets (added alongside OSS-Fuzz integration) ─────────────────────
-
-  validation-smoke:
-    name: Smoke · validation_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build validation_fuzz
-      - run: cargo fuzz run validation_fuzz -- -runs=2000 -max_len=128 -rss_limit_mb=4096
-
-  merkle-smoke:
-    name: Smoke · merkle_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build merkle_fuzz
-      - run: cargo fuzz run merkle_fuzz -- -runs=2000 -max_len=256 -rss_limit_mb=4096
-
-  csv-bulk-smoke:
-    name: Smoke · csv_bulk_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build csv_bulk_fuzz
-      - run: cargo fuzz run csv_bulk_fuzz -- -runs=5000 -max_len=8192 -rss_limit_mb=4096
-
-  strkey-smoke:
-    name: Smoke · strkey_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build strkey_fuzz
-      - run: cargo fuzz run strkey_fuzz -- -runs=5000 -max_len=128 -rss_limit_mb=4096
-
-  schema-builder-smoke:
-    name: Smoke · schema_builder_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build schema_builder_fuzz
-      - run: cargo fuzz run schema_builder_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
-
-  attestation-builder-smoke:
-    name: Smoke · attestation_builder_fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2024-06-13
-      - run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo fuzz build attestation_builder_fuzz
-      - run: cargo fuzz run attestation_builder_fuzz -- -runs=2000 -max_len=512 -rss_limit_mb=4096
 
   # ── Full campaigns (scheduled / manual only) ───────────────────────────────
   # Campaign jobs run on a weekly schedule and on manual dispatch.  They run

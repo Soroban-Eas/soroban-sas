@@ -1,0 +1,14 @@
+:root { font-family: ui-sans-serif, system-ui, sans-serif; background: #0d1423; color: #eef4ff; }
+body { margin: 0; }
+main { width: min(840px, 94%); margin: 4rem auto; }
+h1, h2 { letter-spacing: -.025em; }
+p { line-height: 1.6; }
+article { padding: 1.3rem; border: 1px solid #42536b; border-radius: 12px; margin: 1rem 0; background: #172235; }
+input, button { border: 1px solid #7192bf; border-radius: 7px; padding: .65rem .8rem; font: inherit; }
+input { width: min(95%, 33rem); background: #0d1423; color: white; }
+button { cursor: pointer; margin-right: .5rem; background: #a7ceff; color: #112239; font-weight: 650; }
+button:disabled { opacity: .4; cursor: default; }
+code { word-break: break-all; }
+.warning { color: #ffd8a5; }
+.error { color: #ffacbb; }
+.muted { color: #b5c6e0; }

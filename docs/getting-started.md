@@ -348,6 +348,17 @@ which file it came from. See the [TOML Configuration File
 section](../README.md#toml-configuration-file) for the full schema
 and all keys.
 
+### Shell Completions
+
+Tab-completion for commands and flags can be generated for Bash, Zsh, Fish, and PowerShell:
+
+```bash
+cargo run -p soroban-sas-cli -- completions bash > ~/.local/share/bash-completion/completions/sas
+cargo run -p soroban-sas-cli -- completions zsh > ~/.zfunc/_sas
+cargo run -p soroban-sas-cli -- completions fish > ~/.config/fish/completions/sas.fish
+cargo run -p soroban-sas-cli -- completions powershell > ./sas.ps1
+```
+
 ## Next steps
 
 - [Attestation Lifecycle](attestations.md) — the full state machine, including

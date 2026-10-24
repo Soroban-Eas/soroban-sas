@@ -24,6 +24,7 @@ impl MockSas {
         recipient: Address,
         schema_uid: UID,
         attester: Address,
+        expiration_time: u64,
     ) {
         env.invoke_contract::<()>(
             &indexer,
@@ -34,6 +35,7 @@ impl MockSas {
                 recipient.into_val(&env),
                 schema_uid.into_val(&env),
                 attester.into_val(&env),
+                expiration_time.into_val(&env),
             ],
         );
     }
@@ -95,11 +97,18 @@ fuzz_target!(|data: &[u8]| {
         let recipient = bytes20_to_address(&env, &recip_bytes);
         let attester = bytes20_to_address(&env, &attester_bytes);
 
+        let expiration_time: u64 = 0;
         let is_first_call = !inserted_uids.contains(&uid_bytes);
 
         // Path 1: First call (no prior record for this UID)
         let first_res = env.as_contract(&sas, || {
-            client.try_index_attestation(&uid, &recipient, &schema_uid, &attester)
+            client.try_index_attestation(
+                &uid,
+                &recipient,
+                &schema_uid,
+                &attester,
+                &expiration_time,
+            )
         });
 
         if is_first_call {
@@ -113,9 +122,15 @@ fuzz_target!(|data: &[u8]| {
             ));
         }
 
-        // Path 2: Idempotent retry (same triple for same UID must succeed as Ok(()))
+        // Path 2: Idempotent retry (same tuple for same UID must succeed as Ok(()))
         let retry_res = env.as_contract(&sas, || {
-            client.try_index_attestation(&uid, &recipient, &schema_uid, &attester)
+            client.try_index_attestation(
+                &uid,
+                &recipient,
+                &schema_uid,
+                &attester,
+                &expiration_time,
+            )
         });
         assert_eq!(
             retry_res,
@@ -123,12 +138,18 @@ fuzz_target!(|data: &[u8]| {
             "idempotent retry with same triple must succeed as no-op"
         );
 
-        // Path 3: Mutated triple (different triple for existing UID must fail with DuplicateAttestation)
+        // Path 3: Mutated tuple (different tuple for existing UID must fail with DuplicateAttestation)
         // 3a: Different recipient
         let diff_recip_bytes = mutate_bytes20(&recip_bytes);
         let diff_recipient = bytes20_to_address(&env, &diff_recip_bytes);
         let diff_recip_res = env.as_contract(&sas, || {
-            client.try_index_attestation(&uid, &diff_recipient, &schema_uid, &attester)
+            client.try_index_attestation(
+                &uid,
+                &diff_recipient,
+                &schema_uid,
+                &attester,
+                &expiration_time,
+            )
         });
         assert_eq!(
             diff_recip_res,
@@ -140,7 +161,13 @@ fuzz_target!(|data: &[u8]| {
         let diff_schema_bytes = mutate_bytes32(&schema_bytes);
         let diff_schema_uid = UID(BytesN::from_array(&env, &diff_schema_bytes));
         let diff_schema_res = env.as_contract(&sas, || {
-            client.try_index_attestation(&uid, &recipient, &diff_schema_uid, &attester)
+            client.try_index_attestation(
+                &uid,
+                &recipient,
+                &diff_schema_uid,
+                &attester,
+                &expiration_time,
+            )
         });
         assert_eq!(
             diff_schema_res,
@@ -152,12 +179,35 @@ fuzz_target!(|data: &[u8]| {
         let diff_attester_bytes = mutate_bytes20(&attester_bytes);
         let diff_attester = bytes20_to_address(&env, &diff_attester_bytes);
         let diff_attester_res = env.as_contract(&sas, || {
-            client.try_index_attestation(&uid, &recipient, &schema_uid, &diff_attester)
+            client.try_index_attestation(
+                &uid,
+                &recipient,
+                &schema_uid,
+                &diff_attester,
+                &expiration_time,
+            )
         });
         assert_eq!(
             diff_attester_res,
             Err(Ok(SASError::DuplicateAttestation.into())),
             "re-indexing same UID with different attester must fail with DuplicateAttestation"
+        );
+
+        // 3d: Different expiration_time
+        let diff_expiration_time: u64 = 9999;
+        let diff_exp_res = env.as_contract(&sas, || {
+            client.try_index_attestation(
+                &uid,
+                &recipient,
+                &schema_uid,
+                &attester,
+                &diff_expiration_time,
+            )
+        });
+        assert_eq!(
+            diff_exp_res,
+            Err(Ok(SASError::DuplicateAttestation.into())),
+            "re-indexing same UID with different expiration_time must fail with DuplicateAttestation"
         );
     }
 

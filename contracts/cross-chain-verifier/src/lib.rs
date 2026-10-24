@@ -31,6 +31,34 @@ pub enum CrossChainError {
     InvalidValidity = 6,
     StaleRevision = 7,
     MessageNotApproved = 8,
+    UnauthorizedEndpoint = 9,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Origin {
+    pub src_eid: u32,
+    pub sender: BytesN<32>,
+    pub nonce: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LayerZeroConfig {
+    pub endpoint: Address,
+    pub src_eid: u32,
+    pub sender: BytesN<32>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CrossChainAttestationReceived {
+    pub guid: BytesN<32>,
+    pub src_eid: u32,
+    pub sender: BytesN<32>,
+    pub uid: UID,
+    pub revision: u64,
+    pub valid: bool,
 }
 
 #[contracttype]
@@ -73,6 +101,8 @@ pub struct RemoteProof {
 #[derive(Clone)]
 enum DataKey {
     Config,
+    Admin,
+    LzConfig,
     Status(UID),
     Proof(UID),
 }
@@ -315,6 +345,124 @@ impl CrossChainVerifier {
             return false;
         };
         status.valid && status.valid_until > env.ledger().timestamp()
+    }
+
+    /// Configure LayerZero V2 endpoint integration.
+    /// Only the contract admin can set or update this configuration.
+    pub fn set_lz_config(
+        env: Env,
+        caller: Address,
+        endpoint: Address,
+        src_eid: u32,
+        sender: BytesN<32>,
+    ) -> Result<(), CrossChainError> {
+        caller.require_auth();
+        let admin = if let Ok(conf) = config(&env) {
+            conf.admin
+        } else if let Some(admin) = env.storage().instance().get::<_, Address>(&DataKey::Admin) {
+            admin
+        } else {
+            caller.clone()
+        };
+        if caller != admin {
+            return Err(CrossChainError::UnauthorizedEndpoint);
+        }
+        if endpoint == env.current_contract_address() || src_eid == 0 {
+            return Err(CrossChainError::InvalidConfig);
+        }
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(
+            &DataKey::LzConfig,
+            &LayerZeroConfig {
+                endpoint,
+                src_eid,
+                sender,
+            },
+        );
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Retrieve the configured LayerZero V2 parameters.
+    pub fn get_lz_config(env: Env) -> Result<LayerZeroConfig, CrossChainError> {
+        extend_instance_ttl(&env);
+        env.storage()
+            .instance()
+            .get(&DataKey::LzConfig)
+            .ok_or(CrossChainError::NotInitialized)
+    }
+
+    /// LayerZero V2 endpoint callback. Authenticates caller is the configured
+    /// endpoint, validates the source endpoint ID, sender contract address,
+    /// and GUID, decodes the attestation payload, persists verified state, and
+    /// publishes `CrossChainAttestationReceived`.
+    pub fn lz_receive(
+        env: Env,
+        origin: Origin,
+        guid: BytesN<32>,
+        message: Bytes,
+        _executor: Address,
+        _extra_data: Bytes,
+    ) -> Result<RemoteAttestation, CrossChainError> {
+        let trusted = Self::get_lz_config(env.clone())?;
+        trusted.endpoint.require_auth();
+        if origin.src_eid != trusted.src_eid {
+            return Err(CrossChainError::UnauthorizedEndpoint);
+        }
+        if origin.sender != trusted.sender {
+            return Err(CrossChainError::WrongSource);
+        }
+        let zero_guid = BytesN::from_array(&env, &[0u8; 32]);
+        if guid == zero_guid {
+            return Err(CrossChainError::InvalidPayload);
+        }
+
+        let status = decode_status(&message)?;
+        let proof = decode_proof(&message)?;
+        let now = env.ledger().timestamp();
+        if status.revision == 0
+            || (status.valid
+                && (status.valid_until <= now
+                    || status.valid_until > now.saturating_add(MAX_VALIDITY_SECONDS)))
+            || (!status.valid && status.valid_until != 0)
+        {
+            return Err(CrossChainError::InvalidValidity);
+        }
+        let key = DataKey::Status(status.uid.clone());
+        if let Some(previous) = env.storage().persistent().get::<_, RemoteAttestation>(&key) {
+            if status.revision <= previous.revision {
+                return Err(CrossChainError::StaleRevision);
+            }
+        }
+
+        env.storage().persistent().set(&key, &status);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
+        let proof_key = DataKey::Proof(status.uid.clone());
+        if let Some(proof) = proof {
+            env.storage().persistent().set(&proof_key, &proof);
+            env.storage().persistent().extend_ttl(
+                &proof_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        } else {
+            env.storage().persistent().remove(&proof_key);
+        }
+        env.events().publish(
+            (symbol_short!("lz_rcv"), status.uid.0.clone()),
+            CrossChainAttestationReceived {
+                guid,
+                src_eid: origin.src_eid,
+                sender: origin.sender,
+                uid: status.uid.clone(),
+                revision: status.revision,
+                valid: status.valid,
+            },
+        );
+        extend_instance_ttl(&env);
+        Ok(status)
     }
 }
 

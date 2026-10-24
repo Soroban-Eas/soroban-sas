@@ -93,7 +93,8 @@ always runs the resolver hook and emits the event.
 `INDEXER_ADMIN` and `SAS_CONTRACT` are instance entries whose TTL is renewed via
 `extend_instance_ttl(LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR)` on both trusted
 writes (`init`, `index_attestation`) and public reads (`get_admin`, `get_sas`,
-`get_attestations_by_*`, `get_atts_by_recipient_paginated`). This mirrors the
+`get_attestations_by_*`, `get_atts_by_recipient_paginated`,
+`is_attestation_indexed`). This mirrors the
 instance-retention policy of the SchemaRegistry and SAS contracts. Read-only
 calls renew only the instance TTL and do not mutate persistent index chunks. Tests
 verify that after ledger advancement the admin and SAS binding remain readable.

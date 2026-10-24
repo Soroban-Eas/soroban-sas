@@ -1,0 +1,11 @@
+[package]
+publish = false
+name = "endorsement-resolver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+multisig-resolver = { path = "../multisig-resolver" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]

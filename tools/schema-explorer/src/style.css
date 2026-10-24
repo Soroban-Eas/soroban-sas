@@ -362,7 +362,28 @@ table.fields .num {
   color: var(--muted);
 }
 
+/* Visual schema designer: mouse drag/drop plus keyboard-accessible move buttons. */
+.designer-head,
+.designer-row {
+  display: grid;
+  grid-template-columns: 54px 1fr 1fr 1.5fr 136px;
+  gap: 8px;
+  align-items: center;
+}
+#designer-rows { display: flex; flex-direction: column; gap: 8px; }
+.designer-row { padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.designer-row input[aria-invalid="true"] { border: 2px solid var(--warn-text); }
+.drag-handle { text-align: center; cursor: grab; }
+.designer-actions { display: flex; gap: 3px; }
+.designer-actions button { padding: 4px 8px; }
+.designer-inline { flex-direction: row; align-items: center; }
+.designer-inline input { width: auto; }
+
 @media (max-width: 760px) {
+  .designer-head { display: none; }
+  .designer-row { grid-template-columns: 25px minmax(0,1fr); }
+  .designer-row input,.designer-row .designer-actions { grid-column: 2; }
+
   .browse {
     grid-template-columns: minmax(0, 1fr);
   }
