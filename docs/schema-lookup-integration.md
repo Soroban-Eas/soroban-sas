@@ -54,6 +54,20 @@ let attestations = indexer_client.get_atts_by_schema_paginated(
 );
 ```
 
+#### Checking Whether a UID Is Indexed
+
+```rust
+// One read of the UID's index record; no chunk is loaded
+let indexed = indexer_client.is_attestation_indexed(uid);
+```
+
+`is_attestation_indexed` reads the record `index_attestation` writes the
+first time it indexes a UID, so its cost does not depend on how many
+attestations a recipient, schema, or attester has. It returns `false` for a
+UID that was never indexed without creating storage, renews the instance TTL,
+and does not count toward the per-ledger query limit. Revoked and replaced
+UIDs stay indexed; read their state with `get_attestation_status`.
+
 #### Filtering Attestations
 
 The indexer supports two modes for queries:
@@ -152,6 +166,16 @@ when new attestations are appended. Each call reads only the chunks touched
 by its page, including when it crosses a 100-UID chunk boundary. A zero limit,
 empty history, or out-of-range cursor returns an empty page.
 
+When you only need the single newest page, the `get_atts_by_recipient_recent`,
+`get_atts_by_schema_recent`, and `get_atts_by_attester_recent` reads take
+`(key, limit)` and return the newest `limit` UIDs, newest first, without a
+cursor. They are equivalent to the first reverse page. For an active-only
+view, `get_recipient_recent_filtered`, `get_schema_recent_filtered`, and
+`get_attester_recent_filtered` add an `include_revoked` flag: with `false`
+they skip revoked/replaced UIDs while walking backward, so the surviving
+entries stay in descending order even when the skip crosses a chunk boundary.
+All of these count toward the per-ledger query limit.
+
 ```rust
 let page_size = 50;
 let mut cursor = 0;
@@ -238,6 +262,7 @@ fn verify_attestations_for_schema(
 
 ### No Results from Queries
 - Verify the schema UID is correct
+- Check that a specific attestation was indexed at all using `is_attestation_indexed`
 - Check if attestations exist using `get_count_by_schema`
 - Ensure using active-only filter if revoked attestations shouldn't appear
 

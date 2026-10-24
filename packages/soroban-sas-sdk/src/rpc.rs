@@ -4,6 +4,7 @@
 //! SDK needs to submit and track transactions, sends them over HTTP via
 //! `ureq`, and parses the matching JSON-RPC responses.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use crate::errors::SdkError;
 use crate::limits::{rpc_response_limits, DEFAULT_MAX_RESPONSE_BYTES};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use soroban_sdk::xdr::{ReadXdr, TransactionEnvelope};
+#[cfg(not(target_arch = "wasm32"))]
 use ureq::{Agent, AgentBuilder};
 
 /// Trait for custom RPC backend implementations.
@@ -161,6 +163,7 @@ pub struct RpcClient {
     max_response_bytes: usize,
     /// HTTP agent preconfigured with `timeout`; every request goes through
     /// it so none can bypass the bound.
+    #[cfg(not(target_arch = "wasm32"))]
     agent: Agent,
     /// Monotonically-increasing JSON-RPC request ID.  Each request gets the
     /// next value so concurrent callers can correlate responses. Shared
@@ -176,6 +179,7 @@ impl RpcClient {
             network_url: network_url.into(),
             timeout: DEFAULT_RPC_TIMEOUT,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+            #[cfg(not(target_arch = "wasm32"))]
             agent: rpc_agent(DEFAULT_RPC_TIMEOUT),
             next_id: Arc::new(AtomicU32::new(1)),
             rate_limit_policy: RateLimitPolicy::default(),
@@ -229,7 +233,10 @@ impl RpcClient {
     /// ```
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
-        self.agent = rpc_agent(timeout);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.agent = rpc_agent(timeout);
+        }
         self
     }
 
@@ -474,6 +481,12 @@ impl RpcClient {
     /// HTTP 429 responses trigger automatic retries with exponential backoff
     /// per the configured [`RateLimitPolicy`]. Respects `Retry-After` headers
     /// when present. Returns [`SdkError::RateLimited`] when retries are exhausted.
+    ///
+    /// On `wasm32` the synchronous transport does not exist: edge runtimes have
+    /// no blocking sockets. The synchronous methods return
+    /// [`SdkError::TransportError`] and the `*_async` methods use the
+    /// `web-sys` fetch transport instead (#553).
+    #[cfg(not(target_arch = "wasm32"))]
     fn post<P: Serialize>(&self, request: &JsonRpcRequest<P>) -> Result<String, SdkError> {
         let mut attempt = 0;
         loop {
@@ -501,9 +514,40 @@ impl RpcClient {
             }
         }
     }
+
+    /// Synchronous RPC transport is unavailable on `wasm32` (#553).
+    #[cfg(target_arch = "wasm32")]
+    fn post<P: Serialize>(&self, _request: &JsonRpcRequest<P>) -> Result<String, SdkError> {
+        Err(SdkError::TransportError(
+            "synchronous RPC calls are not available on wasm32; use the *_async methods"
+                .to_string(),
+        ))
+    }
+
+    /// POSTs a JSON-RPC request body using the `web-sys` fetch transport and
+    /// returns the raw response body.
+    ///
+    /// Only used on `wasm32` with the `wasm` feature enabled, where the
+    /// transport is already asynchronous (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    async fn post_async<P: Serialize>(
+        &self,
+        request: &JsonRpcRequest<P>,
+    ) -> Result<String, SdkError> {
+        let body = serde_json::to_string(request).map_err(|err| {
+            SdkError::RpcError(format!("failed to encode JSON-RPC request: {err}"))
+        })?;
+        crate::wasm_http::post(&self.network_url, &body, self.max_response_bytes).await
+    }
 }
 
 impl RpcBackend for RpcClient {
+    /// Posts a raw JSON-RPC body.
+    ///
+    /// On `wasm32` the synchronous transport does not exist, so this returns
+    /// [`SdkError::TransportError`] and callers must use the `*_async`
+    /// methods (#553).
+    #[cfg(not(target_arch = "wasm32"))]
     fn post_json(&self, body: &str) -> Result<String, SdkError> {
         let request: serde_json::Value = serde_json::from_str(body)
             .map_err(|e| SdkError::RpcError(format!("invalid JSON request: {e}")))?;
@@ -535,6 +579,15 @@ impl RpcBackend for RpcClient {
         }
     }
 
+    /// Synchronous RPC transport is unavailable on `wasm32` (#553).
+    #[cfg(target_arch = "wasm32")]
+    fn post_json(&self, _body: &str) -> Result<String, SdkError> {
+        Err(SdkError::TransportError(
+            "synchronous RPC calls are not available on wasm32; use the *_async methods"
+                .to_string(),
+        ))
+    }
+
     fn network_url(&self) -> &str {
         &self.network_url
     }
@@ -544,6 +597,7 @@ impl RpcBackend for RpcClient {
 /// [`SdkError::ResponseTooLarge`] if the announced `Content-Length` exceeds
 /// `limit` or if the body turns out to be longer than `limit` on the wire
 /// (covering chunked responses with no declared length).
+#[cfg(not(target_arch = "wasm32"))]
 fn read_body_bounded(response: ureq::Response, limit: usize) -> Result<String, SdkError> {
     if let Some(len) = response
         .header("Content-Length")
@@ -576,6 +630,7 @@ fn read_body_bounded(response: ureq::Response, limit: usize) -> Result<String, S
 
 /// Builds the `ureq` agent used for every [`RpcClient`] request, with
 /// `timeout` bounding each request end-to-end (connect + send + read).
+#[cfg(not(target_arch = "wasm32"))]
 fn rpc_agent(timeout: Duration) -> Agent {
     AgentBuilder::new().timeout(timeout).build()
 }
@@ -1880,6 +1935,12 @@ mod issuance_time_tests {
 }
 
 impl RpcClient {
+    /// Submits `transaction_xdr` for simulation.
+    ///
+    /// On native targets the blocking call is offloaded to a worker thread.
+    /// On `wasm32` the call is awaited on the runtime's event loop through the
+    /// `web-sys` fetch transport (#553).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn simulate_transaction_async(
         &self,
         transaction_xdr: &str,
@@ -1891,6 +1952,20 @@ impl RpcClient {
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
     }
 
+    /// Simulates `transaction_xdr` over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn simulate_transaction_async(
+        &self,
+        transaction_xdr: &str,
+    ) -> Result<SimulateTransactionResult, SdkError> {
+        let request = self.build_simulate_transaction_request(transaction_xdr);
+        let id = request.id;
+        let body = self.post_async(&request).await?;
+        self.parse_simulate_transaction_response(&body, id)
+    }
+
+    /// Submits `transaction_xdr` to the network.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn send_transaction_async(
         &self,
         transaction_xdr: &str,
@@ -1902,6 +1977,20 @@ impl RpcClient {
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
     }
 
+    /// Submits `transaction_xdr` over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn send_transaction_async(
+        &self,
+        transaction_xdr: &str,
+    ) -> Result<SendTransactionResult, SdkError> {
+        let request = self.build_send_transaction_request(transaction_xdr);
+        let id = request.id;
+        let body = self.post_async(&request).await?;
+        self.parse_send_transaction_response(&body, id)
+    }
+
+    /// Fetches the status of `tx_hash`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn get_transaction_async(
         &self,
         tx_hash: &str,
@@ -1913,6 +2002,20 @@ impl RpcClient {
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
     }
 
+    /// Fetches the status of `tx_hash` over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn get_transaction_async(
+        &self,
+        tx_hash: &str,
+    ) -> Result<GetTransactionResult, SdkError> {
+        let request = self.build_get_transaction_request(tx_hash);
+        let id = request.id;
+        let body = self.post_async(&request).await?;
+        self.parse_get_transaction_response(&body, id)
+    }
+
+    /// Fetches the ledger entries for `keys`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn get_ledger_entries_async(
         &self,
         keys: Vec<String>,
@@ -1923,6 +2026,20 @@ impl RpcClient {
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
     }
 
+    /// Fetches the ledger entries for `keys` over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn get_ledger_entries_async(
+        &self,
+        keys: Vec<String>,
+    ) -> Result<GetLedgerEntriesResult, SdkError> {
+        let request = self.build_get_ledger_entries_request(keys);
+        let id = request.id;
+        let body = self.post_async(&request).await?;
+        self.parse_get_ledger_entries_response(&body, id)
+    }
+
+    /// Fetches the RPC's view of the latest closed ledger.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn get_latest_ledger_async(&self) -> Result<GetLatestLedgerResult, SdkError> {
         let client = self.clone();
         tokio::task::spawn_blocking(move || client.get_latest_ledger())
@@ -1930,6 +2047,17 @@ impl RpcClient {
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
     }
 
+    /// Fetches the latest closed ledger over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn get_latest_ledger_async(&self) -> Result<GetLatestLedgerResult, SdkError> {
+        let request = self.build_get_latest_ledger_request();
+        let id = request.id;
+        let body = self.post_async(&request).await?;
+        self.parse_get_latest_ledger_response(&body, id)
+    }
+
+    /// Fetches the network wall-clock (latest ledger close time and sequence).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn get_latest_ledger_clock_async(&self) -> Result<LedgerClock, SdkError> {
         let client = self.clone();
         tokio::task::spawn_blocking(move || client.get_latest_ledger_clock())
@@ -1937,10 +2065,40 @@ impl RpcClient {
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
     }
 
+    /// Fetches the network wall-clock over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn get_latest_ledger_clock_async(&self) -> Result<LedgerClock, SdkError> {
+        let latest = self.get_latest_ledger_async().await?;
+        let request = self.build_get_ledgers_request(latest.sequence);
+        let id = request.id;
+        let body = self.post_async(&request).await?;
+        let result = self.parse_get_ledgers_response(&body, id)?;
+        let close_time_str = result
+            .ledgers
+            .first()
+            .map(|l| l.ledger_close_time.clone())
+            .unwrap_or(result.latest_ledger_close_time);
+        let close_time: u64 = close_time_str.parse().map_err(|_| {
+            SdkError::RpcError(format!("invalid ledger close time: {close_time_str}"))
+        })?;
+        Ok(LedgerClock {
+            sequence: latest.sequence,
+            close_time,
+        })
+    }
+
+    /// Returns the network wall-clock close time in unix seconds.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn fetch_current_ledger_time_async(&self) -> Result<u64, SdkError> {
         let client = self.clone();
         tokio::task::spawn_blocking(move || client.fetch_current_ledger_time())
             .await
             .map_err(|e| SdkError::RpcError(format!("async task panicked: {}", e)))?
+    }
+
+    /// Returns the network wall-clock close time over the wasm fetch transport (#553).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub async fn fetch_current_ledger_time_async(&self) -> Result<u64, SdkError> {
+        Ok(self.get_latest_ledger_clock_async().await?.close_time)
     }
 }

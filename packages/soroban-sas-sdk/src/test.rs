@@ -1112,3 +1112,168 @@ fn test_consistent_enum_serialization() {
         stale
     );
 }
+
+#[test]
+fn test_auth_entry_builder_ed25519_and_secp256k1_signatures() {
+    let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([2u8; 32]).to_string();
+
+    let ed_pk = [3u8; 32];
+    let ed_sig = [4u8; 64];
+
+    let secp_pk = [5u8; 33];
+    let secp_sig = [6u8; 65];
+
+    let entry = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_nonce(42)
+        .with_signature_expiration_ledger(1000)
+        .with_threshold(2)
+        .with_root_invocation(&contract_id, "attest", vec![])
+        .unwrap()
+        .add_ed25519_signature(&ed_pk, &ed_sig)
+        .unwrap()
+        .add_secp256k1_signature(&secp_pk, &secp_sig)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let soroban_sdk::xdr::SorobanCredentials::Address(ref creds) = entry.credentials else {
+        panic!("expected Address credentials");
+    };
+    assert_eq!(creds.nonce, 42);
+    assert_eq!(creds.signature_expiration_ledger, 1000);
+    assert_eq!(
+        creds.address,
+        soroban_sdk::xdr::ScAddress::Account(soroban_sdk::xdr::AccountId(
+            soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(soroban_sdk::xdr::Uint256([2u8; 32]))
+        ))
+    );
+}
+
+#[test]
+fn test_auth_entry_builder_mismatched_signature_lengths_rejected() {
+    let ed_pk = [1u8; 32];
+    let invalid_ed_sig = [2u8; 63]; // Not 64 bytes
+
+    let res = crate::auth::AuthEntryBuilder::new().add_ed25519_signature(&ed_pk, &invalid_ed_sig);
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(matches!(err, crate::errors::SdkError::ValidationError(_)));
+
+    let secp_pk = [3u8; 33];
+    let invalid_secp_sig = [4u8; 63]; // Not 64 or 65 bytes
+    let res =
+        crate::auth::AuthEntryBuilder::new().add_secp256k1_signature(&secp_pk, &invalid_secp_sig);
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(matches!(err, crate::errors::SdkError::ValidationError(_)));
+}
+
+#[test]
+fn test_auth_entry_builder_threshold_validation() {
+    let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([2u8; 32]).to_string();
+
+    let ed_pk = [3u8; 32];
+    let ed_sig = [4u8; 64];
+
+    // Threshold of 2 with only 1 signature should fail
+    let res = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_threshold(2)
+        .with_root_invocation(&contract_id, "attest", vec![])
+        .unwrap()
+        .add_ed25519_signature_with_weight(&ed_pk, &ed_sig, 1)
+        .unwrap()
+        .build();
+
+    assert!(res.is_err());
+    let err = res.err().unwrap();
+    assert!(matches!(err, crate::errors::SdkError::ValidationError(_)));
+
+    // Threshold of 2 with weight of 2 should succeed
+    let res = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_threshold(2)
+        .with_root_invocation(&contract_id, "attest", vec![])
+        .unwrap()
+        .add_ed25519_signature_with_weight(&ed_pk, &ed_sig, 2)
+        .unwrap()
+        .build();
+
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_auth_entry_canonical_sorting_and_validation() {
+    let contract_id1 = stellar_strkey::Contract([1u8; 32]).to_string();
+    let contract_id2 = stellar_strkey::Contract([2u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([3u8; 32]).to_string();
+
+    let entry1 = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_root_invocation(&contract_id1, "fn1", vec![])
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let entry2 = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_root_invocation(&contract_id2, "fn2", vec![])
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let mut entries = vec![entry2.clone(), entry1.clone()];
+    // If unsorted, validate_canonical_order should fail if entry2 > entry1
+    if entry2 > entry1 {
+        assert!(crate::auth::AuthEntryBuilder::validate_canonical_order(&entries).is_err());
+        crate::auth::AuthEntryBuilder::canonical_sort(&mut entries);
+        assert!(crate::auth::AuthEntryBuilder::validate_canonical_order(&entries).is_ok());
+    }
+
+    let assembled = crate::auth::AuthEntryBuilder::assemble_entries(vec![entry2, entry1]).unwrap();
+    assert_eq!(assembled.len(), 2);
+    assert!(crate::auth::AuthEntryBuilder::is_canonically_sorted(
+        &assembled
+    ));
+}
+
+#[test]
+fn test_authorization_tree_generation() {
+    let contract_id = stellar_strkey::Contract([1u8; 32]).to_string();
+    let account_id = stellar_strkey::ed25519::PublicKey([2u8; 32]).to_string();
+
+    let sub_invocation = soroban_sdk::xdr::SorobanAuthorizedInvocation {
+        function: soroban_sdk::xdr::SorobanAuthorizedFunction::ContractFn(
+            soroban_sdk::xdr::InvokeContractArgs {
+                contract_address: soroban_sdk::xdr::ScAddress::Contract(soroban_sdk::xdr::Hash(
+                    [9u8; 32],
+                )),
+                function_name: soroban_sdk::xdr::ScSymbol(
+                    soroban_sdk::xdr::StringM::try_from(b"sub_call".to_vec()).unwrap(),
+                ),
+                args: soroban_sdk::xdr::VecM::default(),
+            },
+        ),
+        sub_invocations: soroban_sdk::xdr::VecM::default(),
+    };
+
+    let entry = crate::auth::AuthEntryBuilder::new()
+        .with_address_strkey(&account_id)
+        .unwrap()
+        .with_root_invocation(&contract_id, "parent_call", vec![])
+        .unwrap()
+        .add_sub_invocation(sub_invocation.clone())
+        .build()
+        .unwrap();
+
+    assert_eq!(entry.root_invocation.sub_invocations.len(), 1);
+    assert_eq!(entry.root_invocation.sub_invocations[0], sub_invocation);
+}
