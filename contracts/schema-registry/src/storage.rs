@@ -45,6 +45,13 @@ pub const PENDING_SCHEMA_OWNER: Symbol = symbol_short!("PEND_OWN");
 /// Storage key for the schema revocation policy (#448).
 /// Stored under `(SCHEMA_POLICY, schema_uid) -> RevocationPolicy`.
 pub const SCHEMA_POLICY: Symbol = symbol_short!("POLICY");
+/// Creator royalty in basis points (#538). `(SCHEMA_ROYALTY, uid) -> u32`.
+/// Absent means 0: the whole attestation fee goes to the protocol treasury.
+pub const SCHEMA_ROYALTY: Symbol = symbol_short!("ROYALTY");
+/// Quarantine flag (#539). `(SCHEMA_QUARANTINE, uid) -> bool`.
+pub const SCHEMA_QUARANTINE: Symbol = symbol_short!("QUAR");
+/// Explanation URI recorded with the latest quarantine toggle (#539).
+pub const SCHEMA_QUARANTINE_URI: Symbol = symbol_short!("QUARURI");
 
 /// Storage key for the in-flight multi-signature ownership transfer.
 /// Stored under `(PENDING_OWNERSHIP, schema_uid) -> PendingOwnershipTransfer`

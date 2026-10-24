@@ -1,8 +1,9 @@
-# Delegated Issuance
+# Delegated Issuance, Revocation, and Replacement
 
-Delegated issuance lets an issuer authorize an attestation or revocation with
-an off-chain ed25519 signature, then let another account submit and pay for the
-transaction. This keeps the issuer's signing key out of an online relayer. For
+Delegation lets an issuer authorize an attestation or revocation with an
+off-chain ed25519 signature, then let another account submit and pay for the
+transaction. Replacement can also require a recipient counter-signature.
+This keeps signing keys out of an online relayer. For
 example, an issuer can sign with a hardware-backed or offline key and hand the
 resulting JSON to an online service for submission.
 
@@ -11,7 +12,7 @@ attester account. Its secret seed only authorizes and funds the transaction.
 The SAS contract authenticates the requested action from the issuer's signed
 payload.
 
-This guide describes delegated on-chain issuance and revocation. For the
+This guide describes delegated on-chain issuance, revocation, and replacement. For the
 underlying off-chain attestation format and its stable byte layout, see
 [Off-Chain Attestations](offchain-attestations.md).
 
@@ -60,6 +61,44 @@ After signature verification, the contract consumes the nonce for the recorded
 attester and runs the normal revocation checks. The attestation must exist, be
 revocable, and not already be revoked.
 
+## Delegated replacement with recipient consent
+
+`replace_by_delegation_consent` accepts an old UID, a complete replacement
+`Attestation`, and one `ReplacementApproval` from each party. Each approval
+contains a nonce, Ed25519 public key, and signature. The shorter name is required by Soroban's
+32-character contract function limit. The relayer pays for the transaction.
+
+Both parties sign the same SHA-256 digest:
+
+```text
+SorobanSAS DelegatedReplacementConsent v1(network_id,contract,attester_nonce,recipient_nonce,old_uid,new_attestation)
+|| network_id (32 bytes)
+|| contract (ScVal XDR)
+|| attester_nonce (u64 big-endian)
+|| recipient_nonce (u64 big-endian)
+|| old_uid (32 bytes)
+|| hash_attestation_struct(new_attestation) (32 bytes)
+```
+
+Use `hash_delegated_replacement_consent` and `ReplacementConsentDomain` from
+`soroban-sas-common` to construct this digest. The replacement hash binds the
+UID, schema, time, expiration, reference UID, recipient, attester, revocability,
+and SHA-256 of data. Like delegated issuance, `revocation_time` is excluded;
+the replacement must have zero revocation time. Both signatures bind both
+nonces, the old UID, and the full new claim. The contract checks each public
+key against its party's account address or that party's registered key.
+
+The attester nonce uses the same high-watermark as delegated issuance and
+revocation. Recipient consent has an independent high-watermark, readable via
+`get_recipient_consent_nonce(recipient)`. Each supplied nonce must exceed its
+stored value. The contract verifies both signatures and consumes both nonces
+in one atomic invocation, then uses the normal replacement path to revoke the
+old claim, issue the linked replacement, and notify the indexer. A failed
+signature, nonce check, or replacement rolls back both nonces and all state.
+
+Recipient consent only applies to this entrypoint; `replace_attestation`
+continues to support the existing direct attester-authorized path.
+
 ## Batch delegation
 
 Issuers that produce many signatures (for example an offline job that signs a
@@ -94,6 +133,17 @@ batch: no attestation is issued, no revocation is written, and no nonce is
 consumed. The batch's `BatchAttested` / `BatchRevoked` summary event is emitted
 only after every per-item event, so a consumer that sees the summary knows the
 whole batch committed.
+
+The Rust SDK's `delegation::DelegatedBatchSigner` can create batch signatures
+without an RPC client or network connection. It uses the same typed-data
+digest helper as contract verification and checks batch length, strictly
+increasing nonces, signer-to-attester binding, attestation UID, revocation
+timestamp, and payload size locally. Its `DelegatedBatchSignaturePacket`
+contains the matching attestations and parallel nonce, signature, public-key,
+and digest vectors, which can be passed to
+`SASClient::multi_attest_by_delegation`. `to_json` exports an offline relay
+packet with attestations as hex-encoded XDR and the signature material as
+lowercase hex.
 
 ## Nonce model and limitations
 

@@ -4,10 +4,14 @@ mod bulk;
 mod cache;
 mod hardware;
 mod identity;
+mod importer;
 mod io_safety;
+mod json_schema;
+mod ledger;
 mod manpage;
 mod network;
 mod offchain;
+mod wizard;
 
 /// Resolves a subcommand's own flag against the global `--network` shorthand
 /// (issue #174): an explicit flag (already merged with its environment
@@ -53,7 +57,17 @@ fn resolve_secret_key(
     hardware: Option<hardware::HardwareWallet>,
 ) -> Result<String, String> {
     if let Some(wallet) = hardware {
-        return Err(wallet.signing_error());
+        if wallet.kind != hardware::HardwareWalletKind::Ledger {
+            return Err(wallet.signing_error());
+        }
+        if explicit.is_some() || identity.is_some() {
+            return Err(
+                "--ledger cannot be combined with --secret-key, SAS_SECRET_KEY or --identity"
+                    .into(),
+            );
+        }
+        // Sentinel is accepted only by signer_seed; never a valid software key.
+        return Ok("__LEDGER_HARDWARE__".to_string());
     }
     if let Some(secret) = explicit {
         eprintln!(
@@ -71,6 +85,53 @@ fn resolve_secret_key(
              or pass --hardware-wallet"
                 .to_string(),
         ),
+    }
+}
+
+fn signer_seed(
+    secret: &str,
+    hardware: Option<hardware::HardwareWallet>,
+) -> Result<[u8; 32], String> {
+    match hardware {
+        Some(wallet) if wallet.kind == hardware::HardwareWalletKind::Ledger => {
+            if secret != "__LEDGER_HARDWARE__" {
+                return Err("hardware signing cannot use a software private key".into());
+            }
+            // Legacy SDK method signatures still accept a seed; their
+            // external signer completely bypasses use of this placeholder.
+            Ok([0u8; 32])
+        }
+        Some(wallet) => Err(wallet.signing_error()),
+        None => offchain::parse_secret_seed(secret),
+    }
+}
+
+fn signer_address(
+    seed: &[u8; 32],
+    hardware: Option<hardware::HardwareWallet>,
+) -> Result<String, String> {
+    let key = match hardware {
+        Some(wallet) if wallet.kind == hardware::HardwareWalletKind::Ledger => {
+            ledger::read_public_key(wallet.account)?
+        }
+        Some(wallet) => return Err(wallet.signing_error()),
+        None => soroban_sas_sdk::signature::derive_public_key(seed),
+    };
+    Ok(stellar_strkey::ed25519::PublicKey(key).to_string())
+}
+
+fn sdk_client(
+    contract_id: String,
+    hardware: Option<hardware::HardwareWallet>,
+) -> Result<soroban_sas_sdk::client::SASClient, String> {
+    let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+    match hardware {
+        Some(wallet) if wallet.kind == hardware::HardwareWalletKind::Ledger => {
+            let signer = ledger::LedgerSigner::connect(wallet.account)?;
+            Ok(client.with_external_signer(std::sync::Arc::new(signer)))
+        }
+        Some(wallet) => Err(wallet.signing_error()),
+        None => Ok(client),
     }
 }
 
@@ -264,6 +325,7 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
     };
 
     let mut field_count = 0u32;
+    let mut seen_names: Vec<String> = Vec::new();
     while start < end {
         let mut field_end = start;
         while field_end < end && schema[field_end] != b',' {
@@ -319,6 +381,13 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
                 "schema must use comma-separated `name Type` field definitions".to_string(),
             );
         }
+        let name_norm = std::str::from_utf8(name).unwrap_or("").to_ascii_lowercase();
+        if seen_names.iter().any(|existing| existing == &name_norm) {
+            return Err(format!(
+                "schema field `{name_norm}` collides with an earlier field and would break serialization"
+            ));
+        }
+        seen_names.push(name_norm);
         field_count += 1;
 
         if field_end >= end {
@@ -346,7 +415,7 @@ fn validate_schema_syntax(schema: &str) -> Result<(), String> {
 /// accept. Guards against unbounded memory growth from a pasted or piped
 /// oversized line, mirroring the file-read cap in
 /// [`io_safety::MAX_INPUT_FILE_BYTES`].
-const MAX_INTERACTIVE_LINE_BYTES: usize = 4096;
+pub(crate) const MAX_INTERACTIVE_LINE_BYTES: usize = 4096;
 
 /// Reads one prompted line from `lines`, trimmed, rejecting it if it exceeds
 /// [`MAX_INTERACTIVE_LINE_BYTES`] or the source is exhausted mid-prompt.
@@ -379,7 +448,7 @@ where
 /// rather than deferring the error to submission time; the resolver must be
 /// non-empty and revocability must be answered `y`/`yes`/`n`/`no`
 /// (case-insensitive), both re-prompted on an invalid answer.
-fn build_schema_interactively<I>(lines: &mut I) -> Result<(String, String, bool), String>
+pub(crate) fn build_schema_interactively<I>(lines: &mut I) -> Result<(String, String, bool), String>
 where
     I: Iterator<Item = std::io::Result<String>>,
 {
@@ -461,6 +530,21 @@ struct Cli {
     #[arg(
         long,
         global = true,
+        help = "Sign on-chain SAS transactions with a Ledger secure element"
+    )]
+    ledger: bool,
+
+    #[arg(
+        long,
+        global = true,
+        default_value = "m/44'/148'/0'",
+        help = "Ledger BIP-44 path m/44'/148'/N'"
+    )]
+    bip44_path: String,
+
+    #[arg(
+        long,
+        global = true,
         default_value_t = 0,
         help = "BIP-44 account index used with --hardware-wallet (issue #328)."
     )]
@@ -525,6 +609,15 @@ enum Commands {
     Offchain {
         #[command(subcommand)]
         action: OffchainCommands,
+    },
+    /// Sign a prepared Stellar/SAS transaction on a Ledger hardware wallet
+    LedgerSign {
+        #[arg(long, help = "Unsigned V1 transaction file containing base64 XDR")]
+        xdr_file: String,
+        #[arg(long, env = "SOROBAN_NETWORK_PASSPHRASE")]
+        network_passphrase: Option<String>,
+        #[arg(long, help = "Destination for signed XDR (refuses overwrite)")]
+        output_file: std::path::PathBuf,
     },
     /// Write a groff man page for soroban-sas (issue #330)
     Man {
@@ -686,6 +779,14 @@ enum OffchainCommands {
 
 #[derive(Subcommand)]
 enum SchemaCommands {
+    /// Export a SAS schema as JSON Schema Draft-7 and print compatibility warnings (#537).
+    Lint {
+        #[arg(
+            long,
+            help = "Schema definition string, e.g. `name string, active bool`"
+        )]
+        schema: String,
+    },
     /// Register a new schema. The registration is signed and submitted by
     /// --secret-key's account, which becomes the schema's owner.
     Register {
@@ -732,6 +833,49 @@ enum SchemaCommands {
     /// answer; `--secret-key` / `--registry-contract-id` still come from
     /// flags or environment variables, matching `register` (#326).
     Interactive {
+        #[arg(
+            long,
+            help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
+            env = "SAS_SECRET_KEY",
+            hide_env_values = true
+        )]
+        secret_key: Option<String>,
+        #[arg(
+            long,
+            help = "Network passphrase to sign against",
+            env = "SOROBAN_NETWORK_PASSPHRASE"
+        )]
+        network_passphrase: Option<String>,
+        #[arg(
+            long,
+            help = "Schema Registry contract address (C...)",
+            env = "SCHEMA_REGISTRY_CONTRACT_ID"
+        )]
+        registry_contract_id: String,
+        #[arg(long, help = "Soroban RPC endpoint URL", env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
+    /// Interactive registration wizard (#469): prompts for a schema name,
+    /// field-by-field definitions, revocability, an optional resolver
+    /// address, and a metadata URI — validating each answer the moment it is
+    /// entered — then shows a summary with the estimated network fee and
+    /// submits the registration once confirmed. Needs a terminal for the
+    /// dialoguer prompts; when stdin is not a TTY it falls back to reading
+    /// one answer per line from stdin in the same order (name, fields
+    /// ending in a blank line, `y/n` revocable, resolver, metadata URI,
+    /// final `y/N` confirmation). `name` and the metadata URI are off-chain
+    /// labels echoed in the result: the registry identifies a schema by the
+    /// `(schema, resolver, revocable)` tuple alone. `--resolver` /
+    /// SAS_RESOLVER_CONTRACT_ID prefills the resolver so its prompt can be
+    /// skipped with a blank answer.
+    Wizard {
+        #[arg(
+            long,
+            help = "Default resolver contract address (C...), used when the wizard's resolver \
+                    prompt is left blank",
+            env = "SAS_RESOLVER_CONTRACT_ID"
+        )]
+        resolver: Option<String>,
         #[arg(
             long,
             help = "Owner's signing key: S... strkey seed or 32-byte hex seed",
@@ -1117,6 +1261,29 @@ enum AttestCommands {
         )]
         max_ledger_skew: u64,
     },
+    /// Import CSV or JSON-L attestations using on-chain multi_attest batches.
+    Import {
+        #[arg(long, help = "Input file (.csv, .jsonl, .ndjson)")]
+        file: String,
+        #[arg(
+            long,
+            default_value_t = 10,
+            help = "Number of attestations per transaction (1-100)"
+        )]
+        chunk_size: usize,
+        #[arg(long, help = "Where rejected rows are written (JSON Lines)")]
+        error_file: Option<String>,
+        #[arg(long, help = "Validate and preview without sending transactions")]
+        dry_run: bool,
+        #[arg(long, env = "SAS_SECRET_KEY", hide_env_values = true)]
+        secret_key: Option<String>,
+        #[arg(long, env = "SOROBAN_NETWORK_PASSPHRASE")]
+        network_passphrase: Option<String>,
+        #[arg(long, env = "SAS_CONTRACT_ID")]
+        contract_id: String,
+        #[arg(long, env = "SOROBAN_RPC_URL")]
+        rpc_url: Option<String>,
+    },
     /// Revoke an existing on-chain attestation
     Revoke {
         #[arg(long, help = "32-byte attestation UID, hex encoded")]
@@ -1350,10 +1517,31 @@ fn main() {
     let network = cli.network;
     let identity = cli.identity;
     let no_cache = cli.no_cache;
-    let hardware = cli.hardware_wallet.map(|kind| hardware::HardwareWallet {
-        kind,
-        account: cli.hd_account,
-    });
+    let hardware = if cli.ledger {
+        if cli.hardware_wallet.is_some() || cli.hd_account != 0 {
+            emit_error(
+                output,
+                "--ledger cannot be combined with --hardware-wallet or --hd-account",
+            );
+            std::process::exit(1);
+        }
+        let account = match ledger::account_from_bip44(&cli.bip44_path) {
+            Ok(account) => account,
+            Err(err) => {
+                emit_error(output, &err);
+                std::process::exit(1);
+            }
+        };
+        Some(hardware::HardwareWallet {
+            kind: hardware::HardwareWalletKind::Ledger,
+            account,
+        })
+    } else {
+        cli.hardware_wallet.map(|kind| hardware::HardwareWallet {
+            kind,
+            account: cli.hd_account,
+        })
+    };
     let result = match cli.command {
         Some(Commands::Offchain { action }) => {
             run_offchain(action, output, network, identity, hardware)
@@ -1370,6 +1558,48 @@ fn main() {
         Some(Commands::Query { action }) => run_query(action, output, network),
         Some(Commands::Delegate { action }) => {
             run_delegate(action, output, network, identity, hardware)
+        }
+        Some(Commands::LedgerSign {
+            xdr_file,
+            network_passphrase,
+            output_file,
+        }) => {
+            if !matches!(
+                hardware,
+                Some(hardware::HardwareWallet {
+                    kind: hardware::HardwareWalletKind::Ledger,
+                    ..
+                })
+            ) {
+                Err("Ledger signing requires --ledger".to_string())
+            } else {
+                let passphrase = resolve_network_passphrase(network_passphrase, network.as_deref());
+                passphrase.and_then(|passphrase| {
+                    let unsigned =
+                        io_safety::read_bounded(&xdr_file, io_safety::MAX_INPUT_FILE_BYTES)?;
+                    let (signed_xdr, hash) = ledger::sign_xdr(
+                        &unsigned,
+                        &passphrase,
+                        &format!("m/44'/148'/{}'", hardware.expect("checked above").account),
+                    )?;
+                    ledger::save_signed_xdr(&output_file, &signed_xdr)?;
+                    emit_ok(
+                        output,
+                        || {
+                            println!("Ledger signature obtained; transaction hash: {hash}");
+                            println!("Signed XDR: {}", output_file.display());
+                            println!(
+                                "Submit the signed transaction after independent verification."
+                            );
+                        },
+                        serde_json::json!({
+                            "hash": hash,
+                            "signed_xdr_file": output_file,
+                            "submitted": false,
+                        }),
+                    )
+                })
+            }
         }
         Some(Commands::Man { path }) => manpage::write_man_page(&Cli::command(), path.as_deref()),
         _ => emit_ok(
@@ -1425,7 +1655,7 @@ fn run_sas(
             let (human_msg, json_val) =
                 cache::cached_or(&["sas-get-fee", &rpc_url, &contract_id], no_cache, || {
                     let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url.clone());
-                    let client = soroban_sas_sdk::client::SASClient::new(contract_id.clone());
+                    let client = sdk_client(contract_id.clone(), hardware)?;
                     let fee = client.fetch_fee(&rpc).map_err(|e| e.to_string())?;
                     Ok((fee_to_human(&fee), fee_to_json(&fee)))
                 })?;
@@ -1443,9 +1673,9 @@ fn run_sas(
             validate_fee_amount(amount)?;
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
             if dry_run {
                 let result = client
                     .set_fee_dry_run(&rpc, &seed, &token, amount)
@@ -1468,9 +1698,9 @@ fn run_sas(
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
             if dry_run {
                 let result = client
                     .clear_fee_dry_run(&rpc, &seed)
@@ -1645,11 +1875,8 @@ fn run_attest(
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let schema_uid_bytes = parse_uid(&schema_uid)?;
             let data_bytes = decode_hex_or_base64(&data)?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
-            let attester = stellar_strkey::ed25519::PublicKey(
-                soroban_sas_sdk::signature::derive_public_key(&seed),
-            )
-            .to_string();
+            let seed = signer_seed(&secret_key, hardware)?;
+            let attester = signer_address(&seed, hardware)?;
             // Before any RPC call (including the ledger-clock fetch below):
             // a missing/self recipient is a local input error (#304).
             offchain::validate_onchain_recipient(&env, &recipient, &attester)?;
@@ -1659,7 +1886,7 @@ fn run_attest(
                 .map_err(|e| format!("system clock error: {e}"))?;
 
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
 
             // Issuance time is the network ledger close time, not the local
             // clock (#172). The local clock is only a fallback the operator
@@ -1735,11 +1962,8 @@ fn run_attest(
             let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
-            let expected_attester = stellar_strkey::ed25519::PublicKey(
-                soroban_sas_sdk::signature::derive_public_key(&seed),
-            )
-            .to_string();
+            let seed = signer_seed(&secret_key, hardware)?;
+            let expected_attester = signer_address(&seed, hardware)?;
             if input.attester != expected_attester {
                 return Err(format!(
                     "attester {} does not match signing key account {expected_attester}",
@@ -1750,7 +1974,7 @@ fn run_attest(
             offchain::validate_onchain_parties(&env, &attestation)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
             let result = client
                 .attest(&rpc, &network_passphrase, &seed, attestation)
                 .map_err(|e| e.to_string())?;
@@ -1777,11 +2001,8 @@ fn run_attest(
             // Bounded read, same cap as every other file input (#176, #177).
             let raw = io_safety::read_bounded(&csv_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let rows = bulk::parse_bulk_csv(&raw)?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
-            let attester = stellar_strkey::ed25519::PublicKey(
-                soroban_sas_sdk::signature::derive_public_key(&seed),
-            )
-            .to_string();
+            let seed = signer_seed(&secret_key, hardware)?;
+            let attester = signer_address(&seed, hardware)?;
 
             // Validate *every* row before submitting the first one. A typo in
             // the last line of a large file must not leave the operator with
@@ -1854,7 +2075,7 @@ fn run_attest(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| format!("system clock error: {e}"))?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
 
             // One issuance time for the whole batch: every row in a single
             // run is signed against the same ledger close, so a batch cannot
@@ -1963,6 +2184,230 @@ fn run_attest(
                 data,
             )
         }
+        AttestCommands::Import {
+            file,
+            chunk_size,
+            error_file,
+            dry_run,
+            secret_key,
+            network_passphrase,
+            contract_id,
+            rpc_url,
+        } => {
+            if !(1..=100).contains(&chunk_size) {
+                return Err("--chunk-size must be between 1 and 100".into());
+            }
+            let extension = std::path::Path::new(&file)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("");
+            let raw = io_safety::read_bounded(&file, io_safety::MAX_INPUT_FILE_BYTES)?;
+            let records = importer::parse_import(&raw, extension)?;
+            let total = records.len();
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
+            let seed = signer_seed(&secret_key, hardware)?;
+            let attester = signer_address(&seed, hardware)?;
+
+            let mut valid = Vec::new();
+            let mut errors = Vec::<serde_json::Value>::new();
+            let mut seen_uids = std::collections::HashSet::new();
+            for record in records {
+                let converted = record.row.and_then(|row| {
+                    let schema =
+                        parse_uid(&row.schema_uid).map_err(|err| format!("schema_uid: {err}"))?;
+                    let data = decode_hex_or_base64(&row.data)?;
+                    offchain::validate_onchain_recipient(&env, &row.recipient, &attester)?;
+                    let uid =
+                        offchain::generate_uid(&env, &schema, &row.recipient, &attester, &data)?;
+                    let uid_hex = hex::encode(uid);
+                    if !seen_uids.insert(uid_hex.clone()) {
+                        return Err("duplicate content-addressed attestation UID".into());
+                    }
+                    Ok(PreparedRow {
+                        line: row.line,
+                        recipient: row.recipient,
+                        schema_uid: row.schema_uid,
+                        expiration: row.expiration,
+                        revocable: row.revocable,
+                        uid_hex,
+                        data_bytes: data,
+                    })
+                });
+                match converted {
+                    Ok(item) => valid.push(item),
+                    Err(err) => errors.push(serde_json::json!({
+                        "line": record.line, "error": err
+                    })),
+                }
+            }
+
+            if dry_run {
+                return emit_ok(
+                    output,
+                    || {
+                        println!(
+                            "Import preview: {} valid / {} invalid rows",
+                            valid.len(),
+                            errors.len()
+                        );
+                    },
+                    serde_json::json!({
+                        "total": total, "valid": valid.len(),
+                        "failed": errors.len(), "errors": errors
+                    }),
+                );
+            }
+
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = sdk_client(contract_id, hardware)?;
+            let local_now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| format!("system clock error: {e}"))?;
+            let issuance_time = resolve_cli_issuance_time(&rpc, local_now.as_secs(), 300, false)?;
+
+            let mut succeeded = 0usize;
+            let mut hashes = Vec::<serde_json::Value>::new();
+            let mut results = Vec::<serde_json::Value>::new();
+            // Status failure is atomic for the Soroban multi_attest call.
+            // Retry each member individually only after an explicit FAILED
+            // result, never after ambiguous transport errors.
+            for chunk in valid.chunks(chunk_size) {
+                let prepared = chunk
+                    .iter()
+                    .map(|row| {
+                        let input = offchain::AttestationInput {
+                            uid: row.uid_hex.clone(),
+                            schema_uid: row.schema_uid.clone(),
+                            time: issuance_time,
+                            expiration_time: row.expiration,
+                            valid_from: 0,
+                            ref_uid: hex::encode([0u8; 32]),
+                            recipient: row.recipient.clone(),
+                            attester: attester.clone(),
+                            revocable: row.revocable,
+                            data: hex::encode(&row.data_bytes),
+                        };
+                        offchain::parse_attestation(&env, &input)
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+
+                let outcome = prepared.and_then(|attestations| {
+                    client
+                        .multi_attest(&rpc, &network_passphrase, &seed, attestations)
+                        .map_err(|err| err.to_string())
+                });
+                match outcome {
+                    Ok(receipt) if receipt.status == "SUCCESS" => {
+                        let hash = receipt.hash.clone();
+                        hashes.push(serde_json::json!({"hash": hash, "count": chunk.len()}));
+                        for row in chunk {
+                            succeeded += 1;
+                            results.push(serde_json::json!({
+                                "line": row.line, "uid": row.uid_hex,
+                                "hash": hash, "status": "ok",
+                            }));
+                        }
+                    }
+                    // On an explicit contract rejection the whole call
+                    // reverted. Isolate problematic rows without abandoning
+                    // other valid input rows.
+                    Ok(receipt) if receipt.status == "FAILED" => {
+                        for row in chunk {
+                            let ctx = BulkContext {
+                                env: &env,
+                                rpc: &rpc,
+                                client: &client,
+                                network_passphrase: &network_passphrase,
+                                seed: &seed,
+                                attester: &attester,
+                                issuance_time,
+                            };
+                            match submit_bulk_row(&ctx, row) {
+                                Ok((uid, hash)) => {
+                                    succeeded += 1;
+                                    results.push(serde_json::json!({
+                                        "line": row.line, "uid": uid,
+                                        "hash": hash, "status": "ok",
+                                    }));
+                                }
+                                Err(err) => {
+                                    errors
+                                        .push(serde_json::json!({"line": row.line, "error": err}));
+                                }
+                            }
+                        }
+                    }
+                    Ok(receipt) => {
+                        for row in chunk {
+                            errors.push(serde_json::json!({
+                                "line": row.line,
+                                "error": format!("batch transaction status {}", receipt.status)
+                            }));
+                        }
+                    }
+                    Err(err) => {
+                        // Cannot know whether an RPC timeout happened before
+                        // or after submission; do not duplicate the spend.
+                        for row in chunk {
+                            errors.push(serde_json::json!({
+                                "line": row.line, "error": err
+                            }));
+                        }
+                    }
+                }
+                eprint!(
+                    "\rImport progress: {}/{} validated records",
+                    succeeded + errors.len(),
+                    total
+                );
+            }
+            eprintln!();
+
+            if !errors.is_empty() {
+                let path = error_file.unwrap_or_else(|| format!("{file}.errors.jsonl"));
+                let mut jsonl = String::new();
+                for item in &errors {
+                    jsonl.push_str(&item.to_string());
+                    jsonl.push('\n');
+                }
+                std::fs::write(&path, jsonl)
+                    .map_err(|err| format!("save rejected rows to {path}: {err}"))?;
+                eprintln!("Rejected {} row(s); details in {path}", errors.len());
+            }
+
+            let summary = serde_json::json!({
+                "total": total, "succeeded": succeeded, "failed": errors.len(),
+                "transactions": hashes, "results": results,
+                "gas_spent": null,
+                "gas_note": "gas/resource fee total is unavailable in the current SDK transaction response",
+            });
+            if !errors.is_empty() {
+                emit_error(
+                    output,
+                    &format!("{} of {total} imported rows failed", errors.len()),
+                );
+                // Do not return success when the run was partially rejected.
+                return Err(format!(
+                    "{} of {total} imported rows failed: {}",
+                    errors.len(),
+                    summary
+                ));
+            }
+            emit_ok(
+                output,
+                || {
+                    println!("Import complete: {succeeded} issued, 0 failed");
+                    for transaction in &hashes {
+                        println!("  transaction {}", transaction["hash"]);
+                    }
+                    println!("Gas spent: unavailable from this SDK's transaction receipts");
+                },
+                summary,
+            )
+        }
         AttestCommands::Revoke {
             uid,
             secret_key,
@@ -1975,9 +2420,9 @@ fn run_attest(
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid = parse_uid(&uid)?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
             let result = client
                 .revoke(&rpc, &network_passphrase, &seed, &uid)
                 .map_err(|e| e.to_string())?;
@@ -1991,7 +2436,7 @@ fn run_attest(
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
             let uid = parse_uid(&uid)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
             let valid = client
                 .verify_attestation(&rpc, &uid)
                 .map_err(|e| e.to_string())?;
@@ -2023,11 +2468,8 @@ fn run_attest(
             let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
-            let expected_attester = stellar_strkey::ed25519::PublicKey(
-                soroban_sas_sdk::signature::derive_public_key(&seed),
-            )
-            .to_string();
+            let seed = signer_seed(&secret_key, hardware)?;
+            let expected_attester = signer_address(&seed, hardware)?;
             if input.attester != expected_attester {
                 return Err(format!(
                     "attester {} does not match signing key account {expected_attester}",
@@ -2038,7 +2480,7 @@ fn run_attest(
             offchain::validate_onchain_parties(&env, &new_data)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
             validate_expiration_before_submit(&rpc, &env, input.expiration_time)?;
-            let client = soroban_sas_sdk::client::SASClient::new(contract_id);
+            let client = sdk_client(contract_id, hardware)?;
             let result = client
                 .replace_attestation(&rpc, &network_passphrase, &seed, &old_uid, new_data)
                 .map_err(|e| e.to_string())?;
@@ -2186,6 +2628,44 @@ fn print_schema_registration_result(
         }
     }
     Ok(())
+}
+
+/// Success reporting for `schema wizard` (#469): the same status/UID/hash
+/// lines as [`print_schema_registration_result`] plus the off-chain labels
+/// the wizard collected, with the JSON half wrapped in the standard
+/// `{"status":"ok","data":…}` envelope (`--output json`).
+fn print_wizard_registration_result(
+    result: soroban_sas_sdk::rpc::GetTransactionResult,
+    uid_hex: &str,
+    answers: &wizard::WizardAnswers,
+    output: OutputFormat,
+) -> Result<(), String> {
+    if result.status != "SUCCESS" {
+        return Err(format!(
+            "schema registration failed with status {}",
+            result.status
+        ));
+    }
+    emit_ok(
+        output,
+        || {
+            println!("Schema registered: {uid_hex}");
+            if let Some(hash) = &result.hash {
+                println!("Transaction hash:  {hash}");
+            }
+            println!("Name:             {}", answers.name);
+            if let Some(uri) = &answers.metadata_uri {
+                println!("Metadata URI:     {uri}");
+            }
+        },
+        serde_json::json!({
+            "submitted": true,
+            "schema_uid": uid_hex,
+            "hash": result.hash.clone(),
+            "name": answers.name.clone(),
+            "metadata_uri": answers.metadata_uri.clone(),
+        }),
+    )
 }
 
 fn print_transaction_result(
@@ -2424,6 +2904,13 @@ fn run_delegate(
     identity: Option<String>,
     hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
+    if let Some(wallet) = hardware {
+        return Err(format!(
+            "{}: Ledger cannot sign arbitrary off-chain payloads",
+            wallet.kind_name()
+        ));
+    }
+
     let env = soroban_sdk::Env::default();
     match action {
         DelegateCommands::SignRevoke {
@@ -2438,7 +2925,7 @@ fn run_delegate(
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let signed = offchain::sign_delegated_revocation(
                 &uid,
                 &attester,
@@ -2482,9 +2969,9 @@ fn run_delegate(
             offchain::validate_onchain_parties(&env, &attestation)?;
             let public_key = parse_uid(&signed.public_key)?;
             let signature = decode_hex64(&signed.signature)?;
-            let relayer_seed = offchain::parse_secret_seed(&secret_key)?;
+            let relayer_seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(signed.contract_id.clone());
+            let client = sdk_client(signed.contract_id.clone(), hardware)?;
             let result = client
                 .attest_by_delegation(
                     &rpc,
@@ -2512,9 +2999,9 @@ fn run_delegate(
             let uid = parse_uid(&signed.uid)?;
             let public_key = parse_uid(&signed.public_key)?;
             let signature = decode_hex64(&signed.signature)?;
-            let relayer_seed = offchain::parse_secret_seed(&secret_key)?;
+            let relayer_seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(signed.contract_id.clone());
+            let client = sdk_client(signed.contract_id.clone(), hardware)?;
             let result = client
                 .revoke_by_delegation(
                     &rpc,
@@ -2541,6 +3028,27 @@ fn run_schema(
 ) -> Result<(), String> {
     let env = soroban_sdk::Env::default();
     match action {
+        SchemaCommands::Lint { schema } => {
+            let linted = json_schema::lint_schema(&schema)?;
+            let round_tripped = json_schema::round_trip_schema(&schema)?;
+            let pretty = serde_json::to_string_pretty(&linted.document)
+                .map_err(|e| format!("serialization failed: {e}"))?;
+            let warnings = linted.warnings.clone();
+            emit_ok(
+                output,
+                || {
+                    for warning in &warnings {
+                        eprintln!("warning: {warning}");
+                    }
+                    println!("{pretty}");
+                },
+                serde_json::json!({
+                    "json_schema": linted.document,
+                    "warnings": linted.warnings,
+                    "sas_schema": round_tripped,
+                }),
+            )
+        }
         SchemaCommands::Register {
             schema,
             resolver,
@@ -2557,9 +3065,9 @@ fn run_schema(
             validate_schema_syntax(&schema)?;
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             if dry_run {
                 let result = client
                     .register_schema_dry_run(
@@ -2601,12 +3109,12 @@ fn run_schema(
             let (schema, resolver, revocable) = build_schema_interactively(&mut lines)?;
 
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let network_passphrase =
                 resolve_network_passphrase(network_passphrase, network.as_deref())?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             let uid_hex = compute_schema_uid_hex(&env, &schema, &resolver, revocable)?;
             let result = client
                 .register_schema(
@@ -2621,6 +3129,85 @@ fn run_schema(
                 .map_err(|e| e.to_string())?;
             print_schema_registration_result(result, &uid_hex, output)
         }
+        SchemaCommands::Wizard {
+            resolver,
+            secret_key,
+            network_passphrase,
+            registry_contract_id,
+            rpc_url,
+        } => {
+            use std::io::BufRead;
+            let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
+            let seed = signer_seed(&secret_key, hardware)?;
+            let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
+            let network_passphrase =
+                resolve_network_passphrase(network_passphrase, network.as_deref())?;
+
+            let mode = wizard::Mode::detect();
+            let stdin = std::io::stdin();
+            let mut lines = stdin.lock().lines();
+            let answers = wizard::collect(mode, &mut lines, resolver.as_deref())?;
+
+            let uid_hex = compute_schema_uid_hex(
+                &env,
+                &answers.schema,
+                &answers.resolver,
+                answers.revocable,
+            )?;
+
+            let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
+            let fee_estimate = match client.register_schema_dry_run(
+                &rpc,
+                &seed,
+                &registry_contract_id,
+                &answers.schema,
+                &answers.resolver,
+                answers.revocable,
+            ) {
+                Ok(dry_run) => Some(dry_run.total_fee),
+                Err(error) => {
+                    let reason = humanize_rpc_failure(&error.to_string());
+                    let reason = reason.lines().next().unwrap_or("unknown error");
+                    eprintln!("warning: network fee estimate unavailable: {reason}");
+                    None
+                }
+            };
+
+            wizard::print_summary(
+                &answers,
+                &uid_hex,
+                fee_estimate,
+                &network_passphrase,
+                &registry_contract_id,
+            );
+
+            if !wizard::confirm(mode, &mut lines)? {
+                return emit_ok(
+                    output,
+                    || println!("Aborted: no transaction was submitted."),
+                    serde_json::json!({
+                        "submitted": false,
+                        "schema_uid": uid_hex,
+                        "name": answers.name.clone(),
+                        "metadata_uri": answers.metadata_uri.clone(),
+                    }),
+                );
+            }
+
+            let result = client
+                .register_schema(
+                    &rpc,
+                    &network_passphrase,
+                    &seed,
+                    &registry_contract_id,
+                    &answers.schema,
+                    &answers.resolver,
+                    answers.revocable,
+                )
+                .map_err(|e| e.to_string())?;
+            print_wizard_registration_result(result, &uid_hex, &answers, output)
+        }
         SchemaCommands::Get {
             uid,
             registry_contract_id,
@@ -2633,8 +3220,7 @@ fn run_schema(
                 no_cache,
                 || {
                     let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url.clone());
-                    let client =
-                        soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+                    let client = sdk_client(registry_contract_id.clone(), hardware)?;
                     let schema = client
                         .get_schema(&rpc, &registry_contract_id, &uid_bytes)
                         .map_err(|e| e.to_string())?;
@@ -2693,8 +3279,7 @@ fn run_schema(
                     )
                     .map_err(|e| e.to_string())?;
                     let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url.clone());
-                    let client =
-                        soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+                    let client = sdk_client(registry_contract_id.clone(), hardware)?;
                     let schema_record = client
                         .get_schema_by_content(
                             &rpc,
@@ -2744,9 +3329,9 @@ fn run_schema(
             validate_schema_syntax(&schema)?;
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             if dry_run {
                 let result = client
                     .register_schema_with_value_dry_run(
@@ -2791,9 +3376,9 @@ fn run_schema(
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             if dry_run {
                 let result = client
                     .set_schema_fee_dry_run(&rpc, &seed, &registry_contract_id, &token, amount)
@@ -2823,9 +3408,9 @@ fn run_schema(
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             if dry_run {
                 let result = client
                     .clear_schema_fee_dry_run(&rpc, &seed, &registry_contract_id)
@@ -2849,9 +3434,9 @@ fn run_schema(
         } => {
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             if dry_run {
                 let result = client
                     .set_schema_treasury_dry_run(&rpc, &seed, &registry_contract_id, &treasury)
@@ -2882,9 +3467,9 @@ fn run_schema(
             validate_fee_amount(amount)?;
             let secret_key = resolve_secret_key(secret_key, identity.as_deref(), hardware)?;
             let rpc_url = resolve_rpc_url(rpc_url, network.as_deref())?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url);
-            let client = soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+            let client = sdk_client(registry_contract_id.clone(), hardware)?;
             if dry_run {
                 let result = client
                     .withdraw_schema_fees_dry_run(&rpc, &seed, &registry_contract_id, amount)
@@ -2914,8 +3499,7 @@ fn run_schema(
                 no_cache,
                 || {
                     let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url.clone());
-                    let client =
-                        soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+                    let client = sdk_client(registry_contract_id.clone(), hardware)?;
                     let fee = client
                         .get_schema_fee(&rpc, &registry_contract_id)
                         .map_err(|e| e.to_string())?;
@@ -2949,8 +3533,7 @@ fn run_schema(
                 no_cache,
                 || {
                     let rpc = soroban_sas_sdk::rpc::RpcClient::new(rpc_url.clone());
-                    let client =
-                        soroban_sas_sdk::client::SASClient::new(registry_contract_id.clone());
+                    let client = sdk_client(registry_contract_id.clone(), hardware)?;
                     let treasury = client
                         .get_schema_treasury(&rpc, &registry_contract_id)
                         .map_err(|e| e.to_string())?;
@@ -2989,6 +3572,13 @@ fn run_offchain(
     identity: Option<String>,
     hardware: Option<hardware::HardwareWallet>,
 ) -> Result<(), String> {
+    if let Some(wallet) = hardware {
+        return Err(format!(
+            "{}: Ledger cannot sign arbitrary off-chain payloads",
+            wallet.kind_name()
+        ));
+    }
+
     match action {
         OffchainCommands::Sign {
             data_file,
@@ -3004,7 +3594,7 @@ fn run_offchain(
             let raw = io_safety::read_bounded(&data_file, io_safety::MAX_INPUT_FILE_BYTES)?;
             let input: offchain::AttestationInput =
                 serde_json::from_str(&raw).map_err(|e| format!("invalid attestation JSON: {e}"))?;
-            let seed = offchain::parse_secret_seed(&secret_key)?;
+            let seed = signer_seed(&secret_key, hardware)?;
             let signed = offchain::sign_offchain_attestation(
                 input,
                 nonce,

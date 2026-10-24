@@ -10,6 +10,50 @@ mod tests {
     };
 
     #[test]
+    fn ledger_flags_are_available_to_attestation_signing_commands() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "--ledger",
+            "--bip44-path",
+            "m/44'/148'/2'",
+            "attest",
+            "attest",
+            "--schema-uid",
+            &hex::encode([2u8; 32]),
+            "--recipient",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--contract-id",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ])
+        .unwrap();
+        assert!(cli.ledger);
+        assert_eq!(cli.bip44_path, "m/44'/148'/2'");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Attest {
+                action: AttestCommands::Attest { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn hardware_mode_cannot_fall_back_to_a_software_key() {
+        let device = crate::hardware::HardwareWallet {
+            kind: crate::hardware::HardwareWalletKind::Ledger,
+            account: 2,
+        };
+        assert!(
+            crate::resolve_secret_key(Some("software-key".into()), None, Some(device)).is_err()
+        );
+        assert!(crate::resolve_secret_key(None, Some("bob"), Some(device)).is_err());
+        let marker = crate::resolve_secret_key(None, None, Some(device)).unwrap();
+        assert_eq!(
+            crate::signer_seed(&marker, Some(device)).unwrap(),
+            [0u8; 32]
+        );
+    }
+
+    #[test]
     fn test_cli_snapshot_formatting() {
         assert_eq!(1, 1);
     }
@@ -1818,5 +1862,270 @@ mod pagination_query_tests {
         let mut lines = canned_lines(&["name string", ""]);
         let err = crate::build_schema_interactively(&mut lines).unwrap_err();
         assert_eq!(err, "unexpected end of input");
+    }
+}
+
+/// Issue #469: `schema wizard` validation, the piped (non-TTY) fallback,
+/// and submission confirmation.
+#[cfg(test)]
+mod wizard_tests {
+    use clap::Parser;
+
+    use crate::{wizard, Cli, Commands, SchemaCommands};
+
+    // -----------------------------------------------------------------------
+    // `schema wizard` (#469)
+    // -----------------------------------------------------------------------
+
+    /// A syntactically valid `C...` contract strkey: the wizard refuses any
+    /// resolver that is not one.
+    const WIZARD_RESOLVER: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+
+    /// Canned line-by-line stdin answers for the piped fallback.
+    fn canned_lines(answers: &[&str]) -> impl Iterator<Item = std::io::Result<String>> {
+        answers
+            .iter()
+            .map(|s| Ok(s.to_string()))
+            .collect::<std::vec::Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn wizard_validate_name_accepts_labels_and_rejects_bad_ones() {
+        assert!(wizard::validate_name("KYC Proof v1").is_ok());
+        assert!(wizard::validate_name("  KYC  ").is_ok());
+        assert!(wizard::validate_name("").is_err());
+        assert!(wizard::validate_name("   ").is_err());
+        let too_long = "n".repeat(65);
+        assert!(wizard::validate_name(&too_long)
+            .unwrap_err()
+            .contains("64-byte limit"));
+        assert!(wizard::validate_name("bad\u{7}name")
+            .unwrap_err()
+            .contains("control characters"));
+    }
+
+    #[test]
+    fn wizard_validate_field_applies_syntax_and_contract_limits() {
+        assert!(wizard::validate_field("bool verified").is_ok());
+        assert!(wizard::validate_field("  string full_name  ").is_ok());
+        assert!(wizard::validate_field("").is_err());
+        assert!(wizard::validate_field("   ").is_err());
+        // `validate_schema_syntax` rejects multiple spaces.
+        assert!(wizard::validate_field("bool   verified").is_err());
+        // Missing type.
+        assert!(wizard::validate_field("verified").is_err());
+        // Contract-enforced caps: max 64 bytes for the whole field.
+        let too_long_field = format!("{} string", "a".repeat(60));
+        assert!(wizard::validate_field(&too_long_field)
+            .unwrap_err()
+            .contains("64-byte limit"));
+        // Max 32 bytes for the identifier.
+        let too_long_ident = format!("{} string", "a".repeat(33));
+        assert!(wizard::validate_field(&too_long_ident)
+            .unwrap_err()
+            .contains("32-byte limit"));
+        // Max 32 bytes for the type.
+        let too_long_type = format!("flag {}", "a".repeat(33));
+        assert!(wizard::validate_field(&too_long_type)
+            .unwrap_err()
+            .contains("32-byte limit"));
+    }
+
+    #[test]
+    fn wizard_validate_resolver_accepts_contracts_and_defaults() {
+        assert_eq!(
+            wizard::validate_resolver(WIZARD_RESOLVER, None).unwrap(),
+            WIZARD_RESOLVER
+        );
+        // A blank answer falls back to the configured default …
+        assert_eq!(
+            wizard::validate_resolver("", Some(WIZARD_RESOLVER)).unwrap(),
+            WIZARD_RESOLVER
+        );
+        // … but without one the resolver is required, since it is part of
+        // the schema's on-chain identity.
+        assert!(wizard::validate_resolver("", None)
+            .unwrap_err()
+            .contains("resolver is required"));
+        // Accounts (G...) and garbage are both rejected.
+        assert!(wizard::validate_resolver(
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            None
+        )
+        .is_err());
+        assert!(wizard::validate_resolver("not-an-address", None).is_err());
+    }
+
+    #[test]
+    fn wizard_validate_revocable_parses_yes_and_no() {
+        assert!(wizard::validate_revocable("y").unwrap());
+        assert!(wizard::validate_revocable(" YES ").unwrap());
+        assert!(!wizard::validate_revocable("N").unwrap());
+        assert!(!wizard::validate_revocable("no").unwrap());
+        assert!(wizard::validate_revocable("maybe").is_err());
+        assert!(wizard::validate_revocable("").is_err());
+    }
+
+    #[test]
+    fn wizard_validate_metadata_uri_accepts_known_schemes_only() {
+        assert_eq!(wizard::validate_metadata_uri("").unwrap(), None);
+        assert_eq!(
+            wizard::validate_metadata_uri("  ipfs://bafy/meta.json  ").unwrap(),
+            Some("ipfs://bafy/meta.json".to_string())
+        );
+        assert!(wizard::validate_metadata_uri("ar://abc123").is_ok());
+        assert!(wizard::validate_metadata_uri("https://example.com/schema.json").is_ok());
+        assert!(wizard::validate_metadata_uri("http://example.com/s").is_ok());
+        assert!(wizard::validate_metadata_uri("ftp://example.com/s")
+            .unwrap_err()
+            .contains("ipfs://"));
+        assert!(wizard::validate_metadata_uri("just some text").is_err());
+        assert!(wizard::validate_metadata_uri("https://")
+            .unwrap_err()
+            .contains("path"));
+        assert!(wizard::validate_metadata_uri("ipfs://a b").is_err());
+        let too_long = format!("ipfs://{}", "a".repeat(512));
+        assert!(wizard::validate_metadata_uri(&too_long)
+            .unwrap_err()
+            .contains("512-byte limit"));
+    }
+
+    #[test]
+    fn wizard_collect_piped_happy_path() {
+        let mut lines = canned_lines(&[
+            "KYC Proof v1",
+            "bool verified",
+            "string full_name",
+            "",
+            "y",
+            WIZARD_RESOLVER,
+            "ipfs://bafy/meta.json",
+        ]);
+        let answers = wizard::collect(wizard::Mode::Piped, &mut lines, None).unwrap();
+        assert_eq!(
+            answers,
+            wizard::WizardAnswers {
+                name: "KYC Proof v1".to_string(),
+                schema: "bool verified, string full_name".to_string(),
+                resolver: WIZARD_RESOLVER.to_string(),
+                revocable: true,
+                metadata_uri: Some("ipfs://bafy/meta.json".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn wizard_collect_piped_retries_every_invalid_answer() {
+        let mut lines = canned_lines(&[
+            "",    // name: empty -> re-prompt
+            "   ", // name: whitespace -> re-prompt
+            "KYC Proof v1",
+            "verified", // field: no type -> re-prompt
+            "bool verified",
+            "",      // blank line finishes the field list
+            "maybe", // revocable: not y/n -> re-prompt
+            "n",
+            "not-an-address", // resolver: not a contract -> re-prompt
+            WIZARD_RESOLVER,
+            "ftp://x", // metadata: unknown scheme -> re-prompt
+            "",
+        ]);
+        let answers = wizard::collect(wizard::Mode::Piped, &mut lines, None).unwrap();
+        assert_eq!(answers.name, "KYC Proof v1");
+        assert_eq!(answers.schema, "bool verified");
+        assert!(!answers.revocable);
+        assert_eq!(answers.resolver, WIZARD_RESOLVER);
+        assert_eq!(answers.metadata_uri, None);
+    }
+
+    #[test]
+    fn wizard_collect_piped_requires_a_resolver_without_a_default() {
+        let mut lines = canned_lines(&["KYC", "bool verified", "", "y", "", ""]);
+        let err = wizard::collect(wizard::Mode::Piped, &mut lines, None).unwrap_err();
+        assert!(err.contains("unexpected end of input"), "{err}");
+    }
+
+    #[test]
+    fn wizard_collect_piped_uses_the_default_resolver_for_a_blank_answer() {
+        let mut lines = canned_lines(&["KYC", "bool verified", "", "y", "", ""]);
+        let answers =
+            wizard::collect(wizard::Mode::Piped, &mut lines, Some(WIZARD_RESOLVER)).unwrap();
+        assert_eq!(answers.resolver, WIZARD_RESOLVER);
+        assert_eq!(answers.metadata_uri, None);
+    }
+
+    #[test]
+    fn wizard_collect_piped_requires_at_least_one_field() {
+        let mut lines = canned_lines(&["KYC", "", "bool verified", "", "n", WIZARD_RESOLVER, ""]);
+        let answers = wizard::collect(wizard::Mode::Piped, &mut lines, None).unwrap();
+        assert_eq!(answers.schema, "bool verified");
+    }
+
+    #[test]
+    fn wizard_collect_piped_caps_the_field_count() {
+        // One field over `MAX_SCHEMA_FIELDS` (64): the 65th is rejected at
+        // the prompt, and the blank line then finishes with 64 fields.
+        let mut answers_input = vec!["KYC".to_string()];
+        for index in 0..65u32 {
+            answers_input.push(format!("f{index} string"));
+        }
+        answers_input.push(String::new());
+        answers_input.push("n".to_string());
+        answers_input.push(WIZARD_RESOLVER.to_string());
+        answers_input.push(String::new());
+        let refs: Vec<&str> = answers_input.iter().map(String::as_str).collect();
+        let mut lines = canned_lines(&refs);
+        let answers = wizard::collect(wizard::Mode::Piped, &mut lines, None).unwrap();
+        assert_eq!(answers.schema.split(", ").count(), 64);
+    }
+
+    #[test]
+    fn wizard_collect_piped_fails_on_unexpected_eof() {
+        let mut lines = canned_lines(&["KYC Proof v1"]);
+        let err = wizard::collect(wizard::Mode::Piped, &mut lines, None).unwrap_err();
+        assert_eq!(err, "unexpected end of input");
+    }
+
+    #[test]
+    fn wizard_confirm_piped_accepts_yes_and_defaults_to_no() {
+        let mut yes = canned_lines(&["y"]);
+        assert!(wizard::confirm(wizard::Mode::Piped, &mut yes).unwrap());
+        let mut yes_spelled = canned_lines(&["YES"]);
+        assert!(wizard::confirm(wizard::Mode::Piped, &mut yes_spelled).unwrap());
+        let mut no = canned_lines(&["n"]);
+        assert!(!wizard::confirm(wizard::Mode::Piped, &mut no).unwrap());
+        let mut enter = canned_lines(&[""]);
+        assert!(!wizard::confirm(wizard::Mode::Piped, &mut enter).unwrap());
+        let mut retried = canned_lines(&["maybe", "y"]);
+        assert!(wizard::confirm(wizard::Mode::Piped, &mut retried).unwrap());
+    }
+
+    #[test]
+    fn wizard_confirm_piped_fails_on_unexpected_eof() {
+        let mut lines = canned_lines(&[]);
+        let err = wizard::confirm(wizard::Mode::Piped, &mut lines).unwrap_err();
+        assert_eq!(err, "unexpected end of input");
+    }
+
+    #[test]
+    fn wizard_subcommand_is_reachable_from_the_cli_parser() {
+        let cli = Cli::try_parse_from([
+            "soroban-sas",
+            "schema",
+            "wizard",
+            "--registry-contract-id",
+            WIZARD_RESOLVER,
+            "--resolver",
+            WIZARD_RESOLVER,
+        ])
+        .unwrap();
+        let Some(Commands::Schema {
+            action: SchemaCommands::Wizard { resolver, .. },
+        }) = cli.command
+        else {
+            panic!("expected the schema wizard subcommand");
+        };
+        assert_eq!(resolver.as_deref(), Some(WIZARD_RESOLVER));
     }
 }

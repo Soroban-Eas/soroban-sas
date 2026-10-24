@@ -1,0 +1,15 @@
+[package]
+name = "blacklist-resolver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+soroban-sas-common = { path = "../../packages/soroban-sas-common" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]

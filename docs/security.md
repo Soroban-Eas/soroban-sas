@@ -83,6 +83,10 @@ the SAS contract invokes `on_attest` before writing a new attestation, and
 - A malicious or buggy resolver is a schema-level risk, not a protocol-level
   one: it can only affect attestations issued under schemas that explicitly
   named it.
+- A resolver (or indexer) cannot re-enter SAS from its callback: the host
+  refuses the nested call, and a refused attempt changes nothing. Verified for
+  every mutating entrypoint in
+  [reentrancy-verification.md](reentrancy-verification.md).
 
 ## Token Custody
 
@@ -170,4 +174,3 @@ signing/hashing scheme.
 ## Vulnerability Disclosure and Reporting
 
 For instructions on reporting security vulnerabilities, response SLAs, disclosure guidelines, and safe harbor terms, refer to our comprehensive [Security Policy and Vulnerability Disclosure Policy](../SECURITY.md).
-

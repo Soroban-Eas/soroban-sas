@@ -64,6 +64,7 @@ The workspace has evolved beyond initial mocks and now includes comprehensive do
   - Maintains mappings from recipient addresses to their respective attestations.
   - Maintains mappings from schemas to all associated attestations.
   - Supports newest-first cursor pages for recipient, schema, and attester history.
+  - Answers whether a UID has been indexed with one direct record read (`is_attestation_indexed`), without walking chunks.
 
 - `contracts/cross-chain-verifier`
   **Role**: Verifies remote attestation status updates authenticated by an Axelar GMP gateway.
@@ -190,9 +191,9 @@ Precedence (explicit flag > environment variable > TOML default > built-in netwo
 
 ## Delegated Issuance
 
-Delegated issuance and revocation let an attester sign an operation off-chain
+Delegated issuance, revocation, and consented replacement let parties sign an operation off-chain
 while a separate relayer submits and pays for the transaction. See
-[Delegated Issuance and Revocation](docs/delegation.md) for the typed-data
+[Delegated Issuance and Replacement](docs/delegation.md) for the typed-data
 domain, nonce high-watermark rules, key rotation behavior, CLI commands, and
 SDK workflow.
 
