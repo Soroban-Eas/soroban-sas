@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-prometheus = { version = "0.13", default-features = false }
+prometheus = { version = "0.14", default-features = false }
 hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 soroban-sas-sdk = { path = "../../packages/soroban-sas-sdk" }
