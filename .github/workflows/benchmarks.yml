@@ -1,0 +1,99 @@
+name: Criterion benchmark regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'benches/**'
+      - 'contracts/**'
+      - 'packages/soroban-sas-common/**'
+      - 'packages/soroban-sas-sdk/**'
+      - '.github/workflows/benchmarks.yml'
+      - 'scripts/compare_benchmarks.py'
+  schedule:
+    - cron: '21 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      REGRESSION_THRESHOLD: '10'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.83.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Run current benchmarks
+        run: cargo bench --bench hashing_benchmark --bench attestations_benchmark -- --save-baseline candidate
+      - name: Capture measurements
+        run: |
+          mkdir -p /tmp/candidate-criterion
+          cp -a target/criterion/. /tmp/candidate-criterion/
+      - name: Run matching base revision
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add --detach /tmp/sas-baseline "$BASE_SHA"
+          cd /tmp/sas-baseline
+          cargo bench --bench hashing_benchmark --bench attestations_benchmark -- --save-baseline base
+      - name: Compare candidate against base
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 scripts/compare_benchmarks.py /tmp/sas-baseline/target/criterion /tmp/candidate-criterion --threshold "$REGRESSION_THRESHOLD" --output benchmark-report.md
+          cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive nightly benchmark data
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-criterion-${{ github.run_id }}
+          path: target/criterion/**/candidate/estimates.json
+          retention-days: 90
+      - name: Upload PR comparison
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison
+          path: benchmark-report.md
+          if-no-files-found: ignore
+
+  comment:
+    if: github.event_name == 'pull_request' && always() && github.event.pull_request.head.repo.full_name == github.repository
+    needs: compare
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: benchmark-comparison
+          path: .
+      - name: Post or update regression report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          marker='<!-- sas-criterion-regression -->'
+          body=marker+'\n'+open('benchmark-report.md',encoding='utf-8').read()
+          repo=os.environ['REPO']; pr=os.environ['PR_NUMBER']
+          comments=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/issues/{pr}/comments']))
+          existing=next((c for c in comments if marker in c.get('body','') and c.get('user',{}).get('type')=='Bot'),None)
+          if existing:
+              subprocess.run(['gh','api','-X','PATCH',f'repos/{repo}/issues/comments/{existing["id"]}','-f',f'body={body}'],check=True)
+          else:
+              subprocess.run(['gh','api','-X','POST',f'repos/{repo}/issues/{pr}/comments','-f',f'body={body}'],check=True)
+          PY

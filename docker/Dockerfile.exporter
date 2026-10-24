@@ -1,0 +1,11 @@
+FROM rust:1.83-alpine AS builder
+RUN apk add --no-cache musl-dev build-base
+WORKDIR /app
+COPY . .
+RUN cargo build --locked --release -p soroban-sas-prometheus-exporter --target $(rustc -vV | sed -n 's/^host: //p') && \
+    install -Dm755 target/$(rustc -vV | sed -n 's/^host: //p')/release/soroban-sas-prometheus-exporter /output/exporter
+
+FROM scratch
+COPY --from=builder /output/exporter /usr/local/bin/soroban-sas-exporter
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/soroban-sas-exporter"]
