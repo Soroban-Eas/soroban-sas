@@ -27,7 +27,7 @@ stellar-strkey = "0.0.8"
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 # Deterministic transaction hashes for the end-to-end RPC host (#469).
-sha2 = "0.10"
+sha2 = "0.11"
 # Mock network client for unit testing the SDK (#333).
 soroban-sas-sdk = { path = "../soroban-sas-sdk", features = ["testutils"] }
 # Real contracts hosted in-process by the CLI end-to-end tests (#332).
