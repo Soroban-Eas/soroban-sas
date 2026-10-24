@@ -145,6 +145,28 @@ pub fn publish_batch_revoked(env: &Env, count: u32, attester_count: u32) {
     );
 }
 
+/// Publishes the `SchemaRevoked` summary event marking the end of a
+/// successful `revoke_by_schema` call, after every per-item
+/// `AttestationRevoked` event for the batch. See `publish_batch_attested`
+/// for the shared ordering/failure-path guarantees.
+///
+/// Topics: `(SCHEMA_REVOKED, schema_uid, authorizer)`.
+pub fn publish_schema_revoked(
+    env: &Env,
+    schema_uid: &UID,
+    authorizer: &Address,
+    count: u32,
+) {
+    env.events().publish(
+        (SCHEMA_REVOKED, schema_uid.clone(), authorizer.clone()),
+        SchemaRevokedEvent {
+            schema_uid: schema_uid.clone(),
+            authorizer: authorizer.clone(),
+            count,
+        },
+    );
+}
+
 pub fn publish_withdrawal(
     env: &Env,
     token: &Address,

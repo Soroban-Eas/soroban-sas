@@ -60,6 +60,10 @@ pub const MAX_MULTI_ATTEST: u32 = soroban_sas_common::MAX_MULTI_ATTEST;
 /// `MAX_MULTI_ATTEST` so the loop cannot exhaust the Soroban budget and
 /// callers get a predictable `BatchTooLarge` error up front.
 pub const MAX_MULTI_REVOKE: u32 = 100;
+/// Maximum number of UIDs in one `revoke_by_schema` invocation. Bounded like
+/// `MAX_MULTI_REVOKE` so the loop cannot exhaust the Soroban budget and
+/// callers get a predictable `BatchTooLarge` error up front.
+pub const MAX_REVOKE_BY_SCHEMA: u32 = 100;
 /// Ceiling on how many UIDs one `verify_attestations` /
 /// `verify_all_attestations` call may check. Verification is a read (plus TTL
 /// renewal), but the bound keeps the worst-case cost of a single invocation
@@ -1709,6 +1713,99 @@ impl SAS {
         // the whole batch committed: a panic anywhere above reverts the
         // call and this never runs.
         events::publish_batch_revoked(&env, to_revoke.len(), distinct.len());
+    }
+
+    /// Revokes up to `MAX_REVOKE_BY_SCHEMA` attestations belonging to
+    /// `schema_uid` in one atomic call, authorized by the schema owner or an
+    /// authorized delegate of that schema.
+    ///
+    /// Intended for administrative recovery when a schema definition is
+    /// discovered to be faulty or an issuer key is compromised: revoking
+    /// thousands of attestations one by one is cost-prohibitive, so the schema
+    /// authority can bulk-revoke them here.
+    ///
+    /// The whole batch is validated before any state is written:
+    /// - `uids` must not exceed `MAX_REVOKE_BY_SCHEMA` (`BatchTooLarge`).
+    /// - Duplicate UIDs are rejected (`DuplicateAttestation`).
+    /// - Every UID must exist (`AttestationNotFound`), belong to
+    ///   `schema_uid` (`InvalidSchema`), be revocable (`NotRevocable`), and
+    ///   not already be revoked (`AlreadyRevoked`).
+    ///
+    /// `authorizer` must authorize the call and be either the schema owner or
+    /// an authorized delegate in the registry allow-list (`Unauthorized`
+    /// otherwise). Because a Soroban invocation is atomic, a failure on any
+    /// item reverts the whole batch — no partially revoked set.
+    pub fn revoke_by_schema(
+        env: Env,
+        schema_uid: UID,
+        uids: soroban_sdk::Vec<UID>,
+        authorizer: Address,
+    ) {
+        if is_paused_status(&env) {
+            panic_with_error!(&env, SASError::ContractPaused);
+        }
+        extend_instance_ttl(&env);
+
+        let len = uids.len();
+        if len > MAX_REVOKE_BY_SCHEMA {
+            panic_with_error!(&env, SASError::BatchTooLarge);
+        }
+
+        authorizer.require_auth();
+
+        // Verify the authorizer is the schema owner or an authorized delegate.
+        let registry = require_registry(&env);
+        let is_auth: bool = match env.try_invoke_contract::<bool, soroban_sdk::Error>(
+            &registry,
+            &Symbol::new(&env, "is_authorized"),
+            soroban_sdk::vec![
+                &env,
+                schema_uid.clone().into_val(&env),
+                authorizer.clone().into_val(&env),
+            ],
+        ) {
+            Ok(Ok(auth)) => auth,
+            _ => false,
+        };
+        if !is_auth {
+            panic_with_error!(&env, SASError::Unauthorized);
+        }
+
+        // Pass 1: validate every item before any state is written, so an
+        // invalid item cannot leave a half-applied batch.
+        let mut seen: soroban_sdk::Map<UID, bool> = soroban_sdk::Map::new(&env);
+        let mut to_revoke: soroban_sdk::Vec<UID> = soroban_sdk::Vec::new(&env);
+        for uid in uids.iter() {
+            if seen.contains_key(uid.clone()) {
+                panic_with_error!(&env, SASError::DuplicateAttestation);
+            }
+            seen.set(uid.clone(), true);
+
+            let Some(attestation) = read_attestation(&env, &uid) else {
+                panic_with_error!(&env, SASError::AttestationNotFound);
+            };
+            if attestation.schema_uid != schema_uid {
+                panic_with_error!(&env, SASError::InvalidSchema);
+            }
+            if !attestation.revocable {
+                panic_with_error!(&env, SASError::NotRevocable);
+            }
+            if attestation.revocation_time != 0 {
+                panic_with_error!(&env, SASError::AlreadyRevoked);
+            }
+            to_revoke.push_back(uid);
+        }
+
+        // Pass 2: commit. `revoke_internal` re-reads each record, writes the
+        // revocation, emits the per-item event, and notifies the indexer.
+        for uid in to_revoke.iter() {
+            Self::revoke_internal(env.clone(), uid);
+        }
+
+        // Summary event, emitted last so consumers see every per-item
+        // AttestationRevoked event first. Reaching this line means the whole
+        // batch committed.
+        events::publish_batch_revoked(&env, to_revoke.len(), 1);
     }
 
     /// Registers the ed25519 public key that backs `attester`'s Stellar
