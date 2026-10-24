@@ -337,6 +337,9 @@ TMPDIR=/tmp cargo test --workspace
 - [Getting Started for DApp Developers](docs/getting-started.md): schema
   design, resolvers, issuance rules, off-chain and on-chain verification,
   indexer queries, and a security checklist.
+- [KYC/AML Verifiable Credential Attestation](docs/guides/kyc-aml-attestation.md):
+  end-to-end schema registration, backend issuance, frontend verification,
+  and privacy guidance for KYC/AML claims.
 - [Local Development Environment](docs/local-development.md): toolchain,
   build and test, git hooks, local network, local deployment, and
   troubleshooting.
