@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stellar Smart Wallet Passkey Attester</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+  body { margin: 0; padding: 24px; line-height: 1.5; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.5em; }
+  fieldset { border: 1px solid #ccc; border-radius: 8px; margin: 0 0 16px; padding: 12px; }
+  label { display: block; margin: 8px 0 4px; font-weight: 600; }
+  input, textarea { width: 100%; box-sizing: border-box; padding: 8px; font-family: ui-monospace, monospace; font-size: 0.85em; }
+  textarea { min-height: 120px; resize: vertical; }
+  button { padding: 10px 16px; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; cursor: pointer; font-size: 0.95em; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: inherit; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  #status { min-height: 1.5em; padding: 8px; border-radius: 6px; background: #111; color: #eee; font-family: ui-monospace, monospace; font-size: 0.85em; white-space: pre-wrap; }
+  #status.error { background: #3a1010; color: #ffcdcd; }
+  #status.ok { background: #103a10; color: #cdffcd; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Stellar Smart Wallet Passkey Attester</h1>
+  <p>
+    Create a WebAuthn (Secp256r1) passkey, sign a delegated SAS attestation payload,
+    and produce the Soroban-compatible signature structure (<code>clientDataJSON</code>,
+    <code>authenticatorData</code>, and <code>signature</code>).
+  </p>
+
+  <fieldset>
+    <legend><b>1> Passkey credential</b></legend>
+    <label for="rpId">Relying Party ID (rpId)</label>
+    <input id="rpId" autocomplete="off" />
+    <label for="rpName">Relying Party Name</label>
+    <input id="rpName" autocomplete="off" />
+    <label for="userName">User Name</label>
+    <input id="userName" autocomplete="off" />
+    <div class="row">
+      <button id="createBtn">Create passkey</button>
+      <button id="loadBtn" class="secondary">Load existing passkey</button>
+    </div>
+    <label for="credentialId">Credential ID (<code>base64url</code> of raw id</code>)</label>
+    <textarea id="credentialId" readonly></textarea>
+    <label for="publicKey">Public Key (<code>base64url</code>, uncompressed SecP256r1)</label>
+    <textarea id="publicKey" readonly></textarea>
+  </fieldset>
+
+  <fieldset>
+    <legend><b>2> Delegated attestation payload</b></legend>
+    <p style="margin-top:0;font-size:0.9em">
+      Paste the SAS attestation payload (JSON) that the smart wallet will verify. The exact
+      bytes of this string are hashed and signed. Keep the same bytes when submitting on-chain.
+    </p>
+    <label for="payload">Payload</label>
+    <textarea id="payload"></textarea>
+    <div class="row">
+      <button id="signBtn">Sign attestation with passkey</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend><b>3> Soroban-signature structure</b></legend>
+    <label for="output">Signature bundle (JSON)</label>
+    <textarea id="output" readonly></textarea>
+    <div class="row">
+      <button id="copyBtn" class="secondary">Copy JSON</button>
+      <button id="copyBase64Btn" class="secondary">Copy base64 blob</button>
+    </div>
+  </fieldset>
+
+  <div id="status" role="status" aria-live="polite">Ready.</div>
+</main>
+
+<script type="module">
+// ***************************************************************************************************
+// Byte helpers
+// ****************************************************************************************************
+const enc = new TextEncoder();
+
+function utf8(s) { return enc.encode(s); }
+
+function b64u(bytes) {
+  let bin = '';
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.byteLength; i++) {
+    bin += String.fromCharCode(arr[i]);
+  }
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64uDecode(str) {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (str.length % 4)) % 4);
+  const bin = atob(padded);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function b64(bytes) {
+  let bin = '';
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.byteLength; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin);
+}
+
+function concat(...arrays) {
+  const total = arrays.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a  of arrays) { out.set(a, off); off += a.length; }
+  return out;
+}
+
+function hex(bytes) {
+  return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ****************************************************************************************************
+// SHA-256 (crypto.subtle is available in secure contexts: https://, localhost)
+// ***************************************************************************************************
+async function sha256(bytes) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return new Uint8Array(digest);
+}
+
+// ***************************************************************************************************
+// Status UI
+// ***************************************************************************************************
+const statusEl = document.getElementById('status');
+function setStatus(msg, kind) {
+  statusEl.textContent = msg;
+  statusEl.className = kind || '';
+}
+
+// ***************************************************************************************************
+// DOM bindings
+// ****************************************************************************************************
+const $ = (id) => document.getElementById(id);
+const rpIdInp = $('rpId');
+const rpNameInp = $('rpName');
+const userNameInp = $('userName');
+const credentialIdEl = $('credentialId');
+const publicKeyEl = $('publicKey');
+const payloadEl = $('payload');
+const outputEl = $('output');
+
+// Default to the current origin's host as the relying party ID.
+// WebAuthn requires rpId to be a registrable domain suffix of the origin.
+rpIdInp.value = location.hostname;
+rpNameInp.value = 'Stellar Smart Wallet';
+userNameInp.value = 'smart-wallet-user';
+
+// ***************************************************************************************************
+// Passkey creation / loading
+// ****************************************************************************************************
+function randomBytes(n) {
+  const b = new Uint8Array(n);
+  crypto.getRandomValues(b);
+  return b;
+}
+
+function publicKeyToUnsecompressedSecP256r1(cos) {
+  // COSE key for ES256 (alg -19) contains the raw X(and Y), either 32 or 64 bytes.
+  // WebAuthn returns the raw public key from the authenticator.
+  // Soroban verifiers expect the uncompressed SECP1 encoding: 0x04 || X || Y.
+  if (cos.length === 65 && cos[0] === 0x04) return cos;
+  if (cos.length === 64) return concat(new Uint8Array([0x04]), cos);
+  throw new Error(`Unsupported COSE public key length ${cos.length}; expected 64 bytes raw or 65 bytes uncompressed.`);
+}
+
+async function createPasskey() {
+  if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
+  const rpId = rpIdInp.value.trim();
+  const rpName = rpNameInp.value.trim() || rpId;
+  const userName = userNameInp.value.trim() || 'smart-wallet-user';
+  if (!rpId) throw new Error('rpId is required.');
+
+  const userId = randomBytes(32);
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      challenge: randomBytes(32),
+      rp: { id: rpId, name: rpName },
+      user: { id: userId, name: userName, displayName: userName },
+      pubKeyCredParams: [{ type: 'public-key', alg: -19 }], // ES 256 (Secp256r1)
+      authenticatorSelection: { authenticatorAttachment: 'platform' },
+      residentKey: 'required',
+      userVerification: 'preferred',
+      attestation: 'none',
+      timeout: 60000,
+    },
+  });
+
+  const pk = credential.response.getPublicKey();
+  if (!pk) throw new Error('Authenticator did not return a public key.');
+  const cosKey = new Uint8Array(pk);
+  const uncompressed = publicKeyToUnsecompressedSecP256r1(cosKey);
+
+  credentialIdEl.value = b64u(credential.raw);
+  publicKeyEl.value = b64u(uncompressed);
+  setStatus(`Passkey created.\ncredentialId: ${credentialIdEl.value}\npublicKey (uncompressed): ${publicKeyEl.value}`, 'ok');
+}
+
+async function loadPasskey() {
+  if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
+  const rpId = rpIdInp.value.trim();
+  if (!rpId) throw new Error('rpId is required.');
+
+  // getCredentials with an empty allowList prompts the user to pick an existing passkey.
+  // We then request a signature to retrieve the authenticator data (contains the public key).
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: randomBytes(32),
+      rpId,
+      userVerification: 'preferred',
+      timeout: 60000,
+    },
+  });
+
+  const authData = new Uint8Array(assertion.response.authenticatorData);
+  const publicKey = extractPublicKeyFromAuthData(authData);
+  credentialIdEl.value = b64u(assertion.raw);
+  publicKeyEl.value = b64u(publicKey);
+  setStatus(`Passkey loaded.\ncredentialId: ${credentialIdEl.value}\npublicKey (uncompressed): ${publicKeyEl.value}`, 'ok');
+}
+
+// ****************************************************************************************************
+// Authenticator data parsing
+// ***************************************************************************************************
+// Layout (WebAuthn Level 2):
+//   rpIdHash        32 bytes (SHA-256 of relying party ID)
+//   flags            1 byte
+//   signCount        4 bytes (big-endian)
+//   attested credentialData (if AT=flag set):
+//     aaguid         16 bytes
+//     credentialIdLength 2 bytes (big-endian)
+//     credentialId      credentialIdLength bytes
+//     credentialPublicKey  COSE encoded public key
+//   extensions (if ED=flag set)
+function extractPublicKeyFromAuthData(authData) {
+  if (authData.length < 37) throw new Error('authenticatorData too short');
+  const flags = authData[32];
+  const AT_FLAG = 0x40;
+  if (!(flags & AT_FLAG)) throw new Error('authenticatorData does not contain attested credential data');
+  let off = 37 + 16; // rpIdHash + flags + signCount + aaguid
+  const credIdLen = (authData[off] << 8) | authData[off + 1];
+  off += 2 + credIdLen;
+  const cosKey = authData.slice(off);
+  return publicKeyToUnsecompressedSecP256r1(cosKey);
+}
+
+// ***************************************************************************************************
+// Signing
+// ***************************************************************************************************
+// Soroban verifiers check the WebAuthn signature over the SHA-256 of the payload.
+// The challenge is the 32-byte digest of the attestation payload bytes.
+async function signAttestation() {
+  if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
+  const rpId = rpIdInp.value.trim();
+  const credIdB64u = credentialIdEl.value.trim();
+  const payload = payloadEl.value;
+  if (!rpId) throw new Error('rpId is required.');
+  if (!credIdB64u) throw new Error('Create or load a passkey first.');
+  if (!payload) throw new Error('Attestation payload is required.');
+
+  const payloadBytes = utf8(payload);
+  const challenge = await sha256(payloadBytes);
+
+  const credId = b64uDecode(credIdB64u);
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      rpId,
+      allowCredentials: [{ type: 'public-key', id: credId }],
+      userVerification: 'preferred',
+      timeout: 60000,
+    },
+  });
+
+  const response = assertion.response;
+  const clientDataJSON = new Uint8Array(response.clientDataJSON);
+  const authenticatorData = new Uint8Array(response.authenticatorData);
+  const signature = new Uint8Array(response.signature);
+
+  // Sanity check: the challenge in clientDataJSON must equal the SHA-256 of the payload.
+  const clientData = JSON.parse(new TextDecoder().decode(clientDataJSON));
+  if (clientData.type !== 'webauthn.get') {
+    throw new Error(`Unexpected clientData.type: ${clientData.type}`);
+  }
+  const expectedChallenge = b64u(challenge);
+  if (clientData.challenge !== expectedChallenge) {
+    throw new Error('clientDataJSON challenge does not match SHA-256(payload)');
+  }
+
+  // Soroban-signature structure for Secp256r1 / WebAuthn.
+  // The smart wallet contract verifies the WebAuthn signature over the clientDataJSON hash
+  // and authenticatorData, and binds the challenge to the attestation payload.
+  const bundle = {
+    type: 'WebAuthn1',
+    credentialId: credIdB64u,
+    publicKey: publicKeyEl.value.trim(),
+    payloadHash: b64u(challenge),
+    payloadBase64: b64(payloadBytes),
+    clientDataJSON: b64(clientDataJSON),
+    authenticatorData: b64(authenticatorData),
+    signature: b64(signature),
+    // Hex encodings are handy for contract calls that take bytes directly.
+    clientDataJSONHex: hex(clientDataJSON),
+    authenticatorDataHex: hex(authenticatorData),
+    signatureHex: hex(signature),
+  };
+
+  outputEl.value = JSON.stringify(bundle, null, 2);
+  setStatus('Signed successfully. Submit the signature bundle to your smart wallet contract.', 'ok');
+}
+
+// ****************************************************************************************************
+// Event wiring
+// ****************************************************************************************************
+function describeUnexpectedError(err) {
+  // Normalize DOMException codes into actionable messages.
+  if (err && typeof err.name === 'string') {
+    switch (err.name) {
+      case 'NotAllowedError':
+        return 'Passkey operation was blocked. Check that this page is served over https or localhost and that the user approved the prompt.';
+      case 'SecurityError':
+        return 'Security error: the relying party ID must match the current origin.';
+      case 'AbortError':
+        return 'Passkey operation was cancelled or timed out. Retry when ready.';
+      case 'InvalidStateError':
+        return 'The authenticator is in an invalid state. Remove the passkey and try again.';
+      case 'NotSupportedError':
+        return 'This authenticator does not support the requested algorithm (ES 256).';
+      case 'ConstraintError':
+        return 'The authenticator could not satisfy the requested constraints.';
+      default:
+        return `${err.name}: ${err.message || 'unknown error'}`;
+    }
+  }
+  return err && err.message ? err.message : String(err);
+}
+
+async function run(fn, label) {
+  try {
+    setStatus(`${label}...`);
+    await fn();
+  } catch (err) {
+    console.error(err);
+    setStatus(`${label} failed: ${describeUnexpectedError(err)}`, 'error');
+  }
+}
+
+$('createBtn').addEventListener('click', () => run(createPasskey, 'Creating passkey'));
+$('loadBtn').addEventListener('click', () => run(loadPasskey, 'Loading passkey'));
+$('signBtn').addEventListener('click', () => run(signAttestation, 'Signing attestation'));
+
+$('copyBtn').addEventListener('click', async () => {
+  if (!outputEl.value) return setStatus('Nothing to copy yet.', 'error');
+  try {
+    await navigator.clipboard.writeText(outputEl.value);
+    setStatus('Signature JSON copied to clipboard.', 'ok');
+  } catch (err) {
+    setStatus(`Copy failed: ${describeUnexpectedError(err)}`, 'error');
+  }
+});
+
+$('copyBase64Btn').addEventListener('click', async () => {
+  if (!outputEl.value) return setStatus('Nothing to copy yet.', 'error');
+  try {
+    const bundle = JSON.parse(outputEl.value);
+    // Soroban bytes are transported as base64 in JSON-based contract calls.
+    const blob = {
+      clientDataJSON: bundle.clientDataJSON,
+      authenticatorData: bundle.authenticatorData,
+      signature: bundle.signature,
+    };
+    await navigator.clipboard.writeText(JSON.stringify(blob, null, 2));
+    setStatus('Soroban base64 signature blob copied to clipboard.', 'ok');
+  } catch (err) {
+    setStatus(`Copy failed: ${describeUnexpectedError(err)}`, 'error');
+  }
+});
+
+// Surface configuration problems early so the demo is not confusingly broken.
+if (!isSecureContext()) {
+  setStatus('WebAuthn requires a secure context. Serve this page over https://localhost or https://your-domain.', 'error');
+} else if (!window.PublicKeyCredential) {
+  setStatus('WebAuthn is not available in this browser. Use a recent Chrome, Safari, Edge, or Firefox.', 'error');
+} else {
+  setStatus('Ready. Create or load a passkey, then sign the attestation payload.');
+}
+
+function isSecureContext() {
+  return window.isSecureContext === true || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+}
+</script>
+</body>
+</html>

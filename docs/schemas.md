@@ -164,6 +164,11 @@ This applies uniformly to every attestation issuance path — `attest`, `attest_
 
 A resolver's failure is a normal, typed contract error (`SASError::ResolverRejected`), the same class of outcome as `SASError::InvalidSchema` or `SASError::NotRevocable` — callers should expect and handle it, not treat it as exceptional. There is deliberately no separate "resolver failed" event: a panic discards any event the same call would have published — including, for revocation, the `AttestationRevoked` event published just before `on_revoke` runs — so the typed error returned to the caller is the only — and sufficient — signal.
 
+### Bundled Resolvers
+
+- `contracts/permissive-resolver` accepts every attestation and revocation. It exists so integration tests can point a schema at a resolver that enforces nothing; do not use it in production.
+- [`contracts/time-window-resolver`](time-window-resolver.md) enforces a configurable cooldown between attestations issued to the same recipient, rejecting issuance inside the window with `SASError::CooldownActive` (surfaced through SAS as `SASError::ResolverRejected`). It is the production example of a stateful, policy-enforcing resolver.
+
 ## Delegated Issuance and Schema Allow-lists (#7)
 
 To support DAOs, enterprise organizations, and multi-issuer systems without sharing private keys or registering duplicate schemas, schema owners can maintain a dynamic allow-list of authorized delegates.

@@ -113,3 +113,8 @@ path = "fuzz_targets/stateful_indexer_fuzz.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "indexer_stateful_fuzz"
+path = "fuzz_targets/indexer_stateful_fuzz.rs"
+test = false
+doc = false

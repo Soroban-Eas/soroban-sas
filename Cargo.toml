@@ -5,11 +5,18 @@ members = [
     "contracts/sas",
     "contracts/indexer",
     "packages/soroban-sas-sdk",
+    "packages/soroban-sas-schema-macro",
     "packages/soroban-sas-cli",
     "contracts/permissive-resolver",
-"tools/prometheus-exporter",
-"contracts/cross-chain-verifier",
-"contracts/zk-verifier",
+    "contracts/token-gated-resolver",
+    "contracts/multisig-resolver",
+    "contracts/endorsement-resolver",
+    "contracts/blacklist-resolver",
+    "contracts/time-window-resolver",
+    "tools/prometheus-exporter",
+    "contracts/cross-chain-verifier",
+    "contracts/zk-verifier",
+    "tools/sas-docgen",
 ]
 exclude = ["fuzz", "tools/gas-profiler"]
 resolver = "2"
@@ -28,6 +35,9 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 hex = "0.4"
 stellar-strkey = "0.0.8"
 ed25519-dalek = "2.0.0"
+serde_json = "1"
+sas = { path = "contracts/sas" }
+schema-registry = { path = "contracts/schema-registry" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
