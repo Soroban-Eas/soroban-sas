@@ -1626,6 +1626,348 @@ fn test_get_by_issuer_filtered_excludes_revoked() {
     assert_eq!(client.get_count_by_issuer(&issuer), 1);
 }
 
+/// `live_until_ledger` recorded for `contract`'s instance entry, read from
+/// the ledger snapshot the same way as [`chunk_live_until`].
+fn instance_live_until(env: &Env, contract: &Address) -> Option<u32> {
+    use soroban_sdk::xdr::{LedgerKey, ScAddress, ScVal};
+
+    let target = ScAddress::from(contract);
+    env.to_ledger_snapshot()
+        .ledger_entries
+        .iter()
+        .find_map(|(key, (_, live_until))| match &**key {
+            LedgerKey::ContractData(data)
+                if data.contract == target && data.key == ScVal::LedgerKeyContractInstance =>
+            {
+                *live_until
+            }
+            _ => None,
+        })
+}
+
+/// A UID made of `raw`.
+fn raw_uid(env: &Env, raw: [u8; 32]) -> UID {
+    UID(BytesN::from_array(env, &raw))
+}
+
+/// The UID `index_sequential` assigns to `position`: its big-endian bytes,
+/// then zeros.
+fn sequential_uid(env: &Env, position: u32) -> UID {
+    let mut raw = [0u8; 32];
+    raw[0..4].copy_from_slice(&position.to_be_bytes());
+    raw_uid(env, raw)
+}
+
+/// Whether `indexer` stores an `(INDEXED_KEY, uid)` record, read directly.
+fn has_index_record(env: &Env, indexer: &Address, uid: &UID) -> bool {
+    let record_key = (INDEXED_KEY, uid.clone());
+    env.as_contract(indexer, || env.storage().persistent().has(&record_key))
+}
+
+/// The per-ledger query counter in `indexer`'s instance storage, once a
+/// rate-limited read has set it.
+fn query_count(env: &Env, indexer: &Address) -> Option<u32> {
+    let key = QUERY_COUNTER_COUNT;
+    env.as_contract(indexer, || env.storage().instance().get(&key))
+}
+
+/// #542: `is_attestation_indexed` answers from the direct record across
+/// varied UID sets: attestations scattered over distinct recipients,
+/// schemas and attesters, one key's history rolling over into a second
+/// chunk, and UIDs that were never indexed, including near misses of
+/// indexed ones and schema UIDs, which only exist as chunk key prefixes.
+#[test]
+fn test_is_attestation_indexed_across_varied_uid_sets() {
+    let env = Env::new_with_config(soroban_sdk::testutils::EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+    // The 101-entry history below accumulates into one test budget.
+    env.budget().reset_unlimited();
+
+    // Scattered: each UID has its own recipient, schema and attester.
+    let mut scattered = alloc::vec::Vec::new();
+    for n in 1..=5u8 {
+        let uid = raw_uid(&env, [0xa0 | n; 32]);
+        let schema_uid = raw_uid(&env, [0xb0 | n; 32]);
+        let recipient = Address::generate(&env);
+        let attester = Address::generate(&env);
+        assert!(!client.is_attestation_indexed(&uid));
+        sas_client.relay_index(&indexer_id, &uid, &recipient, &schema_uid, &attester, &0);
+        assert!(client.is_attestation_indexed(&uid));
+        scattered.push((uid, schema_uid));
+    }
+
+    // Sequential: one key's history across the first chunk boundary.
+    let recipient = Address::generate(&env);
+    let schema_uid = raw_uid(&env, [0x5c; 32]);
+    let attester = Address::generate(&env);
+    let total = MAX_CHUNK_SIZE + 1;
+    let history = index_sequential(
+        &env,
+        &indexer_id,
+        &sas,
+        &recipient,
+        &schema_uid,
+        &attester,
+        total,
+    );
+    for uid in &history {
+        assert!(client.is_attestation_indexed(uid));
+    }
+    // Later writes leave earlier verdicts unchanged.
+    for (uid, _) in &scattered {
+        assert!(client.is_attestation_indexed(uid));
+    }
+
+    // Never indexed: the next sequential position, a one-byte near miss of
+    // the first sequential UID (all zeros), the next scattered pattern and
+    // an all-ones UID.
+    let mut near_miss = [0u8; 32];
+    near_miss[31] = 1;
+    let unindexed = [
+        sequential_uid(&env, total),
+        raw_uid(&env, near_miss),
+        raw_uid(&env, [0xa6; 32]),
+        raw_uid(&env, [0xff; 32]),
+    ];
+    for uid in &unindexed {
+        assert!(!client.is_attestation_indexed(uid));
+    }
+    // Schema UIDs key their chunks as `(schema_uid, chunk)`, but were never
+    // indexed as attestations.
+    assert!(!client.is_attestation_indexed(&schema_uid));
+    for (_, scattered_schema) in &scattered {
+        assert!(!client.is_attestation_indexed(scattered_schema));
+    }
+
+    // An identical retry keeps the UID indexed, and so do lifecycle
+    // changes: revoked and replaced UIDs stay in the history.
+    let first = &history[0];
+    sas_client.relay_index(&indexer_id, first, &recipient, &schema_uid, &attester, &0);
+    env.as_contract(&indexer_id, || {
+        set_index_status(&env, first, IndexStatus::Revoked);
+        set_index_status(&env, &history[1], IndexStatus::Replaced);
+    });
+    assert!(client.is_attestation_indexed(first));
+    assert!(client.is_attestation_indexed(&history[1]));
+}
+
+/// #542: looking up UIDs that were never indexed writes nothing. The ledger
+/// holds exactly the same entries afterwards, no index record exists for
+/// them, and unlike the paginated reads the lookup leaves the per-ledger
+/// query counter in instance storage untouched, so the call stays
+/// read-only.
+#[test]
+fn test_is_attestation_indexed_unknown_uid_creates_no_storage() {
+    let env = Env::new_with_config(soroban_sdk::testutils::EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+    let recipient = Address::generate(&env);
+    let schema_uid = raw_uid(&env, [0x21; 32]);
+    let attester = Address::generate(&env);
+    let indexed = raw_uid(&env, [0x22; 32]);
+    sas_client.relay_index(
+        &indexer_id,
+        &indexed,
+        &recipient,
+        &schema_uid,
+        &attester,
+        &0,
+    );
+
+    let entries_before = env.to_ledger_snapshot().ledger_entries;
+    let unknown = [
+        raw_uid(&env, [0x23; 32]),
+        raw_uid(&env, [0x00; 32]),
+        raw_uid(&env, [0xff; 32]),
+    ];
+    for uid in &unknown {
+        assert!(!client.is_attestation_indexed(uid));
+    }
+    assert!(client.is_attestation_indexed(&indexed));
+    assert_eq!(env.to_ledger_snapshot().ledger_entries, entries_before);
+
+    for uid in &unknown {
+        assert!(!has_index_record(&env, &indexer_id, uid));
+        assert_eq!(chunk_live_until(&env, &(INDEXED_KEY, uid.clone())), None);
+    }
+    assert_eq!(query_count(&env, &indexer_id), None);
+    // Control: a paginated read does write the counter.
+    assert_eq!(
+        client
+            .get_atts_by_recipient_paginated(&recipient, &0, &10)
+            .len(),
+        1
+    );
+    assert_eq!(query_count(&env, &indexer_id), Some(1));
+}
+
+/// #542: a lookup renews the instance TTL, and the record's TTL when the
+/// UID is indexed, so a UID that is only ever checked stays live. Looking
+/// up an unknown UID renews the instance too and still leaves no record.
+#[test]
+fn test_is_attestation_indexed_renews_instance_and_record_ttl() {
+    use soroban_sdk::testutils::Ledger;
+    let env = Env::new_with_config(soroban_sdk::testutils::EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    let sas_client = mock::MockSasClient::new(&env, &sas);
+    let recipient = Address::generate(&env);
+    let schema_uid = raw_uid(&env, [0x31; 32]);
+    let attester = Address::generate(&env);
+    let uid = raw_uid(&env, [0x32; 32]);
+    sas_client.relay_index(&indexer_id, &uid, &recipient, &schema_uid, &attester, &0);
+
+    let record_key = (INDEXED_KEY, uid.clone());
+    let at_write = chunk_live_until(&env, &record_key).expect("record written");
+
+    // Let half the retention window elapse without any write.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    assert_eq!(chunk_live_until(&env, &record_key), Some(at_write));
+
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    assert!(client.is_attestation_indexed(&uid));
+    assert_eq!(chunk_live_until(&env, &record_key), Some(expected));
+    assert_eq!(instance_live_until(&env, &indexer_id), Some(expected));
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += LEDGERS_IN_ONE_YEAR / 2;
+    });
+    let expected = env.ledger().sequence() + LEDGERS_IN_ONE_YEAR;
+    let unknown = raw_uid(&env, [0x33; 32]);
+    assert!(!client.is_attestation_indexed(&unknown));
+    assert_eq!(instance_live_until(&env, &indexer_id), Some(expected));
+    assert!(!has_index_record(&env, &indexer_id, &unknown));
+}
+
+/// CPU instructions and memory bytes the test host metered for a call.
+#[derive(Clone, Copy, Default)]
+struct Metered {
+    cpu: u64,
+    mem: u64,
+}
+
+impl core::fmt::Display for Metered {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "cpu={} mem={}", self.cpu, self.mem)
+    }
+}
+
+impl core::ops::AddAssign for Metered {
+    fn add_assign(&mut self, other: Self) {
+        self.cpu += other.cpu;
+        self.mem += other.mem;
+    }
+}
+
+/// Runs `f` on a freshly reset budget and returns its result along with
+/// what the test host metered for it.
+fn measure<T>(env: &Env, f: impl FnOnce() -> T) -> (T, Metered) {
+    env.budget().reset_default();
+    let result = f();
+    let budget = env.budget();
+    let cost = Metered {
+        cpu: budget.cpu_instruction_cost(),
+        mem: budget.memory_bytes_cost(),
+    };
+    (result, cost)
+}
+
+/// Answers "is `uid` indexed?" the way a caller had to before #542: page
+/// through `recipient`'s history one chunk-sized page at a time until the
+/// UID shows up or the history ends.
+fn chunk_walk_finds(client: &IndexerClient<'_>, recipient: &Address, uid: &UID) -> bool {
+    let mut cursor = 0u32;
+    loop {
+        let page = client.get_atts_by_recipient_paginated(recipient, &cursor, &MAX_CHUNK_SIZE);
+        if page.is_empty() {
+            return false;
+        }
+        if page.contains(uid) {
+            return true;
+        }
+        cursor += page.len();
+    }
+}
+
+/// #542: answering "is this UID indexed?" from the direct record costs at
+/// least 70% fewer CPU instructions than walking the recipient's paginated
+/// chunks for the same UIDs. The probes cover the first, last and boundary
+/// positions of a three-chunk history, plus UIDs that were never indexed,
+/// for which the walk has to read every chunk. Each lookup is metered on a
+/// freshly reset budget, and the direct lookup runs first, so it pays any
+/// first-access cost for its key. Run with `--nocapture` to print the
+/// measurements.
+#[test]
+fn test_is_attestation_indexed_cpu_is_70_percent_below_chunk_walk() {
+    extern crate std;
+    let env = Env::new_with_config(soroban_sdk::testutils::EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    });
+    let (indexer_id, client, sas) = setup_indexed(&env);
+    // Building the history accumulates into one test budget; every
+    // measurement below starts from a reset one.
+    env.budget().reset_unlimited();
+    let recipient = Address::generate(&env);
+    let schema_uid = raw_uid(&env, [0x42; 32]);
+    let attester = Address::generate(&env);
+    // Three chunks: 100, 100 and 50 UIDs.
+    let total = 250u32;
+    let history = index_sequential(
+        &env,
+        &indexer_id,
+        &sas,
+        &recipient,
+        &schema_uid,
+        &attester,
+        total,
+    );
+
+    let mut probes = alloc::vec::Vec::new();
+    for position in [0usize, 1, 99, 100, 149, 199, 200, 249] {
+        probes.push((history[position].clone(), true));
+    }
+    let mut near_miss = [0u8; 32];
+    near_miss[31] = 1;
+    let unindexed = [
+        sequential_uid(&env, total),
+        raw_uid(&env, near_miss),
+        schema_uid,
+        raw_uid(&env, [0xff; 32]),
+    ];
+    probes.extend(unindexed.map(|uid| (uid, false)));
+
+    let mut direct = Metered::default();
+    let mut walk = Metered::default();
+    for (uid, indexed) in &probes {
+        let (found, lookup_cost) = measure(&env, || client.is_attestation_indexed(uid));
+        let (walked, walk_cost) = measure(&env, || chunk_walk_finds(&client, &recipient, uid));
+        assert_eq!(found, *indexed);
+        assert_eq!(walked, *indexed);
+        assert!(
+            lookup_cost.cpu < walk_cost.cpu,
+            "direct {lookup_cost}, chunk walk {walk_cost}"
+        );
+        std::println!("indexed={indexed}: direct {lookup_cost}, chunk walk {walk_cost}");
+        direct += lookup_cost;
+        walk += walk_cost;
+    }
+    std::println!("total: direct {direct}, chunk walk {walk}");
+    // At least 70% lower means at most 30% of the chunk walk.
+    assert!(
+        direct.cpu.saturating_mul(10) <= walk.cpu.saturating_mul(3),
+        "direct {direct}, chunk walk {walk}"
+    );
+    assert!(direct.mem < walk.mem, "direct {direct}, chunk walk {walk}");
+}
+
 /// Test that index_attestation is idempotent: replaying the same attestation
 /// with identical metadata is a no-op and doesn't cause duplicates.
 #[test]

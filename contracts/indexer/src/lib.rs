@@ -929,6 +929,36 @@ impl Indexer {
         env.storage().persistent().get(&(STATUS_KEY, uid))
     }
 
+    /// Returns `true` when `uid` has been indexed, by reading its direct
+    /// `(INDEXED_KEY, uid)` idempotency record (#542).
+    ///
+    /// `index_attestation` writes that record once, the first time it
+    /// indexes `uid`, so this is a single persistent lookup: it never loads
+    /// a recipient, schema or attester chunk, and its cost does not grow
+    /// with any key's history. A revoked or replaced UID is still indexed
+    /// (its history is kept); use [`Indexer::get_attestation_status`] for
+    /// its lifecycle state.
+    ///
+    /// Read-only: it renews the instance TTL, and the record's TTL when the
+    /// record exists, but writes no entry. An unknown `uid` costs one
+    /// missing-key read and creates no storage. Like
+    /// [`Indexer::has_recipient_attestation`], it does not count toward the
+    /// per-ledger query limit, whose counter lives in instance storage and
+    /// would turn the lookup into a write.
+    pub fn is_attestation_indexed(env: Env, uid: UID) -> bool {
+        extend_instance_ttl(&env);
+        let record_key = (INDEXED_KEY, uid);
+        let indexed = env.storage().persistent().has(&record_key);
+        if indexed {
+            env.storage().persistent().extend_ttl(
+                &record_key,
+                LEDGERS_IN_ONE_YEAR,
+                LEDGERS_IN_ONE_YEAR,
+            );
+        }
+        indexed
+    }
+
     /// Records the activation timestamp `valid_from` for an indexed attestation (#439).
     /// Can only be called by the bound SAS contract.
     pub fn set_valid_from(env: Env, uid: UID, valid_from: u64) {

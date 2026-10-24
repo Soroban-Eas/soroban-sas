@@ -168,7 +168,19 @@ pub fn run_reconciliation(
 
 Once `reindex_attestation` executes, verify that the UID is now queryable from the Indexer:
 
-1. **Check Reverse Lookup by Recipient:**
+1. **Check the Index Record:**
+   Call `Indexer::is_attestation_indexed`, which reads the UID's index record directly instead of walking the recipient's chunks:
+   ```bash
+   stellar contract invoke \
+     --id "$INDEXER_CONTRACT_ID" \
+     --rpc-url "$RPC_URL" \
+     --network-passphrase "$NETWORK_PASSPHRASE" \
+     -- is_attestation_indexed \
+     --uid "$UID_HEX"
+   ```
+   The result should be `true`.
+
+2. **Check Reverse Lookup by Recipient:**
    Call `Indexer::get_attestations_by_recipient` with the attestation recipient address:
    ```bash
    stellar contract invoke \
@@ -180,7 +192,7 @@ Once `reindex_attestation` executes, verify that the UID is now queryable from t
    ```
    Assert that the previously missing UID is present in the returned list.
 
-2. **Check Status Entry:**
+3. **Check Status Entry:**
    Call `Indexer::get_attestation_status`:
    ```bash
    stellar contract invoke \
@@ -192,7 +204,7 @@ Once `reindex_attestation` executes, verify that the UID is now queryable from t
    ```
    The result should be `Active` (or `None`, indicating active legacy status).
 
-3. **Verify On-Chain Event:**
+4. **Verify On-Chain Event:**
    Confirm that a `REINDEX` event (`topics: [symbol!("REINDEX"), uid]`) was emitted in the transaction receipt.
 
 ---
