@@ -10,7 +10,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http: https: ws: wss:; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http: https: ws: wss:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="referrer" content="no-referrer" />
     <title>SAS Schema Explorer</title>
@@ -20,7 +20,7 @@
     <header class="app-header">
       <div>
         <h1>SAS Schema Explorer</h1>
-        <p class="muted">Browse and validate schemas in a soroban-sas Schema Registry. Read-only prototype: nothing is signed or submitted.</p>
+        <p class="muted">Browse and validate schemas · explore live attestations and design new schemas with a deterministic WebAssembly UID preview.</p>
       </div>
     </header>
 
@@ -39,7 +39,15 @@
       </label>
       <label class="grow-2">
         Schema Registry contract id
-        <input id="registry" name="registry" type="text" spellcheck="false" placeholder="C…" required />
+        <input id="registry" name="registry" type="text" spellcheck="false" placeholder="C..." required />
+      </label>
+      <label class="grow-2">
+        SAS contract id <span class="connect-optional">(optional – enables Attestations tab)</span>
+        <input id="sas" name="sas" type="text" spellcheck="false" placeholder="C…" />
+      </label>
+      <label class="grow-2">
+        Indexer contract id <span class="connect-optional">(optional – enables bulk lookups)</span>
+        <input id="indexer" name="indexer" type="text" spellcheck="false" placeholder="C…" />
       </label>
       <div class="connect-actions">
         <button id="connect-btn" type="submit" class="primary">Connect</button>
@@ -52,6 +60,10 @@
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-browse" aria-controls="browse" aria-selected="true">Browse</button>
       <button type="button" role="tab" id="tab-validate" aria-controls="validate" aria-selected="false">Validate a schema</button>
+      <button type="button" role="tab" id="tab-attest" aria-controls="attest" aria-selected="false">Attestations</button>
+      <button type="button" role="tab" id="tab-designer" aria-controls="designer" aria-selected="false">Schema designer</button>
+      <button type="button" role="tab" id="tab-verify" aria-controls="verify" aria-selected="false">Verify Attestation / QR</button>
+      <button type="button" role="tab" id="tab-stream" aria-controls="stream" aria-selected="false">Live attestations</button>
     </nav>
 
     <main>
@@ -59,7 +71,7 @@
         <aside class="sidebar">
           <form id="lookup" class="lookup" novalidate>
             <label class="grow">
-              Look up by UID
+              Look up by UI
               <input id="lookup-uid" type="text" spellcheck="false" placeholder="64 hex characters" />
             </label>
             <button type="submit">Find</button>
@@ -88,6 +100,108 @@
         </p>
         <div id="draft-result"></div>
       </section>
+
+      <!-- ── Attestations tab ─────────────────────────────────────────── -->
+      <section id="attest" role="tabpanel" aria-labelledby="tab-attest" class="browse" hidden>
+        <aside class="sidebar">
+          <form id="attest-search-form" class="lookup" novalidate>
+            <label class="grow">
+              Search attestations
+              <input
+                id="attest-search"
+                type="search"
+                spellcheck="false"
+                placeholder="UID, G… address, or schema UID"
+              />
+            </label>
+            <button type="submit">Search</button>
+          </form>
+          <label>
+            Filter results
+            <input
+              id="attest-filter"
+              type="search"
+              spellcheck="false"
+              placeholder="status:active · status:expired · status:revoked · revocable:no"
+            />
+          </label>
+          <p id="attest-summary" class="muted"></p>
+          <div id="attest-list"></div>
+          <p id="attest-poll-status" class="muted attest-poll-status">Not connected</p>
+        </aside>
+        <section id="attest-detail" class="detail-pane" aria-live="polite">
+          <p class="muted">Connect (or use demo data), then search for attestations.</p>
+        </section>
+      </section>
+
+      <section id="stream" role="tabpanel" aria-labelledby="tab-stream" class="stream" hidden>
+        <form id="stream-controls" class="stream-controls" novalidate>
+          <label class="grow">
+            Search attestations
+            <input
+              id="stream-search"
+              type="search"
+              spellcheck="false"
+              placeholder="Attestation UID, Schema UID, recipient, or attester"
+              aria-label="Search attestations by UIDs, recipient, or attester"
+            />
+          </label>
+          <label>
+            Status
+            <select id="stream-status">
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="expired">Expired</option>
+              <option value="revoked">Revoked</option>
+            </select>
+          </label>
+          <div class="stream-actions">
+            <button id="stream-live" type="button" aria-pressed="true">Pause live</button>
+            <button id="stream-clear" type="button">Clear</button>
+          </div>
+        </form>
+        <p id="stream-summary" class="muted" role="status" aria-live="polite"></p>
+        <div class="stream-layout">
+          <ul id="stream-feed" class="stream-feed" aria-label="Live attestation feed"></ul>
+          <section id="stream-detail" class="stream-detail" aria-live="polite">
+            <p class="muted">Select an attestation to inspect its payload.</p>
+          </section>
+        </div>
+      </section>
+
+      <section id="designer" role="tabpanel" aria-labelledby="tab-designer" class="playground" hidden>
+        <h2>Visual schema designer</h2>
+        <p class="muted">Drag fields to reorder them. Description tags are editor notes and are not included in the on-chain schema or UID.</p>
+        <label>Start from template
+          <select id="designer-template"></select>
+        </label>
+        <div class="designer-head muted"><span>Reorder</span><span>Field name</span><span>Type</span><span>Description tag</span><span>Actions</span></div>
+        <div id="designer-rows" aria-live="polite"></div>
+        <button type="button" id="designer-add">Add field</button>
+        <label>Resolver address (G... or C...)
+          <input id="designer-resolver" spellcheck="false" />
+        </label>
+        <label class="designer-inline"><input type="checkbox" id="designer-revocable" checked /> Revocable schema</label>
+        <h3>Canonical schema</h3>
+        <pre id="designer-schema" class="schema-raw"></pre>
+        <div id="designer-validation" aria-live="polite"></div>
+        <h3>Deterministic schema UID (WebAssembly SHA-256)</h3>
+        <pre id="designer-uid" class="schema-raw" aria-live="polite">Calculating…</pre>
+        <h3>Register via Wallet · Stellar Testnet</h3>
+        <p class="muted">Real blockchain transaction. First configure an existing deployed Testnet Schema Registry contract above.
+          A wallet approval may incur testnet transaction fees. No private keys are requested or stored.</p>
+        <label>Wallet
+          <select id="designer-wallet">
+            <option value="freighter">Freighter</option>
+            <option value="xbull">xBull</option>
+            <option value="albedo">Albedo</option>
+          </select>
+        </label>
+        <button type="button" id="designer-register" class="primary">Register via Wallet (Testnet)</button>
+        <p id="designer-registration-status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="verify" role="tabpanel" aria-labelledby="tab-verify" class="verify-panel" hidden></section>
     </main>
 
     <script type="module" src="./src/main.ts"></script>

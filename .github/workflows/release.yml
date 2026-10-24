@@ -52,6 +52,12 @@ jobs:
         run: |
           cd target/wasm32-unknown-unknown/release
           sha256sum sas.opt.wasm schema_registry.opt.wasm soroban_sas_indexer.opt.wasm > checksums.sha256
+      - name: Generate shell completion scripts
+        run: |
+          mkdir -p target/completions
+          for shell in bash zsh fish powershell; do
+            cargo run --release --package soroban-sas-cli -- completions "$shell" > "target/completions/sas.$shell"
+          done
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -61,6 +67,10 @@ jobs:
             target/wasm32-unknown-unknown/release/schema_registry.opt.wasm
             target/wasm32-unknown-unknown/release/soroban_sas_indexer.opt.wasm
             target/wasm32-unknown-unknown/release/checksums.sha256
+            target/completions/sas.bash
+            target/completions/sas.zsh
+            target/completions/sas.fish
+            target/completions/sas.powershell
 
   gas-report:
     name: Gas & Resource Report

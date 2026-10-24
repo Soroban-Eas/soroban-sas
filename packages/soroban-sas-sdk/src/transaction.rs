@@ -18,7 +18,31 @@
 use crate::errors::SdkError;
 use crate::rpc::{GetTransactionResult, RpcClient};
 use serde::{Deserialize, Serialize};
+use soroban_sdk::xdr::{
+    LedgerFootprint, LedgerKey, Limits, ReadXdr, SorobanTransactionData, TransactionEnvelope,
+    TransactionExt, WriteXdr,
+};
 use std::time::{Duration, Instant};
+
+/// Configuration for padding footprints during auto-tuning.
+/// Allows adding extra read-only and read-write keys for high-concurrency environments.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FootprintPadding {
+    pub additional_read_only: Vec<LedgerKey>,
+    pub additional_read_write: Vec<LedgerKey>,
+}
+
+/// Options to customize automatic footprint tuning.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FootprintAutoTuneOptions {
+    /// Manually override the entire ledger footprint instead of using simulation.
+    pub footprint_override: Option<LedgerFootprint>,
+    /// Pad the simulated footprint with additional keys.
+    pub padding: Option<FootprintPadding>,
+    /// Fee policy for calculating the resource fee.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fee_policy: Option<crate::client::FeePolicy>,
+}
 
 const SETTLING_STATUSES: [&str; 2] = ["NOT_FOUND", "PENDING"];
 
@@ -236,6 +260,163 @@ impl TransactionSubmitter {
         Self::poll_until_settled(policy, clock, started, &hash, || {
             client.get_transaction(&hash)
         })
+    }
+
+    /// Automatically tunes the storage footprint and resource parameters of a transaction
+    /// envelope using Soroban RPC simulation.
+    ///
+    /// Takes a transaction envelope XDR string, simulates it against `rpc`, parses the simulated
+    /// `SorobanTransactionData`, applies any manual footprint overrides or padding, checks against
+    /// impending network limits (>80% of block limit), attaches the tuned footprint to the transaction
+    /// envelope, updates the transaction fee, and re-encodes the envelope into base64 XDR.
+    ///
+    /// Returns the tuned envelope XDR and the parsed `SorobanTransactionData`.
+    pub fn auto_tune_footprint(
+        rpc: &RpcClient,
+        tx_envelope_xdr: &str,
+        options: Option<FootprintAutoTuneOptions>,
+    ) -> Result<(String, SorobanTransactionData), SdkError> {
+        let sim = rpc.simulate_transaction(tx_envelope_xdr)?;
+        if let Some(error) = sim.error {
+            if let Some(code) = crate::errors::extract_contract_error_code(&error) {
+                return Err(SdkError::ContractError(code));
+            }
+            return Err(SdkError::SimulationError(error));
+        }
+
+        if let Some(preamble) = sim.restore_preamble {
+            return Err(SdkError::RestorationRequired {
+                message: "archived footprint entry requires restoreFootprint".to_string(),
+                min_resource_fee: Some(preamble.min_resource_fee),
+                transaction_data: Some(preamble.transaction_data),
+            });
+        }
+
+        let transaction_data_b64 = sim.transaction_data.ok_or_else(|| {
+            SdkError::RpcError("simulation succeeded but returned no transactionData".to_string())
+        })?;
+
+        let mut soroban_data = SorobanTransactionData::from_xdr_base64(
+            transaction_data_b64,
+            crate::limits::default_rpc_response_limits(),
+        )
+        .map_err(|e| SdkError::DecodingError(format!("failed to decode transactionData: {e:?}")))?;
+
+        let options = options.unwrap_or_default();
+
+        // 1. Apply footprint override if requested
+        if let Some(custom_footprint) = options.footprint_override {
+            soroban_data.resources.footprint = custom_footprint;
+        }
+
+        // 2. Apply footprint padding if requested
+        if let Some(padding) = options.padding {
+            let mut ro: Vec<LedgerKey> = soroban_data.resources.footprint.read_only.to_vec();
+            for key in padding.additional_read_only {
+                if !ro.contains(&key) {
+                    ro.push(key);
+                }
+            }
+            let mut rw: Vec<LedgerKey> = soroban_data.resources.footprint.read_write.to_vec();
+            for key in padding.additional_read_write {
+                if !rw.contains(&key) {
+                    rw.push(key);
+                }
+            }
+            soroban_data.resources.footprint.read_only = ro.try_into().map_err(|e| {
+                SdkError::ValidationError(format!("too many read_only footprint entries: {e:?}"))
+            })?;
+            soroban_data.resources.footprint.read_write = rw.try_into().map_err(|e| {
+                SdkError::ValidationError(format!("too many read_write footprint entries: {e:?}"))
+            })?;
+        }
+
+        // 3. Check for impending storage and resource limits (>80% threshold)
+        let ro_count = soroban_data.resources.footprint.read_only.len() as u32;
+        let rw_count = soroban_data.resources.footprint.read_write.len() as u32;
+        let total_keys = ro_count + rw_count;
+
+        if total_keys > 32 {
+            eprintln!(
+                "warning: impending storage footprint limit: total keys {} approaches limit 40 (>80%)",
+                total_keys
+            );
+        }
+        if rw_count > 20 {
+            eprintln!(
+                "warning: impending storage footprint limit: read-write keys {} approaches limit 25 (>80%)",
+                rw_count
+            );
+        }
+        if soroban_data.resources.read_bytes > 160_000 {
+            eprintln!(
+                "warning: impending read bytes limit: {} approaches limit 200,000 (>80%)",
+                soroban_data.resources.read_bytes
+            );
+        }
+        if soroban_data.resources.write_bytes > 104_000 {
+            eprintln!(
+                "warning: impending write bytes limit: {} approaches limit 130,000 (>80%)",
+                soroban_data.resources.write_bytes
+            );
+        }
+        if soroban_data.resources.instructions > 80_000_000 {
+            eprintln!(
+                "warning: impending CPU instructions limit: {} approaches limit 100,000,000 (>80%)",
+                soroban_data.resources.instructions
+            );
+        }
+
+        // 4. Decode the transaction envelope, attach the footprint and resource data, and update fee
+        let mut envelope = TransactionEnvelope::from_xdr_base64(
+            tx_envelope_xdr,
+            crate::limits::default_rpc_response_limits(),
+        )
+        .map_err(|e| {
+            SdkError::DecodingError(format!("failed to decode transaction envelope: {e:?}"))
+        })?;
+
+        let min_resource_fee: i64 = sim
+            .min_resource_fee
+            .as_deref()
+            .unwrap_or("0")
+            .parse()
+            .map_err(|e| SdkError::RpcError(format!("invalid minResourceFee: {e:?}")))?;
+
+        match &mut envelope {
+            TransactionEnvelope::Tx(v1) => {
+                let base_fee = v1.tx.fee;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let policy = options
+                        .fee_policy
+                        .as_ref()
+                        .unwrap_or(&crate::client::FeePolicy::Default);
+                    let computed_fee =
+                        crate::client::apply_fee_policy(base_fee, min_resource_fee, policy)?;
+                    v1.tx.fee = computed_fee;
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let resource_fee_u32 =
+                        u32::try_from(min_resource_fee.max(0)).unwrap_or(u32::MAX);
+                    v1.tx.fee = base_fee.saturating_add(resource_fee_u32);
+                }
+                v1.tx.ext = TransactionExt::V1(soroban_data.clone());
+            }
+            TransactionEnvelope::TxV0(_) => {
+                return Err(SdkError::ValidationError(
+                    "cannot attach Soroban resources to legacy TxV0 envelope".to_string(),
+                ));
+            }
+            TransactionEnvelope::TxFeeBump(_) => {}
+        }
+
+        let tuned_envelope_xdr = envelope.to_xdr_base64(Limits::none()).map_err(|e| {
+            SdkError::DecodingError(format!("failed to encode tuned transaction: {e:?}"))
+        })?;
+
+        Ok((tuned_envelope_xdr, soroban_data))
     }
 
     /// Polls `fetch` until the transaction leaves `NOT_FOUND`/`PENDING`
@@ -492,5 +673,229 @@ mod tests {
 
         assert_eq!(calls, 1);
         assert!(matches!(outcome, Err(SdkError::RpcError(_))));
+    }
+
+    use soroban_sdk::xdr::{
+        AccountId, ExtensionPoint, LedgerKeyAccount, Memo, MuxedAccount, Preconditions, PublicKey,
+        SequenceNumber, SorobanResources, Transaction, TransactionV1Envelope, Uint256, VecM,
+    };
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    fn sample_envelope_xdr() -> String {
+        TransactionEnvelope::Tx(TransactionV1Envelope {
+            tx: Transaction {
+                source_account: MuxedAccount::Ed25519(Uint256([1u8; 32])),
+                fee: 100,
+                seq_num: SequenceNumber(1),
+                cond: Preconditions::None,
+                memo: Memo::None,
+                operations: VecM::default(),
+                ext: TransactionExt::V0,
+            },
+            signatures: VecM::default(),
+        })
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+    }
+
+    fn sample_account_key(id: u8) -> LedgerKey {
+        LedgerKey::Account(LedgerKeyAccount {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([id; 32]))),
+        })
+    }
+
+    fn spawn_mock_rpc(response_body: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                let mut line = String::new();
+                while let Ok(n) = reader.read_line(&mut line) {
+                    if n == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if line.to_lowercase().starts_with("content-length:") {
+                        if let Some(val) = line.split(':').nth(1) {
+                            content_length = val.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    line.clear();
+                }
+                let mut body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut body);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                let mut writer = stream;
+                let _ = writer.write_all(response.as_bytes());
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn auto_tune_footprint_attaches_simulated_resources_and_footprint() {
+        let key1 = sample_account_key(1);
+        let key2 = sample_account_key(2);
+        let tx_data = SorobanTransactionData {
+            ext: ExtensionPoint::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint {
+                    read_only: vec![key1.clone()].try_into().unwrap(),
+                    read_write: vec![key2.clone()].try_into().unwrap(),
+                },
+                instructions: 1_500_000,
+                read_bytes: 5_000,
+                write_bytes: 2_000,
+            },
+            resource_fee: 1_200,
+        };
+        let tx_data_b64 = tx_data.to_xdr_base64(Limits::none()).unwrap();
+
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "latestLedger": 1234,
+                "transactionData": tx_data_b64,
+                "minResourceFee": "1200",
+                "results": []
+            }
+        })
+        .to_string();
+
+        let url = spawn_mock_rpc(response);
+        let rpc = RpcClient::new(url);
+        let draft_xdr = sample_envelope_xdr();
+
+        let (tuned_xdr, data) =
+            TransactionSubmitter::auto_tune_footprint(&rpc, &draft_xdr, None).unwrap();
+        assert_eq!(data.resources.instructions, 1_500_000);
+        assert_eq!(data.resources.footprint.read_only.len(), 1);
+        assert_eq!(data.resources.footprint.read_write.len(), 1);
+
+        let env = TransactionEnvelope::from_xdr_base64(&tuned_xdr, Limits::none()).unwrap();
+        let TransactionEnvelope::Tx(v1) = env else {
+            panic!("expected V1 transaction envelope");
+        };
+        assert_eq!(v1.tx.fee, 1300); // 100 base + 1200 resource fee
+        match v1.tx.ext {
+            TransactionExt::V1(ext) => {
+                assert_eq!(ext.resources.instructions, 1_500_000);
+                assert_eq!(ext.resources.footprint.read_only.first().unwrap(), &key1);
+                assert_eq!(ext.resources.footprint.read_write.first().unwrap(), &key2);
+            }
+            _ => panic!("expected TransactionExt::V1"),
+        }
+    }
+
+    #[test]
+    fn auto_tune_footprint_applies_padding_and_override() {
+        let key1 = sample_account_key(1);
+        let key2 = sample_account_key(2);
+        let pad_ro = sample_account_key(3);
+        let pad_rw = sample_account_key(4);
+
+        let tx_data = SorobanTransactionData {
+            ext: ExtensionPoint::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint {
+                    read_only: vec![key1].try_into().unwrap(),
+                    read_write: vec![key2].try_into().unwrap(),
+                },
+                instructions: 1_000_000,
+                read_bytes: 4_000,
+                write_bytes: 1_500,
+            },
+            resource_fee: 500,
+        };
+        let tx_data_b64 = tx_data.to_xdr_base64(Limits::none()).unwrap();
+
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "latestLedger": 1234,
+                "transactionData": tx_data_b64,
+                "minResourceFee": "500",
+                "results": []
+            }
+        })
+        .to_string();
+
+        let url = spawn_mock_rpc(response);
+        let rpc = RpcClient::new(url);
+        let draft_xdr = sample_envelope_xdr();
+
+        let options = FootprintAutoTuneOptions {
+            footprint_override: None,
+            padding: Some(FootprintPadding {
+                additional_read_only: vec![pad_ro.clone()],
+                additional_read_write: vec![pad_rw.clone()],
+            }),
+            fee_policy: None,
+        };
+
+        let (_tuned_xdr, data) =
+            TransactionSubmitter::auto_tune_footprint(&rpc, &draft_xdr, Some(options)).unwrap();
+        assert_eq!(data.resources.footprint.read_only.len(), 2);
+        assert_eq!(data.resources.footprint.read_write.len(), 2);
+        assert!(data.resources.footprint.read_only.contains(&pad_ro));
+        assert!(data.resources.footprint.read_write.contains(&pad_rw));
+    }
+
+    #[test]
+    fn auto_tune_footprint_surfaces_contract_error() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "latestLedger": 1234,
+                "error": "HostError: Error(301, Unauthorized)"
+            }
+        })
+        .to_string();
+
+        let url = spawn_mock_rpc(response);
+        let rpc = RpcClient::new(url);
+        let draft_xdr = sample_envelope_xdr();
+
+        let err = TransactionSubmitter::auto_tune_footprint(&rpc, &draft_xdr, None).unwrap_err();
+        match err {
+            SdkError::ContractError(code) => assert_eq!(code, 301),
+            other => panic!("expected ContractError(301), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auto_tune_footprint_surfaces_restoration_required() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "latestLedger": 1234,
+                "restorePreamble": {
+                    "transactionData": "AAAA",
+                    "minResourceFee": "7500"
+                }
+            }
+        })
+        .to_string();
+
+        let url = spawn_mock_rpc(response);
+        let rpc = RpcClient::new(url);
+        let draft_xdr = sample_envelope_xdr();
+
+        let err = TransactionSubmitter::auto_tune_footprint(&rpc, &draft_xdr, None).unwrap_err();
+        match err {
+            SdkError::RestorationRequired {
+                min_resource_fee, ..
+            } => assert_eq!(min_resource_fee.as_deref(), Some("7500")),
+            other => panic!("expected RestorationRequired, got {other:?}"),
+        }
     }
 }
