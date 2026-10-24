@@ -288,6 +288,8 @@ fn require_kyc(env: &Env, sas: &Address, uid: &UID, user: &Address, schema: &UID
 Remember to check `expiration_time` and `revocation_time` yourself. `verify_attestation`
 only tells you the attestation exists and hasn't been revoked.
 
+For a complete implementation of regulated token transfers with SAS compliance checks, perpetual and expiring certificates, and issuer revocation flows, see the [SEP-8 Regulated Assets Guide](guides/sep8-regulated-assets.md).
+
 ## 6. Query the indexer
 
 The indexer is optional. If you deployed it, you can look up attestations
