@@ -11,6 +11,7 @@ mod io_safety;
 mod json_schema;
 mod ledger;
 mod manpage;
+mod migrate;
 mod network;
 mod offchain;
 mod wizard;
@@ -670,6 +671,11 @@ enum Commands {
     Completions {
         /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
         shell: clap_complete::Shell,
+    },
+    /// Bulk attestation migration utility from Ethereum EAS (issue #558)
+    Migrate {
+        #[command(subcommand)]
+        action: migrate::MigrateCommands,
     },
 }
 
@@ -1672,6 +1678,7 @@ fn main() {
             completions::generate_completions(&mut cmd, shell, &mut std::io::stdout());
             Ok(())
         }
+        Some(Commands::Migrate { action }) => migrate::run_migrate(action, output),
         _ => emit_ok(
             output,
             || println!("CLI initialized"),

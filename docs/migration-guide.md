@@ -2,7 +2,7 @@
 
 This guide walks through migrating historical attestations from an EVM EAS
 deployment (Ethereum, Base, Arbitrum, etc.) to a Soroban SAS deployment using
-the `sas migrate eas command.
+the `sas migrate eas` command.
 
 ## Prerequisites
 
@@ -52,7 +52,7 @@ sas migrate eas \
   --contract "${EAS_CONTRACT}" \
   --from-block 1000000 \
   --output-dir ./sas-migration \
-  --resume
+  --resume \
   --max-retries 10
 ```
 
@@ -65,7 +65,7 @@ After a complete run, inspect `reconciliation.json`. It contains:
 
 - `attestations_discovered` - total attestations found in the block range.
 - `attestations_migrated` - attestations successfully translated.
--  schemas_migrated` -  unique schemas translated.
+- `schemas_migrated` - unique schemas translated.
 - `batches_emitted` -  number of transaction envelopes generated.
 - `status` - `complete` or `partial`.
 
@@ -77,9 +77,9 @@ them using the Soroban CLI or the SDK batch runner:
 
 ```bash
 for env in ./sas-migration/envelopes/*.json; do
-  sorban contract invoke \
+  stellar contract invoke \
     --id SAS \
-    --source ${STELLAR_SECRET } \
+    --source ${STELLAR_SECRET} \
     --network testnet \
     --fee true \
     --send yes \
@@ -114,8 +114,8 @@ soroban-sas-sdk for full automation.
 ## Troubleshooting
 
 - `RPC error -32005` - the source RPC rate-limited you. Re-run with `--resume` and
-  increase `--retry-delay-ms .
+  increase `--retry-delay-ms`.
 - `unsupported schema type` - the source schema uses a type that has no Soroban
-  equivalent. Extend `src/migrate/schema.rs` with a new mapping.
+  equivalent. Extend `packages/soroban-sas-cli/src/migrate/schema.rs` with a new mapping.
 - `attestation result too short` - the source contract did not return a valid
   EAS attestation struct. Verify the contract address and network.

@@ -1962,7 +1962,9 @@ dependencies = [
  "soroban-sas-sdk",
  "soroban-sdk",
  "stellar-strkey",
+ "thiserror",
  "toml",
+ "ureq",
 ]
 
 [[package]]
