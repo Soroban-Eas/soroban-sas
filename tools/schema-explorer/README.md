@@ -1,8 +1,8 @@
 # Schema Explorer (prototype)
 
-A small read-only web dashboard for browsing the schemas registered in a
-deployed `schema-registry` contract (`contracts/schema-registry`) and for
-checking draft schema strings before registering them.
+A web dashboard for browsing registered schemas, validating draft definitions,
+and visually designing schemas with deterministic WebAssembly UID previews.
+Browsing remains read-only. The designer supports explicit Testnet registration through the selected wallet.
 
 - **Browse**: pages through `get_schemas_paginated`, filters the loaded
   schemas client-side, and shows each schema's UID, resolver, owner
@@ -12,12 +12,15 @@ checking draft schema strings before registering them.
 - **Validate a schema**: checks a draft string live, using the same rules as
   `SchemaRegistry::register`, and reports the first problem plus byte and
   field usage against the 1024-byte and 64-field limits.
+- **Visual Schema Designer (in progress)**: configurable field names/types and off-chain
+  description tags; reorder with drag-and-drop or arrow buttons; KYC, POAP,
+  and Skill Certification templates; validates duplicate and illegal identifiers;
+  computes a deterministic preview UID via a browser WebAssembly SHA-256 module
+  over canonical Soroban XDR. Tests pin the Rust golden UID vector.
 - **Demo data**: "Use demo data" (or `?demo=1`) loads built-in fixtures with
   no network access, so you can try the UI without deploying anything.
 
-Every contract read is a Soroban RPC `simulateTransaction`. Nothing is
-signed or submitted, no key or funded account is needed, and it costs
-nothing.
+Registry reads use RPC simulation without signatures. Register via Wallet is a separate, explicit user-approved Testnet transaction; nothing is broadcast before a wallet signs the prepared transaction.
 
 ## Run it
 
@@ -99,3 +102,34 @@ This is a prototype:
   contents.
 - It does not show attestations. Browsing them through the indexer
   (`get_attestations_by_schema`) is the natural next step.
+
+## Designer implementation progress (#567)
+
+The Designer tab has a working field builder, three templates, native HTML5
+drag-and-drop plus keyboard-accessible reorder buttons, duplicate/illegal-name
+validation and an XDR-correct UID preview calculated with `hash-wasm`.
+Description tags intentionally do not enter the canonical schema bytes or UID.
+
+**Registration:** the selected wallet (Freighter, xBull extension, or Albedo)
+connects on Stellar Testnet. The app simulates `SchemaRegistry::register`,
+prepares its Soroban resources, asks the selected wallet for a signature and
+cryptographically validates the returned envelope before sending it via RPC.
+It then polls ledger confirmation and reads the registered schema record to
+require exact UID parity with the WebAssembly preview.
+
+**Operational requirements:** enter a valid **deployed Testnet Schema Registry
+contract ID** and use a funded Testnet wallet. Each registration costs Testnet
+fees. The registration button requests explicit confirmation. Signing and
+approval occur in the wallet; no secret keys are collected or stored.
+
+**Verification boundary:** unit and UI tests cover invalid fields, duplicate
+names, SHA-256 golden vectors, wallet adapter behavior, signature checks,
+RPC submission, failed submissions, and UID mismatch using controlled mocks.
+A live registration against the real Schema Registry contract could not be
+run in the local environment because no deployed contract ID or connected
+wallet was available. Actual extension and on-chain end-to-end approval
+still require manual integration testing with a Testnet deployment.
+
+xBull uses the extension-injected `window.xBullSDK` interface. Freighter
+uses `@stellar/freighter-api` and Albedo uses `@albedo-link/intent`; Albedo
+uses `submit: false` so that only the application's verified RPC path submits.

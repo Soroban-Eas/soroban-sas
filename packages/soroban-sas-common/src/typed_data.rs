@@ -74,6 +74,26 @@ pub const ATTESTATION_TYPE_TAG: &[u8] =
 /// Type tag for a delegated revocation. This differs from the attestation
 /// tag so a signature for one action can never authorize the other.
 pub const DELEGATED_REVOCATION_TYPE_TAG: &[u8] = b"SorobanSAS DelegatedRevocation v1(uid,attester)";
+/// Both signers authorize exactly the same replacement and both nonce values.
+pub const DELEGATED_REPLACEMENT_CONSENT_TYPE_TAG: &[u8] = b"SorobanSAS DelegatedReplacementConsent v1(network_id,contract,attester_nonce,recipient_nonce,old_uid,new_attestation)";
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacementConsentDomain {
+    pub network_id: BytesN<32>,
+    pub contract: Address,
+    pub attester_nonce: u64,
+    pub recipient_nonce: u64,
+}
+
+/// One party's approval of a delegated replacement.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacementApproval {
+    pub nonce: u64,
+    pub signature: BytesN<64>,
+    pub public_key: BytesN<32>,
+}
 
 /// Domain separator binding a signature to one network, contract, and nonce.
 #[contracttype]
@@ -157,6 +177,34 @@ pub fn hash_delegated_revocation(
     ));
     buf.append(&Bytes::from_slice(env, &uid.0.to_array()));
     buf.append(&attester.clone().to_xdr(env));
+    env.crypto().sha256(&buf).into()
+}
+
+/// SHA-256 typed digest signed independently by the attester and recipient.
+/// Integers are big-endian, the contract address is ScVal XDR, and the new
+/// attestation hash commits to every field including the data hash.
+pub fn hash_delegated_replacement_consent(
+    env: &Env,
+    old_uid: &crate::UID,
+    new_attestation: &Attestation,
+    domain: &ReplacementConsentDomain,
+) -> BytesN<32> {
+    let mut buf = Bytes::from_slice(env, DELEGATED_REPLACEMENT_CONSENT_TYPE_TAG);
+    buf.append(&Bytes::from_slice(env, &domain.network_id.to_array()));
+    buf.append(&domain.contract.clone().to_xdr(env));
+    buf.append(&Bytes::from_slice(
+        env,
+        &domain.attester_nonce.to_be_bytes(),
+    ));
+    buf.append(&Bytes::from_slice(
+        env,
+        &domain.recipient_nonce.to_be_bytes(),
+    ));
+    buf.append(&Bytes::from_slice(env, &old_uid.0.to_array()));
+    buf.append(&Bytes::from_slice(
+        env,
+        &hash_attestation_struct(env, new_attestation).to_array(),
+    ));
     env.crypto().sha256(&buf).into()
 }
 

@@ -3,6 +3,7 @@
 // whole UI can be driven in tests against FixtureCaller.
 
 import { PRESETS, configFromQuery, configToQuery, findPreset, validateConfig, type ExplorerConfig } from "./config.js";
+import { mountDesigner } from "./designer-ui.js";
 import { DEMO_REGISTRY_ID, FixtureCaller } from "./fixtures.js";
 import { isUidHex, normalizeUid } from "./hex.js";
 import { RegistryReader, RpcContractCaller, type ContractCaller, type SchemaRecord } from "./registry.js";
@@ -242,6 +243,7 @@ export function mountExplorer(doc: Document, options: MountOptions = {}) {
   const tabs = [
     { tab: byId<HTMLButtonElement>(doc, "tab-browse"), panel: byId(doc, "browse") },
     { tab: byId<HTMLButtonElement>(doc, "tab-validate"), panel: byId(doc, "validate") },
+    { tab: byId<HTMLButtonElement>(doc, "tab-designer"), panel: byId(doc, "designer") },
   ];
   for (const { tab } of tabs) {
     tab.addEventListener("click", () => {
@@ -260,6 +262,7 @@ export function mountExplorer(doc: Document, options: MountOptions = {}) {
   }
   draft.addEventListener("input", renderDraft);
   renderDraft();
+  mountDesigner(doc);
 
   // `?demo=1` opens straight into the offline fixtures (handy for sharing a preview).
   if (new URLSearchParams(search).get("demo") === "1") demoBtn.click();

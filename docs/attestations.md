@@ -44,6 +44,11 @@ requires:
   — a replacement changes what is being claimed, not who is claiming it or
   about whom.
 
+`replace_by_delegation_consent` performs the same replacement with off-chain
+signatures from both the recorded attester and recipient. See
+[delegation](delegation.md#delegated-replacement-with-recipient-consent) for
+the digest layout, nonce rules, and relayer flow.
+
 ### Expiration monotonicity
 
 The replacement's `expiration_time` must not be *earlier* than the old

@@ -4,11 +4,14 @@
 use soroban_sas_common::{extend_instance_ttl, LEDGERS_IN_ONE_YEAR, UID};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    IntoVal, Symbol,
+    IntoVal, Symbol, Vec,
 };
 
 /// Maximum age in seconds for a zero-knowledge attestation proof timestamp
 pub const MAX_ZK_PROOF_AGE_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
+
+/// Maximum number of nullifiers accepted by the batch query in one call.
+pub const MAX_NULLIFIER_BATCH: u32 = 50;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -23,6 +26,7 @@ pub enum ZkVerifierError {
     AttestationRevokedOrInvalid = 7,
     InvalidCommitment = 8,
     ProofTooOld = 9,
+    BatchTooLarge = 10,
 }
 
 #[contracttype]
@@ -245,6 +249,40 @@ impl ZkVerifier {
                 .extend_ttl(&key, LEDGERS_IN_ONE_YEAR, LEDGERS_IN_ONE_YEAR);
         }
         exists
+    }
+
+    /// Batch nullifier query for off-chain clients (#547).
+    ///
+    /// Returns one flag per input, in the same order, so a prover or relayer
+    /// can pre-check a whole batch before submitting proofs. Consumed
+    /// nullifiers have their persistent TTL refreshed to match the contract
+    /// instance, exactly like the single-nullifier query.
+    ///
+    /// The batch is bounded by [`MAX_NULLIFIER_BATCH`] so a read-only
+    /// simulation cannot be made arbitrarily expensive.
+    pub fn are_nullifiers_used(
+        env: Env,
+        nullifiers: Vec<BytesN<32>>,
+    ) -> Result<Vec<bool>, ZkVerifierError> {
+        extend_instance_ttl(&env);
+        if nullifiers.len() > MAX_NULLIFIER_BATCH {
+            return Err(ZkVerifierError::BatchTooLarge);
+        }
+
+        let mut used = Vec::new(&env);
+        for nullifier in nullifiers.iter() {
+            let key = DataKey::Nullifier(nullifier);
+            let consumed = env.storage().persistent().has(&key);
+            if consumed {
+                env.storage().persistent().extend_ttl(
+                    &key,
+                    LEDGERS_IN_ONE_YEAR,
+                    LEDGERS_IN_ONE_YEAR,
+                );
+            }
+            used.push_back(consumed);
+        }
+        Ok(used)
     }
 }
 
