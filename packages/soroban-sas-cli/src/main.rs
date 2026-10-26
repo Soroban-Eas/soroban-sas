@@ -531,6 +531,13 @@ struct Cli {
     #[arg(
         long,
         global = true,
+        help = "Include full Soroban RPC diagnostic events for contract failures"
+    )]
+    verbose: bool,
+
+    #[arg(
+        long,
+        global = true,
         help = "Named network (testnet, futurenet, mainnet/pubnet, local/standalone). \
                 Supplies --rpc-url / --network-passphrase for any subcommand that \
                 doesn't set them directly or via their SOROBAN_* env vars (issue #174)."
@@ -1639,6 +1646,7 @@ enum DelegateCommands {
 
 fn main() {
     let cli = Cli::parse();
+    soroban_sas_sdk::errors::set_verbose_contract_diagnostics(cli.verbose);
     let output = cli.output;
     if let Some(ref profile) = cli.profile {
         config::set_active_profile_override(profile);

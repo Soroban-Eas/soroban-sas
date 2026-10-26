@@ -792,7 +792,7 @@ fn sas_set_fee_surfaces_unauthorized_simulation_as_contract_error_301() {
         .set_fee(&rpc, "network", &seed, &token, 1)
         .unwrap_err();
     server.join().unwrap();
-    assert!(matches!(error, crate::errors::SdkError::ContractError(301)));
+    assert!(matches!(error, crate::errors::SdkError::ContractErrorWithDiagnostics { code: 301, .. }));
 }
 
 #[test]
@@ -933,7 +933,7 @@ fn schema_withdraw_fees_surfaces_unauthorized_simulation_as_contract_error_301()
         .withdraw_schema_fees(&rpc, "network", &seed, &registry_contract_id, 500)
         .unwrap_err();
     server.join().unwrap();
-    assert!(matches!(error, crate::errors::SdkError::ContractError(301)));
+    assert!(matches!(error, crate::errors::SdkError::ContractErrorWithDiagnostics { code: 301, .. }));
 }
 
 /// Issue #132 acceptance criterion: two writes for the same account, built

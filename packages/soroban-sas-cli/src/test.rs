@@ -59,6 +59,12 @@ mod tests {
     }
 
     #[test]
+    fn verbose_flag_is_global() {
+        let cli = Cli::try_parse_from(["soroban-sas", "--verbose", "config", "show"]).unwrap();
+        assert!(cli.verbose);
+    }
+
+    #[test]
     fn attest_flags_default_to_network_time_with_local_fallback_off() {
         let cli = Cli::try_parse_from([
             "soroban-sas",

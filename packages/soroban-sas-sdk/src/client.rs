@@ -687,7 +687,10 @@ impl SASClient {
 
         if let Some(err) = sim.error {
             if let Some(code) = crate::errors::extract_contract_error_code(&err) {
-                return Err(SdkError::ContractError(code));
+                return Err(SdkError::ContractErrorWithDiagnostics {
+                    code,
+                    diagnostics: err,
+                });
             }
             if is_archived_error(&err) {
                 let (fee, data) = sim
@@ -2694,7 +2697,10 @@ where
     let result = rpc.simulate_transaction(&tx_xdr)?;
     if let Some(error) = result.error {
         if let Some(code) = crate::errors::extract_contract_error_code(&error) {
-            return Err(SdkError::ContractError(code));
+            return Err(SdkError::ContractErrorWithDiagnostics {
+                code,
+                diagnostics: error,
+            });
         }
         return Err(SdkError::SimulationError(error));
     }
@@ -2774,7 +2780,10 @@ fn build_signed_write_at_sequence(
     let sim = rpc.simulate_transaction(&draft_xdr)?;
     if let Some(error) = sim.error {
         if let Some(code) = crate::errors::extract_contract_error_code(&error) {
-            return Err(SdkError::ContractError(code));
+            return Err(SdkError::ContractErrorWithDiagnostics {
+                code,
+                diagnostics: error,
+            });
         }
         return Err(SdkError::SimulationError(error));
     }
@@ -2878,7 +2887,10 @@ fn build_signed_restore_at_sequence(
     let sim = rpc.simulate_transaction(&draft_xdr)?;
     if let Some(error) = sim.error {
         if let Some(code) = crate::errors::extract_contract_error_code(&error) {
-            return Err(SdkError::ContractError(code));
+            return Err(SdkError::ContractErrorWithDiagnostics {
+                code,
+                diagnostics: error,
+            });
         }
         return Err(SdkError::SimulationError(error));
     }
@@ -3082,7 +3094,10 @@ fn dry_run_write(
     let sim = rpc.simulate_transaction(&draft_xdr)?;
     if let Some(error) = sim.error {
         if let Some(code) = crate::errors::extract_contract_error_code(&error) {
-            return Err(SdkError::ContractError(code));
+            return Err(SdkError::ContractErrorWithDiagnostics {
+                code,
+                diagnostics: error,
+            });
         }
         return Err(SdkError::SimulationError(error));
     }
@@ -4166,7 +4181,10 @@ mod tests {
         let client = SASClient::new(contract_id);
 
         let err = client.clear_fee_dry_run(&rpc, &secret_seed).unwrap_err();
-        assert!(matches!(err, SdkError::ContractError(301)));
+        assert!(matches!(
+            err,
+            SdkError::ContractErrorWithDiagnostics { code: 301, .. }
+        ));
     }
 
     #[test]

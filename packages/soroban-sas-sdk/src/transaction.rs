@@ -279,7 +279,10 @@ impl TransactionSubmitter {
         let sim = rpc.simulate_transaction(tx_envelope_xdr)?;
         if let Some(error) = sim.error {
             if let Some(code) = crate::errors::extract_contract_error_code(&error) {
-                return Err(SdkError::ContractError(code));
+                return Err(SdkError::ContractErrorWithDiagnostics {
+                    code,
+                    diagnostics: error,
+                });
             }
             return Err(SdkError::SimulationError(error));
         }
@@ -866,7 +869,10 @@ mod tests {
 
         let err = TransactionSubmitter::auto_tune_footprint(&rpc, &draft_xdr, None).unwrap_err();
         match err {
-            SdkError::ContractError(code) => assert_eq!(code, 301),
+            SdkError::ContractErrorWithDiagnostics { code, diagnostics } => {
+                assert_eq!(code, 301);
+                assert!(diagnostics.contains("Unauthorized"));
+            }
             other => panic!("expected ContractError(301), got {other:?}"),
         }
     }

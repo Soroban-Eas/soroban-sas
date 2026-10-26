@@ -182,7 +182,10 @@ pub async fn fetch_attestation(
     let result = rpc.simulate_transaction_async(&tx_xdr).await?;
     if let Some(error) = result.error {
         if let Some(code) = crate::errors::extract_contract_error_code(&error) {
-            return Err(SdkError::ContractError(code));
+            return Err(SdkError::ContractErrorWithDiagnostics {
+                code,
+                diagnostics: error,
+            });
         }
         return Err(SdkError::SimulationError(error));
     }
