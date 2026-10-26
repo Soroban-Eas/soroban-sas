@@ -8,7 +8,7 @@ edition = "2021"
 soroban-sdk = { workspace = true }
 soroban-sas-common = { path = "../../packages/soroban-sas-common" }
 ed25519-dalek = { version = "2.0.0", default-features = false, features = ["alloc"] }
-rand = "0.8"
+rand = "0.10"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
