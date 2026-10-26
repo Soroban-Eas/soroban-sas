@@ -2038,7 +2038,7 @@ dependencies = [
 name = "soroban-sas-sdk"
 version = "1.0.0"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.23.1",
  "ed25519-dalek",
  "getrandom",
  "hex",
