@@ -30,7 +30,7 @@ soroban-sdk = { workspace = true, features = ["alloc"] }
 # The guest XDR environment is built without `std`, so the base64 helpers and
 # `Limits` used by the SDK are missing there. Enabling them on the very same
 # `stellar-xdr` build the environment uses restores them on wasm targets.
-stellar-xdr = { version = "=21.2.0", features = ["base64", "serde"] }
+stellar-xdr = { version = "=22.2.0", features = ["base64", "serde"] }
 # Required for ed25519-dalek's RNG on wasm32-unknown-unknown.
 getrandom = { version = "0.2", features = ["js"] }
 wasm-bindgen = { version = "0.2", optional = true }
